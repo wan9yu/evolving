@@ -9,9 +9,16 @@ guarding each reason is still alive.
 
 ## Status
 
-`0.1.0` — the **honest-resurface slice**. A single self-contained Rust binary, no
-network, no daemon. The store lives in a local `.evolving/` directory: a content-addressed
-chain plus a results cache.
+`0.0.1` — an early, honest cut on the way to the **`0.1.0` honest-resurface slice**. A
+single self-contained Rust binary, no network, no daemon; the store lives in a local
+`.evolving/` directory.
+
+**Shipped today:** recording decisions and their grounds (`ev decide`), binding a test or
+human re-check after the fact (`ev guard`), reading a decision (`ev show`), and auditing the
+chain and its refusals (`ev verify`). **Still landing toward `0.1.0`:** evaluating a bound
+check's liveness and resurfacing a decision when it goes red (`ev check`), plus the
+`reopen` / `list` / `log` surface. So today `ev` *freezes the contract* — it records what
+must stay true and how it would be checked — but does not yet run the checks for you.
 
 ## Install
 

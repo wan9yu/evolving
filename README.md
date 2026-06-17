@@ -151,6 +151,16 @@ It does **not** claim tamper-resistance of offline test outcomes — `ev` record
 test was bound and the commit it was verified at, but it cannot prove an offline test
 result was honest. That is a documented boundary, not a guarantee.
 
+## Documentation
+
+Usage docs live in [`docs/`](docs/):
+
+- [`docs/commands.md`](docs/commands.md) — the authoritative command reference: every flag,
+  exit code, the exact strings each command prints, and a worked example per command.
+- [`docs/concepts.md`](docs/concepts.md) — the model in depth: the Tick schema, Grounds,
+  Checks, content-addressed identity, append-only immutability, and the refusals
+  `ev verify` enforces.
+
 ## License
 
 Apache-2.0.

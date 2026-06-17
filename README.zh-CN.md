@@ -111,6 +111,13 @@ ev show <id>
 
 它**不**声称对离线测试结果具有防篡改性——`ev` 记录的是某个测试曾被绑定、以及它被验证时所在的提交，但它无法证明某个离线测试结果是诚实的。这是一个有记录的边界，而非一项保证。
 
+## Documentation
+
+使用文档位于 [`docs/`](docs/)：
+
+- [`docs/commands.md`](docs/commands.md)——权威的命令参考：每一个标志、退出码、每个命令打印出的确切字符串，以及每个命令的一个可运行示例。
+- [`docs/concepts.md`](docs/concepts.md)——深入的模型说明：Tick schema、Ground、Check、内容寻址的身份、仅追加的不可变性，以及 `ev verify` 所强制执行的那些拒绝项。
+
 ## License
 
 Apache-2.0.

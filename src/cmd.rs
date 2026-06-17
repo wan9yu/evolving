@@ -148,8 +148,12 @@ pub fn check(repo: &Path, exit_on_red: bool, run: bool, platform: &str) -> ExitC
         }
     }
 
-    let origin = store.read_origin_sha();
-    let selected = crate::selected::read(&store).unwrap_or(None);
+    let ctx = crate::verdict::Ctx {
+        live_origin_sha: store.read_origin_sha(),
+        selected: crate::selected::read(&store).unwrap_or(None),
+        now_unix: time::OffsetDateTime::now_utc().unix_timestamp(),
+        staleness_secs: store.staleness_days() as i64 * 86_400,
+    };
     let mut rows: Vec<String> = Vec::new();
     let mut any_not_green = false;
 
@@ -168,7 +172,7 @@ pub fn check(repo: &Path, exit_on_red: bool, run: bool, platform: &str) -> ExitC
                 _ => continue,
             };
             let receipts = crate::receipt::read_for(&store, &reference).unwrap_or_default();
-            let v = verdict_for(g, &receipts, origin.as_deref(), selected.as_ref());
+            let v = verdict_for(g, &receipts, &ctx);
             if !matches!(v, Verdict::Green) {
                 any_not_green = true;
             }
@@ -253,8 +257,12 @@ pub fn reopen(repo: &Path, id: &str) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let origin = store.read_origin_sha();
-    let selected = crate::selected::read(&store).unwrap_or(None);
+    let ctx = crate::verdict::Ctx {
+        live_origin_sha: store.read_origin_sha(),
+        selected: crate::selected::read(&store).unwrap_or(None),
+        now_unix: time::OffsetDateTime::now_utc().unix_timestamp(),
+        staleness_secs: store.staleness_days() as i64 * 86_400,
+    };
 
     println!("decision {}: {:?}", tick.id, tick.decision);
     if !tick.observe.is_empty() {
@@ -268,8 +276,7 @@ pub fn reopen(repo: &Path, id: &str) -> ExitCode {
                 ..
             }) => {
                 let receipts = crate::receipt::read_for(&store, reference).unwrap_or_default();
-                let v =
-                    crate::verdict::verdict_for(g, &receipts, origin.as_deref(), selected.as_ref());
+                let v = crate::verdict::verdict_for(g, &receipts, &ctx);
                 let now = v.label();
                 let short = &verified_at_sha[..verified_at_sha.len().min(8)];
                 println!(

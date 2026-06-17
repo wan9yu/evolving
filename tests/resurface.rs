@@ -70,6 +70,15 @@ fn rcpt(ran_at: &str, result: &str) -> Receipt {
         result: result.into(),
     }
 }
+// Widen the staleness window so age-staleness never fires — isolates the green/red/gray axes
+// from the time-stale axis (these fixtures use fixed past dates, evaluated against the real clock).
+fn disable_age_staleness(repo: &std::path::Path) {
+    let s = Store::at(repo);
+    let cfg = std::fs::read_to_string(s.config_path())
+        .unwrap()
+        .replace("staleness_days = 7", "staleness_days = 3650000");
+    std::fs::write(s.config_path(), cfg).unwrap();
+}
 
 #[test]
 fn check_should_report_not_run_and_gate_when_no_receipt_exists() {
@@ -96,6 +105,7 @@ fn check_should_report_green_and_pass_when_a_green_receipt_covers_the_platform()
     // given: a test-bound decision with a green receipt for its platform
     let r = repo();
     decide_bound(&r);
+    disable_age_staleness(&r);
     append(&Store::at(&r), &rcpt("2026-01-01T00:00:00Z", "green")).unwrap();
 
     // when: check runs with gating
@@ -115,6 +125,7 @@ fn check_should_go_red_and_gate_when_the_latest_receipt_is_red() {
     // given: a green receipt followed by a later red one for the same binding
     let r = repo();
     decide_bound(&r);
+    disable_age_staleness(&r);
     let s = Store::at(&r);
     append(&s, &rcpt("2026-01-01T00:00:00Z", "green")).unwrap();
     append(&s, &rcpt("2026-02-01T00:00:00Z", "red")).unwrap();
@@ -136,6 +147,7 @@ fn check_should_promote_gray_to_red_when_the_receipt_is_gray() {
     // given: a test-bound decision whose only receipt is gray
     let r = repo();
     decide_bound(&r);
+    disable_age_staleness(&r);
     append(&Store::at(&r), &rcpt("2026-01-01T00:00:00Z", "gray")).unwrap();
 
     // when: check runs with gating

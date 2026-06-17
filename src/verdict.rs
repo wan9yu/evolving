@@ -2,8 +2,8 @@
 //! No I/O — receipts, the live-origin sha, and the selected-list are passed in. Facts,
 //! not verdicts: every not-green state is a co-equal fact, never ranked or scored.
 //!
-//! Precedence (first match wins): sha-stale → not-run → gray→red → red → silently-unbound → green.
-//! (Age-staleness arrives in Stage 3b-3.)
+//! Precedence (first match wins): sha-stale → not-run → age-stale → gray→red → red →
+//! silently-unbound → green.
 use crate::receipt::Receipt;
 use crate::selected::SelectedList;
 use crate::tick::{Check, Ground};
@@ -34,15 +34,19 @@ impl Verdict {
     }
 }
 
-/// Verdict for one ground. `receipts` are this ground's run-receipts; `live_origin_sha` is
-/// the staleness reference (None ⇒ sha-staleness not evaluated); `selected` is the external
-/// selected-list (None ⇒ L2 not evaluated).
-pub fn verdict_for(
-    ground: &Ground,
-    receipts: &[Receipt],
-    live_origin_sha: Option<&str>,
-    selected: Option<&SelectedList>,
-) -> Verdict {
+use time::{format_description::well_known::Rfc3339, OffsetDateTime};
+
+/// The evaluation context, built once per `ev check` / `ev reopen` invocation:
+/// the staleness reference sha, the selected-list, and the clock for age-staleness.
+pub struct Ctx {
+    pub live_origin_sha: Option<String>, // None ⇒ sha-staleness not evaluated
+    pub selected: Option<SelectedList>,  // None ⇒ L2 not evaluated
+    pub now_unix: i64,                   // current time, unix seconds
+    pub staleness_secs: i64, // a deciding receipt older than this is stale; i64::MAX disables
+}
+
+/// Verdict for one ground against `receipts` (this ground's run-receipts) and `ctx`.
+pub fn verdict_for(ground: &Ground, receipts: &[Receipt], ctx: &Ctx) -> Verdict {
     let (reference, verified_at_sha, liveness) = match &ground.check {
         Some(Check::Test {
             reference,
@@ -53,7 +57,7 @@ pub fn verdict_for(
         _ => return Verdict::NotApplicable,
     };
 
-    if let Some(origin) = live_origin_sha {
+    if let Some(origin) = ctx.live_origin_sha.as_deref() {
         if origin != verified_at_sha {
             return Verdict::Stale {
                 reason: "verified_at_sha behind live origin".into(),
@@ -79,6 +83,20 @@ pub fn verdict_for(
             missing_platforms: missing,
         };
     }
+
+    // Age-staleness: a deciding receipt older than the staleness window is too old to trust.
+    // An unparseable ran_at is skipped (a data fault, not a freshness signal).
+    let stale_by_age = deciding.iter().any(|r| {
+        OffsetDateTime::parse(&r.ran_at, &Rfc3339)
+            .map(|dt| ctx.now_unix - dt.unix_timestamp() > ctx.staleness_secs)
+            .unwrap_or(false)
+    });
+    if stale_by_age {
+        return Verdict::Stale {
+            reason: "deciding receipt older than the staleness window".into(),
+        };
+    }
+
     if deciding.iter().any(|r| r.result == "gray") {
         return Verdict::GrayRed;
     }
@@ -88,7 +106,7 @@ pub fn verdict_for(
 
     // L2 selected: the latest diff touched a declared trigger but did not select this ref —
     // the receipts look green but were not re-run for the change that touched the assumption.
-    if let Some(sl) = selected {
+    if let Some(sl) = ctx.selected.as_ref() {
         let touched = liveness
             .triggered_by
             .iter()
@@ -133,6 +151,15 @@ mod tests {
             result: result.into(),
         }
     }
+    // A Ctx with age-staleness DISABLED (staleness_secs = i64::MAX), for the non-age tests.
+    fn ctx(live_origin_sha: Option<&str>, selected: Option<SelectedList>) -> Ctx {
+        Ctx {
+            live_origin_sha: live_origin_sha.map(|s| s.to_string()),
+            selected,
+            now_unix: 0,
+            staleness_secs: i64::MAX,
+        }
+    }
 
     #[test]
     fn verdict_for_should_be_not_applicable_when_the_ground_has_a_person_check() {
@@ -146,7 +173,7 @@ mod tests {
         };
 
         // when: its verdict is computed
-        let v = verdict_for(&g, &[], None, None);
+        let v = verdict_for(&g, &[], &ctx(None, None));
 
         // then: it is not applicable (person grounds never appear in check)
         assert_eq!(v, Verdict::NotApplicable);
@@ -159,7 +186,7 @@ mod tests {
         let receipts = vec![rcpt("linux-ci", "2026-01-01T00:00:00Z", "green")];
 
         // when: its verdict is computed
-        let v = verdict_for(&g, &receipts, None, None);
+        let v = verdict_for(&g, &receipts, &ctx(None, None));
 
         // then: it is not-run, naming the missing platform
         assert_eq!(
@@ -177,7 +204,7 @@ mod tests {
         let receipts = vec![rcpt("linux-ci", "2026-01-01T00:00:00Z", "gray")];
 
         // when: its verdict is computed
-        let v = verdict_for(&g, &receipts, None, None);
+        let v = verdict_for(&g, &receipts, &ctx(None, None));
 
         // then: gray is promoted to red, never dropped
         assert_eq!(v, Verdict::GrayRed);
@@ -193,7 +220,7 @@ mod tests {
         ];
 
         // when: its verdict is computed
-        let v = verdict_for(&g, &receipts, None, None);
+        let v = verdict_for(&g, &receipts, &ctx(None, None));
 
         // then: the latest (red) decides
         assert_eq!(v, Verdict::Red);
@@ -209,7 +236,7 @@ mod tests {
         ];
 
         // when: its verdict is computed
-        let v = verdict_for(&g, &receipts, None, None);
+        let v = verdict_for(&g, &receipts, &ctx(None, None));
 
         // then: it is green
         assert_eq!(v, Verdict::Green);
@@ -223,7 +250,7 @@ mod tests {
         let origin = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
         // when: its verdict is computed against that origin
-        let v = verdict_for(&g, &receipts, Some(origin), None);
+        let v = verdict_for(&g, &receipts, &ctx(Some(origin), None));
 
         // then: it is stale (binary, no grace) — never shown green
         assert!(matches!(v, Verdict::Stale { .. }));
@@ -241,7 +268,7 @@ mod tests {
         };
 
         // when: its verdict is computed against that selected-list
-        let v = verdict_for(&g, &receipts, None, Some(&sl));
+        let v = verdict_for(&g, &receipts, &ctx(None, Some(sl)));
 
         // then: it is silently-unbound (never counted green)
         assert_eq!(v, Verdict::SilentlyUnbound);
@@ -259,9 +286,51 @@ mod tests {
         };
 
         // when: its verdict is computed
-        let v = verdict_for(&g, &receipts, None, Some(&sl));
+        let v = verdict_for(&g, &receipts, &ctx(None, Some(sl)));
 
         // then: it is green (selected, so not silently-unbound)
+        assert_eq!(v, Verdict::Green);
+    }
+
+    #[test]
+    fn verdict_for_should_be_stale_when_the_deciding_receipt_is_older_than_the_window() {
+        // given: a green receipt from 2026-01-01 evaluated ~5 months later, 7-day window
+        let g = test_ground(&["linux-ci"]);
+        let receipts = vec![rcpt("linux-ci", "2026-01-01T00:00:00Z", "green")];
+        let c = Ctx {
+            live_origin_sha: None,
+            selected: None,
+            now_unix: OffsetDateTime::parse("2026-06-01T00:00:00Z", &Rfc3339)
+                .unwrap()
+                .unix_timestamp(),
+            staleness_secs: 7 * 86_400,
+        };
+
+        // when: its verdict is computed against that clock
+        let v = verdict_for(&g, &receipts, &c);
+
+        // then: it is stale (too old to trust), never green
+        assert!(matches!(v, Verdict::Stale { .. }));
+    }
+
+    #[test]
+    fn verdict_for_should_be_green_when_the_deciding_receipt_is_within_the_window() {
+        // given: a green receipt one hour before now, 7-day window
+        let g = test_ground(&["linux-ci"]);
+        let receipts = vec![rcpt("linux-ci", "2026-06-01T00:00:00Z", "green")];
+        let c = Ctx {
+            live_origin_sha: None,
+            selected: None,
+            now_unix: OffsetDateTime::parse("2026-06-01T01:00:00Z", &Rfc3339)
+                .unwrap()
+                .unix_timestamp(),
+            staleness_secs: 7 * 86_400,
+        };
+
+        // when: its verdict is computed
+        let v = verdict_for(&g, &receipts, &c);
+
+        // then: it is green (fresh)
         assert_eq!(v, Verdict::Green);
     }
 }

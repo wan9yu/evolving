@@ -1,8 +1,18 @@
 [package]
-name = "ev"
+name = "evolving"
 version = "0.1.0"
 edition = "2021"
-description = "git for decisions"
+rust-version = "1.74"
+description = "git for decisions — an immutable, content-addressed ledger of human-authored decisions that resurfaces when a bound check goes red"
+license = "Apache-2.0"
+repository = "https://github.com/wan9yu/evolving"
+readme = "README.md"
+keywords = ["decisions", "cli", "ledger", "provenance", "testing"]
+categories = ["command-line-utilities", "development-tools"]
+
+[lib]
+name = "ev"
+path = "src/lib.rs"
 
 [[bin]]
 name = "ev"

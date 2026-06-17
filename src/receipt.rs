@@ -21,21 +21,15 @@ pub fn test_key(reference: &str) -> String {
     hex::encode(&digest[..6])
 }
 
-fn req_str(obj: &Map<String, Value>, k: &str) -> Result<String, String> {
-    obj.get(k)
-        .and_then(|x| x.as_str())
-        .map(|s| s.to_string())
-        .ok_or(format!("receipt: missing or non-string field: {k}"))
-}
-
 /// Strict parse of one receipt line: closed schema + result enum.
 pub fn from_value(v: &Value) -> Result<Receipt, String> {
+    use crate::tick::{only_keys, req_str};
     let obj = v.as_object().ok_or("receipt is not an object")?;
-    for k in obj.keys() {
-        if !["test", "platform", "commit", "ran_at", "result"].contains(&k.as_str()) {
-            return Err(format!("receipt: field outside closed schema: {k}"));
-        }
-    }
+    only_keys(
+        obj,
+        &["test", "platform", "commit", "ran_at", "result"],
+        "receipt",
+    )?;
     let result = req_str(obj, "result")?;
     if !["green", "red", "gray"].contains(&result.as_str()) {
         return Err(format!("receipt.result must be green|red|gray: {result}"));

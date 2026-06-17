@@ -29,11 +29,7 @@ fn str_array(obj: &serde_json::Map<String, Value>, k: &str) -> Result<Vec<String
 /// Strict parse of a selected-list value (closed schema; missing arrays default to empty).
 pub fn from_value(v: &Value) -> Result<SelectedList, String> {
     let obj = v.as_object().ok_or("selected-list is not an object")?;
-    for k in obj.keys() {
-        if !["commit", "changed", "selected"].contains(&k.as_str()) {
-            return Err(format!("selected-list: field outside closed schema: {k}"));
-        }
-    }
+    crate::tick::only_keys(obj, &["commit", "changed", "selected"], "selected-list")?;
     let commit = obj
         .get("commit")
         .and_then(|x| x.as_str())

@@ -55,7 +55,11 @@ pub fn full_value(t: &Tick) -> Value {
     v
 }
 
-fn only_keys(obj: &Map<String, Value>, allowed: &[&str], what: &str) -> Result<(), String> {
+pub(crate) fn only_keys(
+    obj: &Map<String, Value>,
+    allowed: &[&str],
+    what: &str,
+) -> Result<(), String> {
     for k in obj.keys() {
         if !allowed.contains(&k.as_str()) {
             return Err(format!("{what}: field outside closed schema: {k}"));
@@ -64,7 +68,7 @@ fn only_keys(obj: &Map<String, Value>, allowed: &[&str], what: &str) -> Result<(
     Ok(())
 }
 
-fn req_str(obj: &Map<String, Value>, k: &str) -> Result<String, String> {
+pub(crate) fn req_str(obj: &Map<String, Value>, k: &str) -> Result<String, String> {
     obj.get(k)
         .and_then(|x| x.as_str())
         .map(|s| s.to_string())

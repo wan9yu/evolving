@@ -19,6 +19,21 @@ pub enum Verdict {
     NotApplicable, // no check, or a person re-check
 }
 
+impl Verdict {
+    /// The flat, human-facing label — facts, not verdicts (no score, no rank).
+    pub fn label(&self) -> &'static str {
+        match self {
+            Verdict::Green => "green",
+            Verdict::Red => "red",
+            Verdict::GrayRed => "gray->red",
+            Verdict::NotRun { .. } => "not-run",
+            Verdict::Stale { .. } => "stale",
+            Verdict::SilentlyUnbound => "silently-unbound",
+            Verdict::NotApplicable => "n/a",
+        }
+    }
+}
+
 /// Verdict for one ground. `receipts` are this ground's run-receipts; `live_origin_sha` is
 /// the staleness reference (None ⇒ sha-staleness not evaluated); `selected` is the external
 /// selected-list (None ⇒ L2 not evaluated).

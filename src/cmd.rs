@@ -93,12 +93,9 @@ pub fn verify_cmd(repo: &Path, self_test: bool) -> ExitCode {
 }
 
 /// The latest ran_at across a ref's receipts (for the display line), if any.
-fn latest_ran_at(receipts: &[crate::receipt::Receipt], reference: &str) -> Option<String> {
-    receipts
-        .iter()
-        .filter(|r| r.test == reference)
-        .map(|r| r.ran_at.clone())
-        .max()
+/// `receipts` is already scoped to one ref by `read_for`, so no filtering is needed.
+fn latest_ran_at(receipts: &[crate::receipt::Receipt]) -> Option<String> {
+    receipts.iter().map(|r| r.ran_at.clone()).max()
 }
 
 pub fn check(repo: &Path, exit_on_red: bool, run: bool, platform: &str) -> ExitCode {
@@ -175,21 +172,13 @@ pub fn check(repo: &Path, exit_on_red: bool, run: bool, platform: &str) -> ExitC
             if !matches!(v, Verdict::Green) {
                 any_not_green = true;
             }
-            let label = match &v {
-                Verdict::Green => "green",
-                Verdict::Red => "red",
-                Verdict::GrayRed => "gray->red",
-                Verdict::NotRun { .. } => "not-run",
-                Verdict::Stale { .. } => "stale",
-                Verdict::SilentlyUnbound => "silently-unbound",
-                Verdict::NotApplicable => "n/a",
-            };
+            let label = v.label();
             let detail = match &v {
                 Verdict::NotRun { missing_platforms } => {
                     format!("missing: {}", missing_platforms.join(", "))
                 }
                 Verdict::Stale { reason } => reason.clone(),
-                _ => latest_ran_at(&receipts, &reference)
+                _ => latest_ran_at(&receipts)
                     .map(|ts| format!("ran {ts}"))
                     .unwrap_or_else(|| "no receipt".into()),
             };
@@ -252,7 +241,6 @@ pub fn why(repo: &Path, selector: &str) -> ExitCode {
 }
 
 pub fn reopen(repo: &Path, id: &str) -> ExitCode {
-    use crate::verdict::Verdict;
     let store = Store::at(repo);
     let tick = match store.read_tick(id) {
         Ok(Some(t)) => t,
@@ -282,15 +270,7 @@ pub fn reopen(repo: &Path, id: &str) -> ExitCode {
                 let receipts = crate::receipt::read_for(&store, reference).unwrap_or_default();
                 let v =
                     crate::verdict::verdict_for(g, &receipts, origin.as_deref(), selected.as_ref());
-                let now = match &v {
-                    Verdict::Green => "green",
-                    Verdict::Red => "red",
-                    Verdict::GrayRed => "gray->red",
-                    Verdict::NotRun { .. } => "not-run",
-                    Verdict::Stale { .. } => "stale",
-                    Verdict::SilentlyUnbound => "silently-unbound",
-                    Verdict::NotApplicable => "n/a",
-                };
+                let now = v.label();
                 let short = &verified_at_sha[..verified_at_sha.len().min(8)];
                 println!(
                     "  [{}] {:?} — test {:?} frozen@{short} now: {now}",

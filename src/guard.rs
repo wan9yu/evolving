@@ -18,7 +18,12 @@ pub struct GuardArgs {
 }
 
 fn resolve_target(grounds: &[Ground], target: &Option<String>) -> Result<usize, String> {
-    let unbound: Vec<usize> = grounds.iter().enumerate().filter(|(_, g)| g.check.is_none()).map(|(i, _)| i).collect();
+    let unbound: Vec<usize> = grounds
+        .iter()
+        .enumerate()
+        .filter(|(_, g)| g.check.is_none())
+        .map(|(i, _)| i)
+        .collect();
     match target {
         None => match unbound.as_slice() {
             [one] => Ok(*one),
@@ -27,10 +32,17 @@ fn resolve_target(grounds: &[Ground], target: &Option<String>) -> Result<usize, 
         },
         Some(t) => {
             if let Ok(idx) = t.parse::<usize>() {
-                if idx < grounds.len() { return Ok(idx); }
+                if idx < grounds.len() {
+                    return Ok(idx);
+                }
                 return Err(format!("ground index {idx} out of range"));
             }
-            let matches: Vec<usize> = grounds.iter().enumerate().filter(|(_, g)| g.claim == *t).map(|(i, _)| i).collect();
+            let matches: Vec<usize> = grounds
+                .iter()
+                .enumerate()
+                .filter(|(_, g)| g.claim == *t)
+                .map(|(i, _)| i)
+                .collect();
             match matches.as_slice() {
                 [one] => Ok(*one),
                 [] => Err(format!("no ground with claim {t:?}")),
@@ -42,13 +54,27 @@ fn resolve_target(grounds: &[Ground], target: &Option<String>) -> Result<usize, 
 
 pub fn run(repo: &Path, a: GuardArgs) -> Result<Tick, String> {
     let store = Store::at(repo);
-    let parent = store.read_tick(&a.id).map_err(|e| format!("{e}"))?
+    let parent = store
+        .read_tick(&a.id)
+        .map_err(|e| format!("{e}"))?
         .ok_or(format!("no tick with id {}", a.id))?;
+    let head = store
+        .read_head()
+        .map_err(|e| format!("reading HEAD: {e}"))?;
+    if a.id != head {
+        return Err(format!(
+            "guard can only amend the current HEAD decision; {} is not HEAD ({})",
+            a.id, head
+        ));
+    }
     let idx = resolve_target(&parent.grounds, &a.target)?;
     let g = &parent.grounds[idx];
     // R2: a human-rechecked (person) ground can never be force-bound to a test.
     if let Some(Check::Person { .. }) = g.check {
         return Err("a human-rechecked ground cannot carry a test (R2 hard error)".into());
+    }
+    if g.supports.starts_with("rejected:") {
+        return Err("a road-not-taken (rejected) ground cannot carry a test in 0.1.0 — reserved for a future rejection-rationale liveness feature".into());
     }
     if g.check.is_some() {
         return Err("ground already has a check".into());
@@ -57,7 +83,9 @@ pub fn run(repo: &Path, a: GuardArgs) -> Result<Tick, String> {
         return Err("a test binding requires a counter-test (no vacuous binding)".into());
     }
     if a.platforms.is_empty() || a.triggered_by.is_empty() || a.surfaces.is_empty() {
-        return Err("a test binding requires at least one platform, triggered-by, and surface".into());
+        return Err(
+            "a test binding requires at least one platform, triggered-by, and surface".into(),
+        );
     }
     let verified_at_sha = crate::capture::resolve_sha(repo, &a.verified_at_sha)?;
     let blame = crate::capture::resolve_blame(repo, a.blame)?;
@@ -70,7 +98,11 @@ pub fn run(repo: &Path, a: GuardArgs) -> Result<Tick, String> {
             reference: a.selector,
             verified_at_sha,
             counter_test: a.counter_test,
-            liveness: Liveness { platforms: a.platforms, triggered_by: a.triggered_by, surfaces: a.surfaces },
+            liveness: Liveness {
+                platforms: a.platforms,
+                triggered_by: a.triggered_by,
+                surfaces: a.surfaces,
+            },
         }),
     };
     let mut child = Tick {
@@ -84,7 +116,9 @@ pub fn run(repo: &Path, a: GuardArgs) -> Result<Tick, String> {
         blame,
     };
     child.id = compute_id(&child);
-    store.write_tick(&child).map_err(|e| format!("writing tick: {e}"))?;
+    store
+        .write_tick(&child)
+        .map_err(|e| format!("writing tick: {e}"))?;
     Ok(child)
 }
 
@@ -95,46 +129,151 @@ mod tests {
     fn repo_with_unbound() -> (std::path::PathBuf, String) {
         use std::sync::atomic::{AtomicU64, Ordering};
         static N: AtomicU64 = AtomicU64::new(0);
-        let p = std::env::temp_dir().join(format!("ev-guard-{}-{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed)));
+        let p = std::env::temp_dir().join(format!(
+            "ev-guard-{}-{}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::Relaxed)
+        ));
         let _ = std::fs::remove_dir_all(&p);
         std::fs::create_dir_all(&p).unwrap();
         Store::at(&p).init().unwrap();
-        let args: Vec<String> = ["--assume", "schema stays frozen", "--assume", "team ok", "--revisit", "Q3", "--blame", "Wang Yu"]
-            .iter().map(|x| x.to_string()).collect();
+        let args: Vec<String> = [
+            "--assume",
+            "schema stays frozen",
+            "--assume",
+            "team ok",
+            "--revisit",
+            "Q3",
+            "--blame",
+            "Wang Yu",
+        ]
+        .iter()
+        .map(|x| x.to_string())
+        .collect();
         let t = crate::capture::run(&p, "build our own retrieval", &args).unwrap();
         (p, t.id)
     }
     fn args(selector: &str, id: &str, target: Option<&str>) -> GuardArgs {
         GuardArgs {
-            selector: selector.into(), id: id.into(), target: target.map(|s| s.into()),
+            selector: selector.into(),
+            id: id.into(),
+            target: target.map(|s| s.into()),
             counter_test: "pytest x::counter".into(),
-            platforms: vec!["linux-ci".into()], triggered_by: vec!["f".into()], surfaces: vec!["s".into()],
+            platforms: vec!["linux-ci".into()],
+            triggered_by: vec!["f".into()],
+            surfaces: vec!["s".into()],
             verified_at_sha: Some("d308afac1b2c3d4e5f60718293a4b5c6d7e8f901".into()),
             blame: Some("Wang Yu".into()),
         }
     }
 
     #[test]
-    fn guard_binds_a_named_unbound_ground_and_writes_a_child() {
+    fn guard_should_bind_a_named_unbound_ground_and_write_a_child_when_the_target_is_named() {
+        // given: a HEAD tick with an unbound "schema stays frozen" ground
         let (p, id) = repo_with_unbound();
-        let child = run(&p, args("pytest tests/test_schema_frozen.py", &id, Some("schema stays frozen"))).expect("ok");
+
+        // when: that named ground is guarded
+        let child = run(
+            &p,
+            args(
+                "pytest tests/test_schema_frozen.py",
+                &id,
+                Some("schema stays frozen"),
+            ),
+        )
+        .expect("ok");
+
+        // then: a child is written and the named ground now carries a test check
         assert_eq!(child.parent_id, id);
-        let i = child.grounds.iter().position(|g| g.claim == "schema stays frozen").unwrap();
+        let i = child
+            .grounds
+            .iter()
+            .position(|g| g.claim == "schema stays frozen")
+            .unwrap();
         assert!(matches!(child.grounds[i].check, Some(Check::Test { .. })));
     }
 
     #[test]
-    fn guard_refuses_to_force_bind_a_human_rechecked_ground() {
+    fn guard_should_refuse_the_target_when_the_ground_is_human_rechecked() {
+        // given: a HEAD tick whose "team ok" ground is a human-rechecked (person) check
         let (p, id) = repo_with_unbound();
+
+        // when: that person ground is guarded with a test
         let e = run(&p, args("pytest x", &id, Some("team ok")));
+
+        // then: it is refused
         assert!(e.is_err());
     }
 
     #[test]
-    fn guard_requires_a_target_when_more_than_one_ground_is_unbound() {
+    fn guard_should_require_a_target_when_more_than_one_ground_is_unbound() {
+        // given: a HEAD tick with two unbound grounds and no target named
         let (p, _id) = repo_with_unbound();
-        let t2 = crate::capture::run(&p, "d2", &["--assume", "a", "--assume", "b", "--blame", "Wang Yu"].iter().map(|x| x.to_string()).collect::<Vec<_>>()).unwrap();
+        let t2 = crate::capture::run(
+            &p,
+            "d2",
+            &["--assume", "a", "--assume", "b", "--blame", "Wang Yu"]
+                .iter()
+                .map(|x| x.to_string())
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+
+        // when: the guard is run without naming a target
         let e = run(&p, args("pytest x", &t2.id, None));
+
+        // then: it is refused
+        assert!(e.is_err());
+    }
+
+    #[test]
+    fn guard_should_refuse_the_target_when_it_is_not_head() {
+        // given: two decisions in a chain, so the first is no longer HEAD
+        let p = repo_with_unbound().0;
+        let t1 = crate::capture::run(
+            &p,
+            "d1",
+            &["--assume", "a", "--blame", "Wang Yu"]
+                .iter()
+                .map(|x| x.to_string())
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+        let _t2 = crate::capture::run(
+            &p,
+            "d2",
+            &["--assume", "b", "--blame", "Wang Yu"]
+                .iter()
+                .map(|x| x.to_string())
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+
+        // when: the non-HEAD first tick is guarded
+        let e = run(&p, args("pytest x", &t1.id, Some("a")));
+
+        // then: it is refused
+        assert!(e.is_err());
+    }
+
+    #[test]
+    fn guard_should_refuse_the_target_when_the_ground_is_a_rejected_road() {
+        // given: a HEAD tick whose only ground is a rejected road
+        let p = repo_with_unbound().0;
+        let t = crate::capture::run(
+            &p,
+            "d",
+            &["--reject", "x: y", "--blame", "Wang Yu"]
+                .iter()
+                .map(|x| x.to_string())
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+
+        // when: that rejected ground is guarded with a test
+        let e = run(&p, args("pytest x", &t.id, Some("y")));
+
+        // then: it is refused
         assert!(e.is_err());
     }
 }

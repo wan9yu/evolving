@@ -20,15 +20,11 @@ impl Default for Config {
     }
 }
 
-/// The value of a top-level `key = value` line (whole-token key match), trimmed; None if absent.
+/// The value of a `key = value` line (exact whole-key match), trimmed; None if absent.
 fn value_of<'a>(text: &'a str, key: &str) -> Option<&'a str> {
     text.lines().find_map(|line| {
-        let rest = line.trim().strip_prefix(key)?;
-        // The key must be a whole token — the next char is '=' or whitespace, not more name.
-        if !rest.starts_with(|c: char| c == '=' || c.is_whitespace()) {
-            return None;
-        }
-        rest.trim_start().strip_prefix('=').map(|v| v.trim())
+        let (k, v) = line.split_once('=')?;
+        (k.trim() == key).then_some(v.trim())
     })
 }
 
@@ -118,5 +114,17 @@ mod tests {
 
         // then: staleness_days is the default, not 99 (whole-token match)
         assert_eq!(c.staleness_days, 7);
+    }
+
+    #[test]
+    fn read_should_equal_the_defaults_for_a_freshly_initialized_store() {
+        // given: a store carrying the canonical DEFAULT_CONFIG that `init` writes
+        let (_p, s) = store();
+
+        // when: that default config is read back
+        let c = read(&s);
+
+        // then: it matches Config::default() — pins DEFAULT_CONFIG and Config::default() in lockstep
+        assert_eq!(c, Config::default());
     }
 }

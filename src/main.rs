@@ -43,11 +43,17 @@ enum Cmd {
         #[arg(long)]
         blame: Option<String>,
     },
-    /// Evaluate bound checks against cached receipts (read-only) and report a flat verdict set.
+    /// Evaluate bound checks against cached receipts and report a flat verdict set.
     Check {
         /// Exit non-zero if any ground is not green.
         #[arg(long)]
         exit_on_red: bool,
+        /// Run each bound test (that declares --platform) locally and record a receipt before evaluating.
+        #[arg(long)]
+        run: bool,
+        /// The platform this --run represents (which declared platform the local run satisfies).
+        #[arg(long, default_value = "local")]
+        platform: String,
     },
 }
 
@@ -83,6 +89,10 @@ fn main() -> std::process::ExitCode {
                 blame,
             },
         ),
-        Cmd::Check { exit_on_red } => ev::cmd::check(&repo, exit_on_red),
+        Cmd::Check {
+            exit_on_red,
+            run,
+            platform,
+        } => ev::cmd::check(&repo, exit_on_red, run, &platform),
     }
 }

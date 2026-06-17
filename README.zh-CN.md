@@ -118,6 +118,8 @@ ev show <id>
 - [`docs/commands.md`](docs/commands.md)——权威的命令参考：每一个标志、退出码、每个命令打印出的确切字符串，以及每个命令的一个可运行示例。
 - [`docs/concepts.md`](docs/concepts.md)——深入的模型说明：Tick schema、Ground、Check、内容寻址的身份、仅追加的不可变性，以及 `ev verify` 所强制执行的那些拒绝项。
 
+**让 AI agent 使用 `ev`？** [`skills/ev/SKILL.md`](skills/ev/SKILL.md) 是一个与具体工具无关的 agent skill——把它放进你 agent 的 skills 目录，agent 就能正确使用 `ev`，无需翻说明书。
+
 ## License
 
 Apache-2.0.

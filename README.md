@@ -161,6 +161,10 @@ Usage docs live in [`docs/`](docs/):
   Checks, content-addressed identity, append-only immutability, and the refusals
   `ev verify` enforces.
 
+**Using `ev` from an AI agent?** [`skills/ev/SKILL.md`](skills/ev/SKILL.md) is a
+tool-agnostic agent skill — drop it into your agent's skills directory so it uses `ev`
+correctly without reading the manual.
+
 ## License
 
 Apache-2.0.

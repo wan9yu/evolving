@@ -1,6 +1,7 @@
 //! ev check --run: execute a bound test locally and produce a run-receipt. A THIN runner —
 //! the production receipt-writer is CI / a supervisor hook; --run is for local verification.
-//! exit 0 => green, any non-zero => red (gray comes from external writers, never from --run).
+//! exit == the configured green_exit_code => green, anything else => red (gray comes from
+//! external writers, never from --run).
 use crate::receipt::Receipt;
 use std::path::Path;
 use std::process::Command;
@@ -8,7 +9,8 @@ use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 
 /// Run the bound `reference` as a shell command in `repo`; return a receipt stamped for
-/// `platform`, the current git commit (HEAD), and now (UTC). exit 0 => green, else red.
+/// `platform`, the current git commit (HEAD), and now (UTC). exit == `green_exit_code` => green,
+/// else red.
 pub fn run_check(
     repo: &Path,
     reference: &str,

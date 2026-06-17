@@ -6,4 +6,5 @@ pub mod lint;
 pub mod receipt;
 pub mod store;
 pub mod tick;
+pub mod verdict;
 pub mod verify;

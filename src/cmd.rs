@@ -210,6 +210,47 @@ pub fn check(repo: &Path, exit_on_red: bool, run: bool, platform: &str) -> ExitC
     ExitCode::SUCCESS
 }
 
+pub fn why(repo: &Path, selector: &str) -> ExitCode {
+    let store = Store::at(repo);
+    if !store.exists() {
+        eprintln!("error: no .evolving/ store here — run `ev init` first");
+        return ExitCode::FAILURE;
+    }
+    let files = match store.read_all() {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("error: reading store: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let mut found = false;
+    for (filename, raw) in &files {
+        let t = match crate::tick::from_value(raw) {
+            Ok(t) => t,
+            Err(_) => continue,
+        };
+        if t.status != "live" {
+            continue;
+        }
+        for g in &t.grounds {
+            if let Some(Check::Test { reference, .. }) = &g.check {
+                if reference.as_str() == selector {
+                    found = true;
+                    println!(
+                        "{filename}\t{:?}\tguards: {:?} ({})",
+                        t.decision, g.claim, g.supports
+                    );
+                }
+            }
+        }
+    }
+    if !found {
+        eprintln!("{selector:?} guards nothing");
+        return ExitCode::FAILURE;
+    }
+    ExitCode::SUCCESS
+}
+
 /// Reproduce the two frozen golden vectors; non-zero if either id drifts.
 fn self_test_golden() -> ExitCode {
     let genesis = Tick {

@@ -55,6 +55,11 @@ enum Cmd {
         #[arg(long, default_value = "local")]
         platform: String,
     },
+    /// Reverse lookup: name the decision + ground a test selector guards.
+    Why {
+        /// The bound test selector to look up.
+        selector: String,
+    },
 }
 
 fn main() -> std::process::ExitCode {
@@ -94,5 +99,6 @@ fn main() -> std::process::ExitCode {
             run,
             platform,
         } => ev::cmd::check(&repo, exit_on_red, run, &platform),
+        Cmd::Why { selector } => ev::cmd::why(&repo, &selector),
     }
 }

@@ -37,6 +37,8 @@ pub fn hashed_value(t: &Tick) -> Value {
         .grounds
         .iter()
         .map(|g| {
+            // Built as a manual Map (not json!) so an absent check OMITS the key
+            // entirely — never serializes as null (design §4.8).
             let mut o = Map::new();
             o.insert("claim".into(), Value::String(g.claim.clone()));
             o.insert("supports".into(), Value::String(g.supports.clone()));
@@ -54,7 +56,10 @@ pub fn hashed_value(t: &Tick) -> Value {
     })
 }
 
-/// RFC-8785 canonical bytes (serde_json compact over the sorted-key Value).
+/// Canonical bytes for our **string-only** hashed `Value`. serde_json's compact
+/// output over a sorted-key `Value` equals RFC-8785/JCS *only* because the payload
+/// contains no numbers/bools/nulls (JCS number canonicalization is not applied).
+/// Do not reuse on a number-bearing `Value` (see module header).
 pub fn canonical_json(v: &Value) -> String {
     serde_json::to_string(v).expect("Value is serializable")
 }

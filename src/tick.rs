@@ -103,6 +103,9 @@ fn check_from_value(v: &Value) -> Result<Check, String> {
         Some("test") => {
             only_keys(obj, &["by", "ref", "verified_at_sha", "counter_test", "liveness"], "test check")?;
             let reference = req_str(obj, "ref")?;
+            if reference.is_empty() {
+                return Err("test check ref is empty".into());
+            }
             let verified_at_sha = req_str(obj, "verified_at_sha")?;
             if !is_40_lower_hex(&verified_at_sha) {
                 return Err(format!("verified_at_sha must be 40 lowercase hex: {verified_at_sha}"));
@@ -204,6 +207,16 @@ mod tests {
         let mut v = genesis_full();
         v["grounds"][0]["check"] = json!({
             "by": "test", "ref": "r", "verified_at_sha": "ABC", "counter_test": "ct",
+            "liveness": { "platforms": ["p"], "triggered_by": ["t"], "surfaces": ["s"] }
+        });
+        assert!(from_value(&v).is_err());
+    }
+
+    #[test]
+    fn a_test_check_with_an_empty_ref_is_rejected() {
+        let mut v = genesis_full();
+        v["grounds"][0]["check"] = json!({
+            "by": "test", "ref": "", "verified_at_sha": "d308afac1b2c3d4e5f60718293a4b5c6d7e8f901", "counter_test": "ct",
             "liveness": { "platforms": ["p"], "triggered_by": ["t"], "surfaces": ["s"] }
         });
         assert!(from_value(&v).is_err());

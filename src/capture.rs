@@ -40,21 +40,62 @@ fn resolve_blame(repo: &Path, blame_override: Option<String>) -> Result<String, 
     Ok(name)
 }
 
-/// Build a Ground from a draft. (Test bindings added in P2.2 — here a draft with a
-/// test_ref/liveness is rejected so the parser stays honest until then.)
-fn build_ground(d: DraftGround, _sha: &Option<String>) -> Result<Ground, String> {
+fn resolve_sha(repo: &Path, sha_override: &Option<String>) -> Result<String, String> {
+    let sha = match sha_override {
+        Some(s) => s.trim().to_string(),
+        None => {
+            let out = std::process::Command::new("git").args(["rev-parse", "HEAD"]).current_dir(repo).output()
+                .map_err(|e| format!("cannot run git: {e}"))?;
+            if !out.status.success() {
+                return Err("cannot resolve verified_at_sha (not a git repo?) — pass --verified-at-sha".into());
+            }
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        }
+    };
+    let ok = sha.len() == 40 && sha.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+    if !ok {
+        return Err(format!("verified_at_sha must be 40 lowercase hex: {sha}"));
+    }
+    Ok(sha)
+}
+
+fn build_ground(repo: &Path, d: DraftGround, sha_override: &Option<String>) -> Result<Ground, String> {
+    use crate::tick::Liveness;
     if d.claim.is_empty() {
         return Err("ground claim is empty".into());
     }
     if d.revisit.is_some() && d.test_ref.is_some() {
         return Err("a ground cannot be both --revisit and --assume-test (R2)".into());
     }
-    if d.test_ref.is_some() || d.counter_test.is_some()
-        || !d.platforms.is_empty() || !d.triggered_by.is_empty() || !d.surfaces.is_empty()
-    {
-        return Err("test bindings are not supported yet (P2.2)".into());
-    }
-    let check = d.revisit.map(|when| Check::Person { reference: when });
+    let has_test_fields = d.counter_test.is_some()
+        || !d.platforms.is_empty() || !d.triggered_by.is_empty() || !d.surfaces.is_empty();
+    let check = match (d.test_ref, d.revisit) {
+        (Some(reference), _) => {
+            let counter_test = d.counter_test.ok_or("a test binding requires --counter-test (no vacuous binding)".to_string())?;
+            if d.platforms.is_empty() || d.triggered_by.is_empty() || d.surfaces.is_empty() {
+                return Err("a test binding requires at least one --on-platform, --triggered-by, and --surface".into());
+            }
+            let verified_at_sha = resolve_sha(repo, sha_override)?;
+            Some(Check::Test {
+                reference,
+                verified_at_sha,
+                counter_test,
+                liveness: Liveness { platforms: d.platforms, triggered_by: d.triggered_by, surfaces: d.surfaces },
+            })
+        }
+        (None, Some(when)) => {
+            if has_test_fields {
+                return Err("--counter-test/--on-platform/--triggered-by/--surface require --assume-test".into());
+            }
+            Some(Check::Person { reference: when })
+        }
+        (None, None) => {
+            if has_test_fields {
+                return Err("--counter-test/--on-platform/--triggered-by/--surface require --assume-test".into());
+            }
+            None
+        }
+    };
     Ok(Ground { claim: d.claim, supports: d.supports, check })
 }
 
@@ -99,7 +140,7 @@ pub fn run(repo: &Path, decision: &str, args: &[String]) -> Result<Tick, String>
     let blame = resolve_blame(repo, blame_override)?;
     let mut grounds = Vec::new();
     for d in drafts {
-        grounds.push(build_ground(d, &sha_override)?);
+        grounds.push(build_ground(repo, d, &sha_override)?);
     }
     let store = Store::at(repo);
     if !store.exists() {
@@ -166,5 +207,48 @@ mod tests {
         let _ = std::fs::remove_dir_all(&p);
         std::fs::create_dir_all(&p).unwrap();
         assert!(run(&p, "d", &s(&["--blame", "x"])).is_err());
+    }
+
+    #[test]
+    fn decide_builds_a_self_verifying_test_binding() {
+        let r = repo();
+        let t = run(&r, "restore-safety counter DB-backed; reject Redis", &s(&[
+            "--assume", "Argus introduces no Redis; multi-pod coord via existing DB",
+            "--assume-test", "pytest tests/test_redis_absent.py",
+            "--counter-test", "pytest tests/test_redis_absent.py::test_redis_injection_flips_red",
+            "--on-platform", "linux-ci", "--triggered-by", "pyproject.toml", "--surface", "pyproject-deps",
+            "--verified-at-sha", "d308afac1b2c3d4e5f60718293a4b5c6d7e8f901",
+            "--reject", "Redis: a new infra dependency",
+        ])).expect("ok");
+        match &t.grounds[0].check {
+            Some(Check::Test { reference, counter_test, liveness, verified_at_sha }) => {
+                assert_eq!(reference, "pytest tests/test_redis_absent.py");
+                assert!(counter_test.contains("flips_red"));
+                assert_eq!(liveness.platforms, vec!["linux-ci".to_string()]);
+                assert_eq!(verified_at_sha.len(), 40);
+            }
+            _ => panic!("expected a test check"),
+        }
+    }
+
+    #[test]
+    fn decide_rejects_a_test_binding_without_a_counter_test() {
+        let r = repo();
+        let e = run(&r, "d", &s(&[
+            "--assume", "c", "--assume-test", "pytest x",
+            "--on-platform", "linux-ci", "--triggered-by", "f", "--surface", "s",
+            "--verified-at-sha", "d308afac1b2c3d4e5f60718293a4b5c6d7e8f901",
+        ]));
+        assert!(e.is_err());
+    }
+
+    #[test]
+    fn decide_rejects_a_test_binding_with_no_verified_at_sha_and_no_git() {
+        let r = repo();
+        let e = run(&r, "d", &s(&[
+            "--assume", "c", "--assume-test", "pytest x", "--counter-test", "ct",
+            "--on-platform", "linux-ci", "--triggered-by", "f", "--surface", "s",
+        ]));
+        assert!(e.is_err());
     }
 }

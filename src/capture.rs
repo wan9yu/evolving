@@ -21,7 +21,7 @@ fn need(args: &[String], i: usize, flag: &str) -> Result<String, String> {
     args.get(i + 1).cloned().ok_or(format!("{flag} requires a value"))
 }
 
-fn last<'a>(g: &'a mut Vec<DraftGround>, flag: &str) -> Result<&'a mut DraftGround, String> {
+fn last<'a>(g: &'a mut [DraftGround], flag: &str) -> Result<&'a mut DraftGround, String> {
     g.last_mut().ok_or(format!("{flag} has no preceding --assume/--reject ground"))
 }
 

@@ -94,6 +94,14 @@ impl Store {
         }
         Ok(out)
     }
+
+    /// The cached live-origin sha (results/origin-sha), or None if absent/empty. No network.
+    pub fn read_origin_sha(&self) -> Option<String> {
+        std::fs::read_to_string(self.root.join("results").join("origin-sha"))
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    }
 }
 
 #[cfg(test)]
@@ -182,5 +190,41 @@ mod tests {
         let all = s.read_all().unwrap();
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].0, "aaaaaaaaaaaa");
+    }
+
+    #[test]
+    fn read_origin_sha_should_return_the_trimmed_sha_when_the_cache_file_exists() {
+        // given: an initialized store with a cached origin-sha file
+        let repo = tmp();
+        let s = Store::at(&repo);
+        s.init().unwrap();
+        std::fs::write(
+            s.root.join("results").join("origin-sha"),
+            "d308afac1b2c3d4e5f60718293a4b5c6d7e8f901\n",
+        )
+        .unwrap();
+
+        // when: the cached origin sha is read
+        let sha = s.read_origin_sha();
+
+        // then: it is the trimmed value
+        assert_eq!(
+            sha.as_deref(),
+            Some("d308afac1b2c3d4e5f60718293a4b5c6d7e8f901")
+        );
+    }
+
+    #[test]
+    fn read_origin_sha_should_be_none_when_no_cache_file_exists() {
+        // given: an initialized store with no origin-sha cache
+        let repo = tmp();
+        let s = Store::at(&repo);
+        s.init().unwrap();
+
+        // when: the cached origin sha is read
+        let sha = s.read_origin_sha();
+
+        // then: it is None (no network is consulted)
+        assert!(sha.is_none());
     }
 }

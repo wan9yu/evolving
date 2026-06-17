@@ -92,6 +92,87 @@ pub fn verify_cmd(repo: &Path, self_test: bool) -> ExitCode {
     }
 }
 
+/// The latest ran_at across a ref's receipts (for the display line), if any.
+fn latest_ran_at(receipts: &[crate::receipt::Receipt], reference: &str) -> Option<String> {
+    receipts
+        .iter()
+        .filter(|r| r.test == reference)
+        .map(|r| r.ran_at.clone())
+        .max()
+}
+
+pub fn check(repo: &Path, exit_on_red: bool) -> ExitCode {
+    use crate::verdict::{verdict_for, Verdict};
+    let store = Store::at(repo);
+    if !store.exists() {
+        eprintln!("error: no .evolving/ store here — run `ev init` first");
+        return ExitCode::FAILURE;
+    }
+    let files = match store.read_all() {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("error: reading store: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let origin = store.read_origin_sha();
+    let mut rows: Vec<String> = Vec::new();
+    let mut any_not_green = false;
+
+    for (filename, raw) in &files {
+        let t = match crate::tick::from_value(raw) {
+            Ok(t) => t,
+            Err(_) => continue, // ev verify owns schema errors; check skips unparsable ticks
+        };
+        if t.status != "live" {
+            continue;
+        }
+        for g in &t.grounds {
+            // Only Test-bound grounds appear in check; person re-checks and unbound grounds are excluded.
+            let reference = match &g.check {
+                Some(Check::Test { reference, .. }) => reference.clone(),
+                _ => continue,
+            };
+            let receipts = crate::receipt::read_for(&store, &reference).unwrap_or_default();
+            let v = verdict_for(g, &receipts, origin.as_deref());
+            if !matches!(v, Verdict::Green) {
+                any_not_green = true;
+            }
+            let label = match &v {
+                Verdict::Green => "green",
+                Verdict::Red => "red",
+                Verdict::GrayRed => "gray->red",
+                Verdict::NotRun { .. } => "not-run",
+                Verdict::Stale { .. } => "stale",
+                Verdict::SilentlyUnbound => "silently-unbound",
+                Verdict::NotApplicable => "n/a",
+            };
+            let detail = match &v {
+                Verdict::NotRun { missing_platforms } => {
+                    format!("missing: {}", missing_platforms.join(", "))
+                }
+                Verdict::Stale { reason } => reason.clone(),
+                _ => latest_ran_at(&receipts, &reference)
+                    .map(|ts| format!("ran {ts}"))
+                    .unwrap_or_else(|| "no receipt".into()),
+            };
+            rows.push(format!("{label}\t{filename}\t{:?}\t({detail})", g.claim));
+        }
+    }
+
+    if rows.is_empty() {
+        println!("no test-bound grounds to check");
+    } else {
+        for r in &rows {
+            println!("{r}");
+        }
+    }
+    if exit_on_red && any_not_green {
+        return ExitCode::FAILURE;
+    }
+    ExitCode::SUCCESS
+}
+
 /// Reproduce the two frozen golden vectors; non-zero if either id drifts.
 fn self_test_golden() -> ExitCode {
     let genesis = Tick {

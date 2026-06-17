@@ -43,6 +43,12 @@ enum Cmd {
         #[arg(long)]
         blame: Option<String>,
     },
+    /// Evaluate bound checks against cached receipts (read-only) and report a flat verdict set.
+    Check {
+        /// Exit non-zero if any ground is not green.
+        #[arg(long)]
+        exit_on_red: bool,
+    },
 }
 
 fn main() -> std::process::ExitCode {
@@ -77,5 +83,6 @@ fn main() -> std::process::ExitCode {
                 blame,
             },
         ),
+        Cmd::Check { exit_on_red } => ev::cmd::check(&repo, exit_on_red),
     }
 }

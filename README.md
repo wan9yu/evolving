@@ -1,5 +1,12 @@
 # evolving
 
+**English** | [中文](README.zh-CN.md)
+
+[![CI](https://github.com/wan9yu/evolving/actions/workflows/ci.yml/badge.svg)](https://github.com/wan9yu/evolving/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/evolving.svg)](https://crates.io/crates/evolving)
+[![codecov](https://codecov.io/gh/wan9yu/evolving/branch/main/graph/badge.svg)](https://codecov.io/gh/wan9yu/evolving)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+
 `ev` is **git for decisions**. It records human-authored decisions and the grounds they
 rest on as an immutable, content-addressed *tick chain*, binds either a test-check or a
 human re-check to each ground, and resurfaces a decision when a bound check goes red. It

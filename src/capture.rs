@@ -28,8 +28,9 @@ fn last<'a>(g: &'a mut [DraftGround], flag: &str) -> Result<&'a mut DraftGround,
 /// Resolve the declared author: --blame, else `git config user.name`.
 pub(crate) fn resolve_blame(repo: &Path, blame_override: Option<String>) -> Result<String, String> {
     if let Some(b) = blame_override {
-        if b.trim().is_empty() { return Err("--blame must be non-empty".into()); }
-        return Ok(b);
+        let b = b.trim();
+        if b.is_empty() { return Err("--blame must be non-empty".into()); }
+        return Ok(b.to_string());
     }
     let out = Command::new("git").arg("config").arg("user.name").current_dir(repo).output()
         .map_err(|e| format!("cannot run git: {e}"))?;
@@ -203,6 +204,13 @@ mod tests {
         assert_eq!(t.grounds[1].supports, "rejected:pgvector");
         assert_eq!(t.blame, "Wang Yu");
         assert_eq!(Store::at(&r).read_head().unwrap(), t.id);
+    }
+
+    #[test]
+    fn decide_stores_a_padded_blame_trimmed() {
+        let r = repo();
+        let t = run(&r, "d", &s(&["--assume", "c", "--blame", "  Wang Yu  "])).expect("ok");
+        assert_eq!(t.blame, "Wang Yu");
     }
 
     #[test]

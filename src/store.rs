@@ -14,7 +14,8 @@ green_exit_code = 0\n\n\
 [liveness]\n\
 platforms = [\"linux-ci\", \"mac\", \"ship-image\"]\n\
 staleness_days = 7\n\
-not_run_lookback_commits = 20\n";
+not_run_lookback_commits = 20\n\
+staleness_ref = \"live-origin\"\n";
 
 impl Store {
     pub fn at(repo: &Path) -> Store {

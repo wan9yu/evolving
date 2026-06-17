@@ -69,7 +69,13 @@ mod tests {
     use crate::tick::{Ground, Tick};
 
     fn tmp() -> std::path::PathBuf {
-        let p = std::env::temp_dir().join(format!("ev-store-test-{}", std::process::id()));
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static N: AtomicU64 = AtomicU64::new(0);
+        let p = std::env::temp_dir().join(format!(
+            "ev-store-test-{}-{}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::Relaxed)
+        ));
         let _ = std::fs::remove_dir_all(&p);
         std::fs::create_dir_all(&p).unwrap();
         p

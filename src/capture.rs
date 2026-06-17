@@ -59,6 +59,10 @@ pub(crate) fn resolve_sha(repo: &Path, sha_override: &Option<String>) -> Result<
     Ok(sha)
 }
 
+fn t_grounds_text(grounds: &[Ground]) -> Vec<String> {
+    grounds.iter().map(|g| g.claim.clone()).collect()
+}
+
 fn build_ground(repo: &Path, d: DraftGround, sha_override: &Option<String>) -> Result<Ground, String> {
     use crate::tick::Liveness;
     if d.claim.is_empty() {
@@ -141,6 +145,13 @@ pub fn run(repo: &Path, decision: &str, args: &[String]) -> Result<Tick, String>
     let mut grounds = Vec::new();
     for d in drafts {
         grounds.push(build_ground(repo, d, &sha_override)?);
+    }
+    for field in std::iter::once(decision.to_string()).chain(std::iter::once(observe.clone()))
+        .chain(t_grounds_text(&grounds))
+    {
+        for verb in crate::lint::r3_self_evolve(&field) {
+            eprintln!("warning: \"{verb}\" should take a human subject, not the system (best-effort lint; a re-wording evades it)");
+        }
     }
     let store = Store::at(repo);
     if !store.exists() {

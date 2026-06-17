@@ -98,6 +98,18 @@ fn latest_ran_at(receipts: &[crate::receipt::Receipt]) -> Option<String> {
     receipts.iter().map(|r| r.ran_at.clone()).max()
 }
 
+/// The evaluation context for one `ev check` / `ev reopen` invocation: the cached staleness
+/// reference, the selected-list, the wall clock, and the staleness window. The I/O assembly
+/// lives here in the command layer so `verdict::verdict_for` stays pure.
+fn live_ctx(store: &Store) -> crate::verdict::Ctx {
+    crate::verdict::Ctx {
+        live_origin_sha: store.read_origin_sha(),
+        selected: crate::selected::read(store).unwrap_or(None),
+        now_unix: time::OffsetDateTime::now_utc().unix_timestamp(),
+        staleness_secs: store.staleness_days() as i64 * 86_400,
+    }
+}
+
 pub fn check(repo: &Path, exit_on_red: bool, run: bool, platform: &str) -> ExitCode {
     use crate::verdict::{verdict_for, Verdict};
     let store = Store::at(repo);
@@ -148,12 +160,7 @@ pub fn check(repo: &Path, exit_on_red: bool, run: bool, platform: &str) -> ExitC
         }
     }
 
-    let ctx = crate::verdict::Ctx {
-        live_origin_sha: store.read_origin_sha(),
-        selected: crate::selected::read(&store).unwrap_or(None),
-        now_unix: time::OffsetDateTime::now_utc().unix_timestamp(),
-        staleness_secs: store.staleness_days() as i64 * 86_400,
-    };
+    let ctx = live_ctx(&store);
     let mut rows: Vec<String> = Vec::new();
     let mut any_not_green = false;
 
@@ -257,12 +264,7 @@ pub fn reopen(repo: &Path, id: &str) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let ctx = crate::verdict::Ctx {
-        live_origin_sha: store.read_origin_sha(),
-        selected: crate::selected::read(&store).unwrap_or(None),
-        now_unix: time::OffsetDateTime::now_utc().unix_timestamp(),
-        staleness_secs: store.staleness_days() as i64 * 86_400,
-    };
+    let ctx = live_ctx(&store);
 
     println!("decision {}: {:?}", tick.id, tick.decision);
     if !tick.observe.is_empty() {

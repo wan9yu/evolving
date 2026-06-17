@@ -17,7 +17,12 @@ fn sorted_set(v: &[String]) -> Vec<String> {
 fn check_value(c: &Check) -> Value {
     match c {
         Check::Person { reference } => json!({ "by": "person", "ref": reference }),
-        Check::Test { reference, verified_at_sha, counter_test, liveness } => json!({
+        Check::Test {
+            reference,
+            verified_at_sha,
+            counter_test,
+            liveness,
+        } => json!({
             "by": "test",
             "ref": reference,
             "verified_at_sha": verified_at_sha,

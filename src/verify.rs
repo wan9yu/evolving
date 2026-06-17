@@ -18,16 +18,23 @@ pub fn verify(store: &Store) -> std::io::Result<Vec<String>> {
             Ok(t) => {
                 let recomputed = compute_id(&t);
                 if recomputed != *filename {
-                    violations.push(format!("{filename}: id != hash(payload) (R4/R6) — recomputed {recomputed}"));
+                    violations.push(format!(
+                        "{filename}: id != hash(payload) (R4/R6) — recomputed {recomputed}"
+                    ));
                 }
                 if t.id != *filename {
-                    violations.push(format!("{filename}: stored id field {} != filename (R6)", t.id));
+                    violations.push(format!(
+                        "{filename}: stored id field {} != filename (R6)",
+                        t.id
+                    ));
                 }
                 ids.insert(filename.clone());
                 parent_of.insert(filename.clone(), t.parent_id.clone());
                 // R5: every tick names a human.
                 if t.blame.trim().is_empty() {
-                    violations.push(format!("{filename}: empty blame (R5) — every mutating op names a human"));
+                    violations.push(format!(
+                        "{filename}: empty blame (R5) — every mutating op names a human"
+                    ));
                 }
                 // R3 / R5 lexical lints over the free-text fields (best-effort; a re-wording evades).
                 let mut texts = vec![t.decision.clone(), t.observe.clone()];
@@ -37,7 +44,9 @@ pub fn verify(store: &Store) -> std::io::Result<Vec<String>> {
                         violations.push(format!("{filename}: R3 self-evolve subject \"{verb}\" should be a human (best-effort lint)"));
                     }
                     for op in crate::lint::r5_forbidden_op(text) {
-                        violations.push(format!("{filename}: R5 forbidden op language \"{op}\" (best-effort lint)"));
+                        violations.push(format!(
+                            "{filename}: R5 forbidden op language \"{op}\" (best-effort lint)"
+                        ));
                     }
                 }
             }
@@ -92,17 +101,26 @@ mod tests {
     }
     fn tick(parent: &str) -> Tick {
         let mut t = Tick {
-            id: String::new(), parent_id: parent.into(),
-            observe: "o".into(), decision: "d".into(),
-            grounds: vec![Ground { claim: "c".into(), supports: "chosen".into(), check: None }],
-            status: "live".into(), held_since: "".into(), blame: "Wang Yu".into(),
+            id: String::new(),
+            parent_id: parent.into(),
+            observe: "o".into(),
+            decision: "d".into(),
+            grounds: vec![Ground {
+                claim: "c".into(),
+                supports: "chosen".into(),
+                check: None,
+            }],
+            status: "live".into(),
+            held_since: "".into(),
+            blame: "Wang Yu".into(),
         };
         t.id = compute_id(&t);
         t
     }
 
     #[test]
-    fn verify_passes_a_clean_two_tick_chain() {
+    fn verify_should_return_no_violations_when_the_chain_is_a_clean_two_tick_chain() {
+        // given: a store with a genesis tick and a child tick that links to it
         let repo = tmp();
         let s = Store::at(&repo);
         s.init().unwrap();
@@ -110,51 +128,75 @@ mod tests {
         s.write_tick(&g).unwrap();
         let child = tick(&g.id);
         s.write_tick(&child).unwrap();
-        assert!(verify(&s).unwrap().is_empty());
+
+        // when: verify scans the store
+        let v = verify(&s).unwrap();
+
+        // then: there are no violations
+        assert!(v.is_empty());
     }
 
     #[test]
-    fn verify_flags_a_hand_edited_tick() {
+    fn verify_should_flag_id_not_hash_when_a_tick_is_hand_edited_on_disk() {
+        // given: a stored genesis tick whose decision text is tampered without changing the filename/id
         let repo = tmp();
         let s = Store::at(&repo);
         s.init().unwrap();
         let g = tick("");
         s.write_tick(&g).unwrap();
-        // tamper: change decision text on disk without changing the filename/id
         let p = s.ticks_dir().join(&g.id);
-        let text = std::fs::read_to_string(&p).unwrap().replace("\"d\"", "\"TAMPERED\"");
+        let text = std::fs::read_to_string(&p)
+            .unwrap()
+            .replace("\"d\"", "\"TAMPERED\"");
         std::fs::write(&p, text).unwrap();
+
+        // when: verify scans the store
         let v = verify(&s).unwrap();
+
+        // then: it reports an id != hash violation
         assert!(v.iter().any(|x| x.contains("id != hash")));
     }
 
     #[test]
-    fn verify_flags_an_unresolved_parent() {
+    fn verify_should_flag_an_unresolved_parent_when_a_tick_points_at_a_missing_parent() {
+        // given: a store with a tick whose parent_id does not exist
         let repo = tmp();
         let s = Store::at(&repo);
         s.init().unwrap();
         let orphan = tick("deadbeefdead");
         s.write_tick(&orphan).unwrap();
+
+        // when: verify scans the store
         let v = verify(&s).unwrap();
+
+        // then: it reports an unresolved-parent violation
         assert!(v.iter().any(|x| x.contains("does not resolve")));
     }
 
     #[test]
-    fn verify_flags_a_field_outside_the_closed_schema() {
+    fn verify_should_flag_a_closed_schema_violation_when_a_tick_has_a_field_outside_the_schema() {
+        // given: a stored genesis tick whose status field is renamed on disk to an unknown field
         let repo = tmp();
         let s = Store::at(&repo);
         s.init().unwrap();
         let g = tick("");
         s.write_tick(&g).unwrap();
         let p = s.ticks_dir().join(&g.id);
-        let text = std::fs::read_to_string(&p).unwrap().replace("\"status\"", "\"health\"");
+        let text = std::fs::read_to_string(&p)
+            .unwrap()
+            .replace("\"status\"", "\"health\"");
         std::fs::write(&p, text).unwrap();
+
+        // when: verify scans the store
         let v = verify(&s).unwrap();
+
+        // then: it reports a closed-schema violation
         assert!(v.iter().any(|x| x.contains("closed schema")));
     }
 
     #[test]
-    fn verify_flags_a_system_subject_self_evolve_tick() {
+    fn verify_should_flag_an_r3_violation_when_a_tick_decision_has_a_system_subject_self_evolve() {
+        // given: a stored tick whose decision text names the system as the subject of a self-evolve verb
         let repo = tmp();
         let s = Store::at(&repo);
         s.init().unwrap();
@@ -162,22 +204,34 @@ mod tests {
         t.decision = "the index will self-improve its own ranking".into();
         t.id = compute_id(&t);
         s.write_tick(&t).unwrap();
+
+        // when: verify scans the store
         let v = verify(&s).unwrap();
-        assert!(v.iter().any(|x| x.contains("self-improve") || x.to_lowercase().contains("r3")));
+
+        // then: it reports an R3 self-evolve violation
+        assert!(v
+            .iter()
+            .any(|x| x.contains("self-improve") || x.to_lowercase().contains("r3")));
     }
 
     #[test]
-    fn verify_flags_a_tick_with_empty_blame() {
+    fn verify_should_flag_an_empty_blame_when_a_tick_blame_is_blanked_on_disk() {
+        // given: a stored tick whose blame is blanked on disk (excluded from hash, so id stays valid)
         let repo = tmp();
         let s = Store::at(&repo);
         s.init().unwrap();
         let t = tick("");
         s.write_tick(&t).unwrap();
-        // blank the blame on disk (excluded from hash, so id stays valid)
         let p = s.ticks_dir().join(&t.id);
-        let text = std::fs::read_to_string(&p).unwrap().replace("\"Wang Yu\"", "\"\"");
+        let text = std::fs::read_to_string(&p)
+            .unwrap()
+            .replace("\"Wang Yu\"", "\"\"");
         std::fs::write(&p, text).unwrap();
+
+        // when: verify scans the store
         let v = verify(&s).unwrap();
+
+        // then: it reports an empty-blame violation
         assert!(v.iter().any(|x| x.to_lowercase().contains("blame")));
     }
 }

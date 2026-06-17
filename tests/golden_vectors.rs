@@ -17,7 +17,8 @@ fn book(parent: &str, observe: &str, decision: &str, grounds: Vec<Ground>) -> Ti
 }
 
 #[test]
-fn genesis_tick_hashes_to_the_frozen_golden_id() {
+fn compute_id_should_return_the_frozen_golden_id_when_given_the_genesis_tick() {
+    // given: the genesis tick with its frozen field values
     let t = book(
         "",
         "evaluating retrieval backend",
@@ -26,7 +27,9 @@ fn genesis_tick_hashes_to_the_frozen_golden_id() {
             Ground {
                 claim: "team still wants a frozen schema".into(),
                 supports: "chosen".into(),
-                check: Some(Check::Person { reference: "Q3 infra review".into() }),
+                check: Some(Check::Person {
+                    reference: "Q3 infra review".into(),
+                }),
             },
             Ground {
                 claim: "pgvector would lock our schema".into(),
@@ -35,11 +38,17 @@ fn genesis_tick_hashes_to_the_frozen_golden_id() {
             },
         ],
     );
-    assert_eq!(compute_id(&t), "e2b337f53a1f");
+
+    // when: its canonical id is computed
+    let id = compute_id(&t);
+
+    // then: it matches the frozen golden id
+    assert_eq!(id, "e2b337f53a1f");
 }
 
 #[test]
-fn case1_tick_with_non_ascii_hashes_to_the_frozen_golden_id() {
+fn compute_id_should_return_the_frozen_golden_id_when_given_the_case1_tick_with_non_ascii() {
+    // given: the case1 tick whose fields carry non-ascii content
     let t = book(
         "7b21f0a4c8de",
         "multi-pod restore-safety counter — chat-room R2289→R2290",
@@ -51,7 +60,8 @@ fn case1_tick_with_non_ascii_hashes_to_the_frozen_golden_id() {
                 check: Some(Check::Test {
                     reference: "pytest tests/test_redis_absent.py".into(),
                     verified_at_sha: "d308afac1b2c3d4e5f60718293a4b5c6d7e8f901".into(),
-                    counter_test: "pytest tests/test_redis_absent.py::test_redis_injection_flips_red".into(),
+                    counter_test:
+                        "pytest tests/test_redis_absent.py::test_redis_injection_flips_red".into(),
                     liveness: Liveness {
                         platforms: vec!["linux-ci".into()],
                         triggered_by: vec!["pyproject.toml".into()],
@@ -62,7 +72,9 @@ fn case1_tick_with_non_ascii_hashes_to_the_frozen_golden_id() {
             Ground {
                 claim: "team still wants 0-Redis posture".into(),
                 supports: "chosen".into(),
-                check: Some(Check::Person { reference: "Q3 infra review".into() }),
+                check: Some(Check::Person {
+                    reference: "Q3 infra review".into(),
+                }),
             },
             Ground {
                 claim: "Redis would add a new infra dependency".into(),
@@ -71,5 +83,10 @@ fn case1_tick_with_non_ascii_hashes_to_the_frozen_golden_id() {
             },
         ],
     );
-    assert_eq!(compute_id(&t), "638c47b0c9dd");
+
+    // when: its canonical id is computed
+    let id = compute_id(&t);
+
+    // then: it matches the frozen golden id
+    assert_eq!(id, "638c47b0c9dd");
 }

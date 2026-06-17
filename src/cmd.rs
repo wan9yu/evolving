@@ -210,6 +210,104 @@ pub fn check(repo: &Path, exit_on_red: bool, run: bool, platform: &str) -> ExitC
     ExitCode::SUCCESS
 }
 
+pub fn why(repo: &Path, selector: &str) -> ExitCode {
+    let store = Store::at(repo);
+    if !store.exists() {
+        eprintln!("error: no .evolving/ store here — run `ev init` first");
+        return ExitCode::FAILURE;
+    }
+    let files = match store.read_all() {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("error: reading store: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let mut found = false;
+    for (filename, raw) in &files {
+        let t = match crate::tick::from_value(raw) {
+            Ok(t) => t,
+            Err(_) => continue,
+        };
+        if t.status != "live" {
+            continue;
+        }
+        for g in &t.grounds {
+            if let Some(Check::Test { reference, .. }) = &g.check {
+                if reference.as_str() == selector {
+                    found = true;
+                    println!(
+                        "{filename}\t{:?}\tguards: {:?} ({})",
+                        t.decision, g.claim, g.supports
+                    );
+                }
+            }
+        }
+    }
+    if !found {
+        eprintln!("{selector:?} guards nothing");
+        return ExitCode::FAILURE;
+    }
+    ExitCode::SUCCESS
+}
+
+pub fn reopen(repo: &Path, id: &str) -> ExitCode {
+    use crate::verdict::Verdict;
+    let store = Store::at(repo);
+    let tick = match store.read_tick(id) {
+        Ok(Some(t)) => t,
+        Ok(None) => {
+            eprintln!("error: no tick with id {id}");
+            return ExitCode::FAILURE;
+        }
+        Err(e) => {
+            eprintln!("error: reading {id}: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let origin = store.read_origin_sha();
+    let selected = crate::selected::read(&store).unwrap_or(None);
+
+    println!("decision {}: {:?}", tick.id, tick.decision);
+    if !tick.observe.is_empty() {
+        println!("observe: {:?}", tick.observe);
+    }
+    for g in &tick.grounds {
+        match &g.check {
+            Some(Check::Test {
+                reference,
+                verified_at_sha,
+                ..
+            }) => {
+                let receipts = crate::receipt::read_for(&store, reference).unwrap_or_default();
+                let v =
+                    crate::verdict::verdict_for(g, &receipts, origin.as_deref(), selected.as_ref());
+                let now = match &v {
+                    Verdict::Green => "green",
+                    Verdict::Red => "red",
+                    Verdict::GrayRed => "gray->red",
+                    Verdict::NotRun { .. } => "not-run",
+                    Verdict::Stale { .. } => "stale",
+                    Verdict::SilentlyUnbound => "silently-unbound",
+                    Verdict::NotApplicable => "n/a",
+                };
+                let short = &verified_at_sha[..verified_at_sha.len().min(8)];
+                println!(
+                    "  [{}] {:?} — test {:?} frozen@{short} now: {now}",
+                    g.supports, g.claim, reference
+                );
+            }
+            Some(Check::Person { reference }) => {
+                println!("  [{}] {:?} — person {:?}", g.supports, g.claim, reference);
+            }
+            None => {
+                println!("  [{}] {:?}", g.supports, g.claim);
+            }
+        }
+    }
+    ExitCode::SUCCESS
+}
+
 /// Reproduce the two frozen golden vectors; non-zero if either id drifts.
 fn self_test_golden() -> ExitCode {
     let genesis = Tick {

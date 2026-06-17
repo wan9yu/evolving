@@ -89,6 +89,8 @@ fn decide_should_fail_when_a_test_is_force_bound_to_a_human_ground() {
             "s",
             "--verified-at-sha",
             "d308afac1b2c3d4e5f60718293a4b5c6d7e8f901",
+            "--blame",
+            "Wang Yu",
         ],
     );
 

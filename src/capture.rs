@@ -335,6 +335,8 @@ mod tests {
                 "Q3",
                 "--assume-test",
                 "pytest x",
+                "--blame",
+                "Wang Yu",
             ]),
         );
 
@@ -415,6 +417,8 @@ mod tests {
                 "d308afac1b2c3d4e5f60718293a4b5c6d7e8f901",
                 "--reject",
                 "Redis: a new infra dependency",
+                "--blame",
+                "Wang Yu",
             ]),
         )
         .expect("ok");
@@ -458,6 +462,8 @@ mod tests {
                 "s",
                 "--verified-at-sha",
                 "d308afac1b2c3d4e5f60718293a4b5c6d7e8f901",
+                "--blame",
+                "Wang Yu",
             ]),
         );
 
@@ -487,10 +493,34 @@ mod tests {
                 "f",
                 "--surface",
                 "s",
+                "--blame",
+                "Wang Yu",
             ]),
         );
 
         // then: it is rejected
         assert!(e.is_err());
+    }
+
+    #[test]
+    fn decide_should_take_blame_from_git_config_when_no_blame_flag_is_given() {
+        // given: a store inside a git repo with a configured author, and no --blame
+        let r = repo();
+        for a in [
+            ["init"].as_slice(),
+            ["config", "user.name", "Ada Lovelace"].as_slice(),
+        ] {
+            std::process::Command::new("git")
+                .args(a)
+                .current_dir(&r)
+                .output()
+                .unwrap();
+        }
+
+        // when: a decision is captured without --blame
+        let t = run(&r, "d", &s(&["--assume", "c"])).expect("ok");
+
+        // then: blame is resolved from git config user.name
+        assert_eq!(t.blame, "Ada Lovelace");
     }
 }

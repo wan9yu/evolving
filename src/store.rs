@@ -55,6 +55,19 @@ impl Store {
         }
     }
 
+    /// Read one tick (parsed) by id, or None if absent.
+    pub fn read_tick(&self, id: &str) -> std::io::Result<Option<crate::tick::Tick>> {
+        let p = self.ticks_dir().join(id);
+        if !p.is_file() {
+            return Ok(None);
+        }
+        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&p)?)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        crate::tick::from_value(&v)
+            .map(Some)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+    }
+
     /// Read every tick file as (filename, raw JSON Value). Order is unspecified.
     pub fn read_all(&self) -> std::io::Result<Vec<(String, serde_json::Value)>> {
         let mut out = Vec::new();

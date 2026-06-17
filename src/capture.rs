@@ -26,7 +26,7 @@ fn last<'a>(g: &'a mut [DraftGround], flag: &str) -> Result<&'a mut DraftGround,
 }
 
 /// Resolve the declared author: --blame, else `git config user.name`.
-fn resolve_blame(repo: &Path, blame_override: Option<String>) -> Result<String, String> {
+pub(crate) fn resolve_blame(repo: &Path, blame_override: Option<String>) -> Result<String, String> {
     if let Some(b) = blame_override {
         if b.trim().is_empty() { return Err("--blame must be non-empty".into()); }
         return Ok(b);
@@ -40,7 +40,7 @@ fn resolve_blame(repo: &Path, blame_override: Option<String>) -> Result<String, 
     Ok(name)
 }
 
-fn resolve_sha(repo: &Path, sha_override: &Option<String>) -> Result<String, String> {
+pub(crate) fn resolve_sha(repo: &Path, sha_override: &Option<String>) -> Result<String, String> {
     let sha = match sha_override {
         Some(s) => s.trim().to_string(),
         None => {

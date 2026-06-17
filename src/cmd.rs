@@ -48,6 +48,13 @@ pub fn decide(repo: &Path, decision: &str, args: &[String]) -> ExitCode {
     }
 }
 
+pub fn guard(repo: &Path, a: crate::guard::GuardArgs) -> ExitCode {
+    match crate::guard::run(repo, a) {
+        Ok(t) => { println!("bound; wrote child {}", t.id); ExitCode::SUCCESS }
+        Err(e) => { eprintln!("error: {e}"); ExitCode::FAILURE }
+    }
+}
+
 pub fn verify_cmd(repo: &Path, self_test: bool) -> ExitCode {
     if self_test {
         return self_test_golden();

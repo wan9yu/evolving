@@ -1,10 +1,11 @@
 //! The pure verdict engine: per Test-bound ground, the resurface precedence.
-//! No I/O — receipts + the live-origin sha are passed in. Facts, not verdicts:
-//! every not-green state is a co-equal fact, never ranked or scored.
+//! No I/O — receipts, the live-origin sha, and the selected-list are passed in. Facts,
+//! not verdicts: every not-green state is a co-equal fact, never ranked or scored.
 //!
-//! Stage 3a precedence (first match wins): sha-stale → not-run → gray→red → red → green.
-//! (Age-staleness and L2 silently-unbound arrive in Stage 3b.)
+//! Precedence (first match wins): sha-stale → not-run → gray→red → red → silently-unbound → green.
+//! (Age-staleness arrives in Stage 3b-3.)
 use crate::receipt::Receipt;
+use crate::selected::SelectedList;
 use crate::tick::{Check, Ground};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -18,25 +19,22 @@ pub enum Verdict {
     NotApplicable, // no check, or a person re-check
 }
 
-/// Verdict for one ground. `receipts` are the run-receipts for this ground's bound ref
-/// (via receipt::read_for); `live_origin_sha` is the staleness reference — None means
-/// sha-staleness is not evaluated.
+/// Verdict for one ground. `receipts` are this ground's run-receipts; `live_origin_sha` is
+/// the staleness reference (None ⇒ sha-staleness not evaluated); `selected` is the external
+/// selected-list (None ⇒ L2 not evaluated).
 pub fn verdict_for(
     ground: &Ground,
     receipts: &[Receipt],
     live_origin_sha: Option<&str>,
+    selected: Option<&SelectedList>,
 ) -> Verdict {
-    let (reference, verified_at_sha, platforms) = match &ground.check {
+    let (reference, verified_at_sha, liveness) = match &ground.check {
         Some(Check::Test {
             reference,
             verified_at_sha,
             liveness,
             ..
-        }) => (
-            reference.as_str(),
-            verified_at_sha.as_str(),
-            &liveness.platforms,
-        ),
+        }) => (reference.as_str(), verified_at_sha.as_str(), liveness),
         _ => return Verdict::NotApplicable,
     };
 
@@ -50,7 +48,7 @@ pub fn verdict_for(
 
     let mut missing = Vec::new();
     let mut deciding: Vec<&Receipt> = Vec::new();
-    for p in platforms {
+    for p in &liveness.platforms {
         // RFC-3339 UTC timestamps sort chronologically, so the lexicographic max is the latest run.
         let latest = receipts
             .iter()
@@ -72,6 +70,20 @@ pub fn verdict_for(
     if deciding.iter().any(|r| r.result == "red") {
         return Verdict::Red;
     }
+
+    // L2 selected: the latest diff touched a declared trigger but did not select this ref —
+    // the receipts look green but were not re-run for the change that touched the assumption.
+    if let Some(sl) = selected {
+        let touched = liveness
+            .triggered_by
+            .iter()
+            .any(|t| sl.changed.iter().any(|c| c == t));
+        let was_selected = sl.selected.iter().any(|s| s == reference);
+        if touched && !was_selected {
+            return Verdict::SilentlyUnbound;
+        }
+    }
+
     Verdict::Green
 }
 
@@ -119,7 +131,7 @@ mod tests {
         };
 
         // when: its verdict is computed
-        let v = verdict_for(&g, &[], None);
+        let v = verdict_for(&g, &[], None, None);
 
         // then: it is not applicable (person grounds never appear in check)
         assert_eq!(v, Verdict::NotApplicable);
@@ -132,7 +144,7 @@ mod tests {
         let receipts = vec![rcpt("linux-ci", "2026-01-01T00:00:00Z", "green")];
 
         // when: its verdict is computed
-        let v = verdict_for(&g, &receipts, None);
+        let v = verdict_for(&g, &receipts, None, None);
 
         // then: it is not-run, naming the missing platform
         assert_eq!(
@@ -150,7 +162,7 @@ mod tests {
         let receipts = vec![rcpt("linux-ci", "2026-01-01T00:00:00Z", "gray")];
 
         // when: its verdict is computed
-        let v = verdict_for(&g, &receipts, None);
+        let v = verdict_for(&g, &receipts, None, None);
 
         // then: gray is promoted to red, never dropped
         assert_eq!(v, Verdict::GrayRed);
@@ -166,7 +178,7 @@ mod tests {
         ];
 
         // when: its verdict is computed
-        let v = verdict_for(&g, &receipts, None);
+        let v = verdict_for(&g, &receipts, None, None);
 
         // then: the latest (red) decides
         assert_eq!(v, Verdict::Red);
@@ -182,7 +194,7 @@ mod tests {
         ];
 
         // when: its verdict is computed
-        let v = verdict_for(&g, &receipts, None);
+        let v = verdict_for(&g, &receipts, None, None);
 
         // then: it is green
         assert_eq!(v, Verdict::Green);
@@ -196,9 +208,45 @@ mod tests {
         let origin = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
         // when: its verdict is computed against that origin
-        let v = verdict_for(&g, &receipts, Some(origin));
+        let v = verdict_for(&g, &receipts, Some(origin), None);
 
         // then: it is stale (binary, no grace) — never shown green
         assert!(matches!(v, Verdict::Stale { .. }));
+    }
+
+    #[test]
+    fn verdict_for_should_be_silently_unbound_when_a_touched_trigger_was_not_selected() {
+        // given: a green-otherwise binding whose declared trigger the diff changed but did not select
+        let g = test_ground(&["linux-ci"]);
+        let receipts = vec![rcpt("linux-ci", "2026-01-01T00:00:00Z", "green")];
+        let sl = crate::selected::SelectedList {
+            commit: "d308afac1b2c3d4e5f60718293a4b5c6d7e8f901".into(),
+            changed: vec!["pyproject.toml".into()],
+            selected: vec![],
+        };
+
+        // when: its verdict is computed against that selected-list
+        let v = verdict_for(&g, &receipts, None, Some(&sl));
+
+        // then: it is silently-unbound (never counted green)
+        assert_eq!(v, Verdict::SilentlyUnbound);
+    }
+
+    #[test]
+    fn verdict_for_should_be_green_when_the_touched_trigger_was_selected() {
+        // given: the same binding, but the diff did select its ref
+        let g = test_ground(&["linux-ci"]);
+        let receipts = vec![rcpt("linux-ci", "2026-01-01T00:00:00Z", "green")];
+        let sl = crate::selected::SelectedList {
+            commit: "d308afac1b2c3d4e5f60718293a4b5c6d7e8f901".into(),
+            changed: vec!["pyproject.toml".into()],
+            selected: vec!["pytest x".into()],
+        };
+
+        // when: its verdict is computed
+        let v = verdict_for(&g, &receipts, None, Some(&sl));
+
+        // then: it is green (selected, so not silently-unbound)
+        assert_eq!(v, Verdict::Green);
     }
 }

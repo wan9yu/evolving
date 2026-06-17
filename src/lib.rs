@@ -3,6 +3,7 @@ pub mod capture;
 pub mod cmd;
 pub mod guard;
 pub mod lint;
+pub mod receipt;
 pub mod store;
 pub mod tick;
 pub mod verify;

@@ -54,6 +54,9 @@ enum Cmd {
         /// The platform this --run represents (which declared platform the local run satisfies).
         #[arg(long, default_value = "local")]
         platform: String,
+        /// Use only the cached staleness reference; never resolve it fresh (non-blocking).
+        #[arg(long)]
+        offline: bool,
     },
     /// Reverse lookup: name the decision + ground a test selector guards.
     Why {
@@ -103,7 +106,8 @@ fn main() -> std::process::ExitCode {
             exit_on_red,
             run,
             platform,
-        } => ev::cmd::check(&repo, exit_on_red, run, &platform),
+            offline,
+        } => ev::cmd::check(&repo, exit_on_red, run, &platform, offline),
         Cmd::Why { selector } => ev::cmd::why(&repo, &selector),
         Cmd::Reopen { id } => ev::cmd::reopen(&repo, &id),
     }

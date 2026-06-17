@@ -102,6 +102,21 @@ impl Store {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
     }
+
+    /// The staleness window in days from the `[liveness] staleness_days` config key (default 7).
+    pub fn staleness_days(&self) -> u64 {
+        std::fs::read_to_string(self.config_path())
+            .ok()
+            .and_then(|text| {
+                text.lines().find_map(|line| {
+                    let line = line.trim();
+                    line.strip_prefix("staleness_days")
+                        .and_then(|rest| rest.trim_start().strip_prefix('='))
+                        .and_then(|v| v.trim().parse::<u64>().ok())
+                })
+            })
+            .unwrap_or(7)
+    }
 }
 
 #[cfg(test)]
@@ -226,5 +241,38 @@ mod tests {
 
         // then: it is None (no network is consulted)
         assert!(sha.is_none());
+    }
+
+    #[test]
+    fn staleness_days_should_read_the_configured_value_when_present() {
+        // given: a store whose config sets staleness_days = 3
+        let repo = tmp();
+        let s = Store::at(&repo);
+        s.init().unwrap();
+        let cfg = std::fs::read_to_string(s.config_path())
+            .unwrap()
+            .replace("staleness_days = 7", "staleness_days = 3");
+        std::fs::write(s.config_path(), cfg).unwrap();
+
+        // when: the staleness window is read
+        let days = s.staleness_days();
+
+        // then: it is the configured value
+        assert_eq!(days, 3);
+    }
+
+    #[test]
+    fn staleness_days_should_default_to_7_when_the_key_is_absent() {
+        // given: a store whose config has no staleness_days line
+        let repo = tmp();
+        let s = Store::at(&repo);
+        s.init().unwrap();
+        std::fs::write(s.config_path(), "schema_version = 1\n").unwrap();
+
+        // when: the staleness window is read
+        let days = s.staleness_days();
+
+        // then: it falls back to the 7-day default
+        assert_eq!(days, 7);
     }
 }

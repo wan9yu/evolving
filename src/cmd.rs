@@ -101,7 +101,7 @@ fn latest_ran_at(receipts: &[crate::receipt::Receipt], reference: &str) -> Optio
         .max()
 }
 
-pub fn check(repo: &Path, exit_on_red: bool) -> ExitCode {
+pub fn check(repo: &Path, exit_on_red: bool, run: bool, platform: &str) -> ExitCode {
     use crate::verdict::{verdict_for, Verdict};
     let store = Store::at(repo);
     if !store.exists() {
@@ -115,6 +115,42 @@ pub fn check(repo: &Path, exit_on_red: bool) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+
+    // --run pass: for every live Test-bound ground that declares this platform, run the
+    // bound ref locally and append a receipt for it (one local run = one platform receipt).
+    if run {
+        for (_filename, raw) in &files {
+            let t = match crate::tick::from_value(raw) {
+                Ok(t) => t,
+                Err(_) => continue,
+            };
+            if t.status != "live" {
+                continue;
+            }
+            for g in &t.grounds {
+                if let Some(Check::Test {
+                    reference,
+                    liveness,
+                    ..
+                }) = &g.check
+                {
+                    if liveness.platforms.iter().any(|p| p == platform) {
+                        match crate::runner::run_check(repo, reference, platform) {
+                            Ok(rc) => {
+                                if let Err(e) = crate::receipt::append(&store, &rc) {
+                                    eprintln!(
+                                        "warning: could not write receipt for {reference:?}: {e}"
+                                    );
+                                }
+                            }
+                            Err(e) => eprintln!("warning: run failed for {reference:?}: {e}"),
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     let origin = store.read_origin_sha();
     let mut rows: Vec<String> = Vec::new();
     let mut any_not_green = false;

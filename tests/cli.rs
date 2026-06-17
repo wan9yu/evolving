@@ -37,3 +37,11 @@ fn init_creates_the_store_and_is_idempotent() {
     let out2 = ev().arg("init").current_dir(&repo).output().unwrap();
     assert!(out2.status.success());
 }
+
+#[test]
+fn verify_self_test_reproduces_the_golden_vectors() {
+    let out = ev().args(["verify", "--self-test"]).output().unwrap();
+    assert!(out.status.success(), "self-test must pass");
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(s.contains("e2b337f53a1f") && s.contains("638c47b0c9dd"));
+}

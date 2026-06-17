@@ -1,0 +1,75 @@
+//! The two frozen golden vectors. If serde_json's canonicalization ever diverges
+//! from JCS for our string-only payload, these fail — the byte-stability anchor.
+use ev::canonical::compute_id;
+use ev::tick::{Check, Ground, Liveness, Tick};
+
+fn book(parent: &str, observe: &str, decision: &str, grounds: Vec<Ground>) -> Tick {
+    Tick {
+        id: String::new(),
+        parent_id: parent.into(),
+        observe: observe.into(),
+        decision: decision.into(),
+        grounds,
+        status: "live".into(),
+        held_since: "".into(),
+        blame: "Wang Yu".into(),
+    }
+}
+
+#[test]
+fn genesis_tick_hashes_to_the_frozen_golden_id() {
+    let t = book(
+        "",
+        "evaluating retrieval backend",
+        "freeze the retrieval schema for v2",
+        vec![
+            Ground {
+                claim: "team still wants a frozen schema".into(),
+                supports: "chosen".into(),
+                check: Some(Check::Person { reference: "Q3 infra review".into() }),
+            },
+            Ground {
+                claim: "pgvector would lock our schema".into(),
+                supports: "rejected:pgvector".into(),
+                check: None,
+            },
+        ],
+    );
+    assert_eq!(compute_id(&t), "e2b337f53a1f");
+}
+
+#[test]
+fn case1_tick_with_non_ascii_hashes_to_the_frozen_golden_id() {
+    let t = book(
+        "7b21f0a4c8de",
+        "multi-pod restore-safety counter — chat-room R2289→R2290",
+        "restore-safety counter DB-backed; reject Redis",
+        vec![
+            Ground {
+                claim: "Argus introduces no Redis; multi-pod coord via existing DB".into(),
+                supports: "chosen".into(),
+                check: Some(Check::Test {
+                    reference: "pytest tests/test_redis_absent.py".into(),
+                    verified_at_sha: "d308afac1b2c3d4e5f60718293a4b5c6d7e8f901".into(),
+                    counter_test: "pytest tests/test_redis_absent.py::test_redis_injection_flips_red".into(),
+                    liveness: Liveness {
+                        platforms: vec!["linux-ci".into()],
+                        triggered_by: vec!["pyproject.toml".into()],
+                        surfaces: vec!["pyproject-deps".into()],
+                    },
+                }),
+            },
+            Ground {
+                claim: "team still wants 0-Redis posture".into(),
+                supports: "chosen".into(),
+                check: Some(Check::Person { reference: "Q3 infra review".into() }),
+            },
+            Ground {
+                claim: "Redis would add a new infra dependency".into(),
+                supports: "rejected:Redis".into(),
+                check: None,
+            },
+        ],
+    );
+    assert_eq!(compute_id(&t), "638c47b0c9dd");
+}

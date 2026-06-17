@@ -145,7 +145,12 @@ pub fn check(repo: &Path, exit_on_red: bool, run: bool, platform: &str) -> ExitC
                 }) = &g.check
                 {
                     if liveness.platforms.iter().any(|p| p == platform) {
-                        match crate::runner::run_check(repo, reference, platform) {
+                        match crate::runner::run_check(
+                            repo,
+                            reference,
+                            platform,
+                            config.green_exit_code,
+                        ) {
                             Ok(rc) => {
                                 if let Err(e) = crate::receipt::append(&store, &rc) {
                                     eprintln!(

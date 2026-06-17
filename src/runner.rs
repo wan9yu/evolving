@@ -9,7 +9,12 @@ use time::OffsetDateTime;
 
 /// Run the bound `reference` as a shell command in `repo`; return a receipt stamped for
 /// `platform`, the current git commit (HEAD), and now (UTC). exit 0 => green, else red.
-pub fn run_check(repo: &Path, reference: &str, platform: &str) -> Result<Receipt, String> {
+pub fn run_check(
+    repo: &Path,
+    reference: &str,
+    platform: &str,
+    green_exit_code: i32,
+) -> Result<Receipt, String> {
     let commit = crate::capture::resolve_sha(repo, &None)?;
     let ran_at = OffsetDateTime::now_utc()
         .format(&Rfc3339)
@@ -20,7 +25,12 @@ pub fn run_check(repo: &Path, reference: &str, platform: &str) -> Result<Receipt
         .current_dir(repo)
         .status()
         .map_err(|e| format!("cannot run {reference:?}: {e}"))?;
-    let result = if status.success() { "green" } else { "red" };
+    // exit == the configured green code is green; anything else (incl. signal kills) is red.
+    let result = if status.code() == Some(green_exit_code) {
+        "green"
+    } else {
+        "red"
+    };
     Ok(Receipt {
         test: reference.to_string(),
         platform: platform.to_string(),
@@ -66,7 +76,7 @@ mod tests {
         let repo = git_repo();
 
         // when: the bound ref is run on platform "local"
-        let r = run_check(&repo, "true", "local").expect("ok");
+        let r = run_check(&repo, "true", "local", 0).expect("ok");
 
         // then: the receipt is green for that platform, test, and a 40-hex commit
         assert_eq!(r.result, "green");
@@ -81,7 +91,7 @@ mod tests {
         let repo = git_repo();
 
         // when: the bound ref is run
-        let r = run_check(&repo, "false", "local").expect("ok");
+        let r = run_check(&repo, "false", "local", 0).expect("ok");
 
         // then: the receipt is red
         assert_eq!(r.result, "red");

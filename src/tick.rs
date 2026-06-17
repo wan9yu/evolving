@@ -1,0 +1,1 @@
+//! Logical-clock tick helpers.

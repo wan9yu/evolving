@@ -68,11 +68,7 @@ pub(crate) fn resolve_sha(repo: &Path, sha_override: &Option<String>) -> Result<
             String::from_utf8_lossy(&out.stdout).trim().to_string()
         }
     };
-    let ok = sha.len() == 40
-        && sha
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
-    if !ok {
+    if !crate::tick::is_40_lower_hex(&sha) {
         return Err(format!("verified_at_sha must be 40 lowercase hex: {sha}"));
     }
     Ok(sha)

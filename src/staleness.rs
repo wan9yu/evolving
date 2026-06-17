@@ -6,7 +6,7 @@ use std::path::Path;
 use std::process::Command;
 
 /// `git rev-parse <rev>` in `repo` → the 40-lower-hex sha, or None if it fails / is malformed.
-pub fn git_sha(repo: &Path, rev: &str) -> Option<String> {
+fn git_sha(repo: &Path, rev: &str) -> Option<String> {
     let out = Command::new("git")
         .args(["rev-parse", rev])
         .current_dir(repo)
@@ -16,11 +16,7 @@ pub fn git_sha(repo: &Path, rev: &str) -> Option<String> {
         return None;
     }
     let sha = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    let is_40_hex = sha.len() == 40
-        && sha
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
-    is_40_hex.then_some(sha)
+    crate::tick::is_40_lower_hex(&sha).then_some(sha)
 }
 
 /// The staleness-reference sha per `policy` ("none" | "local-head" | anything else = live-origin).
@@ -34,16 +30,16 @@ pub fn resolve(repo: &Path, store: &Store, policy: &str, offline: bool) -> Optio
         "local-head" => git_sha(repo, "HEAD"),
         _ => {
             // live-origin: the last-fetched upstream; cache it so an --offline run can reuse it.
-            match git_sha(repo, "@{upstream}") {
-                Some(sha) => {
-                    let _ = std::fs::write(store.root.join("results").join("origin-sha"), &sha);
-                    Some(sha)
+            let sha = git_sha(repo, "@{upstream}");
+            match &sha {
+                Some(s) => {
+                    let _ = store.write_origin_sha(s);
                 }
-                None => {
-                    eprintln!("warning: cannot resolve the live-origin staleness reference (no upstream?) — sha-staleness skipped");
-                    None
-                }
+                None => eprintln!(
+                    "warning: cannot resolve the live-origin staleness reference (no upstream?) — sha-staleness skipped"
+                ),
             }
+            sha
         }
     }
 }

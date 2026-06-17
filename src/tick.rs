@@ -75,7 +75,7 @@ pub(crate) fn req_str(obj: &Map<String, Value>, k: &str) -> Result<String, Strin
         .ok_or(format!("missing or non-string field: {k}"))
 }
 
-fn is_40_lower_hex(s: &str) -> bool {
+pub(crate) fn is_40_lower_hex(s: &str) -> bool {
     s.len() == 40
         && s.bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))

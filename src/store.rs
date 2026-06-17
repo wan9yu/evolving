@@ -103,6 +103,11 @@ impl Store {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
     }
+
+    /// Cache the live-origin sha to results/origin-sha (the staleness reference for offline runs).
+    pub fn write_origin_sha(&self, sha: &str) -> std::io::Result<()> {
+        std::fs::write(self.root.join("results").join("origin-sha"), sha)
+    }
 }
 
 #[cfg(test)]

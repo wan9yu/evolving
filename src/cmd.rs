@@ -98,19 +98,23 @@ fn latest_ran_at(receipts: &[crate::receipt::Receipt]) -> Option<String> {
     receipts.iter().map(|r| r.ran_at.clone()).max()
 }
 
-/// The evaluation context for one `ev check` / `ev reopen` invocation: the cached staleness
-/// reference, the selected-list, the wall clock, and the staleness window. The I/O assembly
-/// lives here in the command layer so `verdict::verdict_for` stays pure.
-fn live_ctx(store: &Store, staleness_days: u64) -> crate::verdict::Ctx {
+/// The evaluation context for one `ev check` / `ev reopen` invocation: the staleness reference
+/// (resolved per policy by the caller), the selected-list, the wall clock, and the staleness
+/// window. The I/O assembly lives here in the command layer so `verdict::verdict_for` stays pure.
+fn live_ctx(
+    store: &Store,
+    staleness_days: u64,
+    live_origin_sha: Option<String>,
+) -> crate::verdict::Ctx {
     crate::verdict::Ctx {
-        live_origin_sha: store.read_origin_sha(),
+        live_origin_sha,
         selected: crate::selected::read(store).unwrap_or(None),
         now_unix: time::OffsetDateTime::now_utc().unix_timestamp(),
         staleness_secs: staleness_days as i64 * 86_400,
     }
 }
 
-pub fn check(repo: &Path, exit_on_red: bool, run: bool, platform: &str) -> ExitCode {
+pub fn check(repo: &Path, exit_on_red: bool, run: bool, platform: &str, offline: bool) -> ExitCode {
     use crate::verdict::{verdict_for, Verdict};
     let store = Store::at(repo);
     if !store.exists() {
@@ -166,7 +170,8 @@ pub fn check(repo: &Path, exit_on_red: bool, run: bool, platform: &str) -> ExitC
         }
     }
 
-    let ctx = live_ctx(&store, config.staleness_days);
+    let live_origin = crate::staleness::resolve(repo, &store, &config.staleness_ref, offline);
+    let ctx = live_ctx(&store, config.staleness_days, live_origin);
     let mut rows: Vec<String> = Vec::new();
     let mut any_not_green = false;
 
@@ -271,7 +276,8 @@ pub fn reopen(repo: &Path, id: &str) -> ExitCode {
         }
     };
     let config = crate::config::read(&store);
-    let ctx = live_ctx(&store, config.staleness_days);
+    let live_origin = crate::staleness::resolve(repo, &store, &config.staleness_ref, true);
+    let ctx = live_ctx(&store, config.staleness_days, live_origin);
 
     println!("decision {}: {:?}", tick.id, tick.decision);
     if !tick.observe.is_empty() {

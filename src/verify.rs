@@ -1,5 +1,5 @@
-//! ev verify (Phase 1 subset): R1 (closed schema), R2 (check shape), R4/R6
-//! (id == hash + chain integrity). R3/R5 lexical lints arrive in Plan 2.
+//! ev verify: R1 (closed schema), R2 (check shape), R4/R6 (id == hash + chain
+//! integrity), R3 (self-evolve subject) + R5 (blame present + forbidden-op).
 use crate::canonical::compute_id;
 use crate::store::Store;
 use crate::tick::from_value;
@@ -25,6 +25,21 @@ pub fn verify(store: &Store) -> std::io::Result<Vec<String>> {
                 }
                 ids.insert(filename.clone());
                 parent_of.insert(filename.clone(), t.parent_id.clone());
+                // R5: every tick names a human.
+                if t.blame.trim().is_empty() {
+                    violations.push(format!("{filename}: empty blame (R5) — every mutating op names a human"));
+                }
+                // R3 / R5 lexical lints over the free-text fields (best-effort; a re-wording evades).
+                let mut texts = vec![t.decision.clone(), t.observe.clone()];
+                texts.extend(t.grounds.iter().map(|g| g.claim.clone()));
+                for text in &texts {
+                    for verb in crate::lint::r3_self_evolve(text) {
+                        violations.push(format!("{filename}: R3 self-evolve subject \"{verb}\" should be a human (best-effort lint)"));
+                    }
+                    for op in crate::lint::r5_forbidden_op(text) {
+                        violations.push(format!("{filename}: R5 forbidden op language \"{op}\" (best-effort lint)"));
+                    }
+                }
             }
         }
     }
@@ -136,5 +151,33 @@ mod tests {
         std::fs::write(&p, text).unwrap();
         let v = verify(&s).unwrap();
         assert!(v.iter().any(|x| x.contains("closed schema")));
+    }
+
+    #[test]
+    fn verify_flags_a_system_subject_self_evolve_tick() {
+        let repo = tmp();
+        let s = Store::at(&repo);
+        s.init().unwrap();
+        let mut t = tick("");
+        t.decision = "the index will self-improve its own ranking".into();
+        t.id = compute_id(&t);
+        s.write_tick(&t).unwrap();
+        let v = verify(&s).unwrap();
+        assert!(v.iter().any(|x| x.contains("self-improve") || x.to_lowercase().contains("r3")));
+    }
+
+    #[test]
+    fn verify_flags_a_tick_with_empty_blame() {
+        let repo = tmp();
+        let s = Store::at(&repo);
+        s.init().unwrap();
+        let t = tick("");
+        s.write_tick(&t).unwrap();
+        // blank the blame on disk (excluded from hash, so id stays valid)
+        let p = s.ticks_dir().join(&t.id);
+        let text = std::fs::read_to_string(&p).unwrap().replace("\"Wang Yu\"", "\"\"");
+        std::fs::write(&p, text).unwrap();
+        let v = verify(&s).unwrap();
+        assert!(v.iter().any(|x| x.to_lowercase().contains("blame")));
     }
 }

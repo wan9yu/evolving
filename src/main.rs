@@ -19,6 +19,12 @@ enum Cmd {
         #[arg(long)]
         self_test: bool,
     },
+    /// Record a decision (with grounds + roads-not-taken)
+    Decide {
+        decision: String,
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
 }
 
 fn main() -> std::process::ExitCode {
@@ -28,5 +34,6 @@ fn main() -> std::process::ExitCode {
         Cmd::Init => ev::cmd::init(&repo),
         Cmd::Show { id } => ev::cmd::show(&repo, &id),
         Cmd::Verify { self_test } => ev::cmd::verify_cmd(&repo, self_test),
+        Cmd::Decide { decision, args } => ev::cmd::decide(&repo, &decision, &args),
     }
 }

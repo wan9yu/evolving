@@ -41,6 +41,13 @@ pub fn show(repo: &Path, id: &str) -> ExitCode {
         }
     }
 }
+pub fn decide(repo: &Path, decision: &str, args: &[String]) -> ExitCode {
+    match crate::capture::run(repo, decision, args) {
+        Ok(t) => { println!("recorded {} ({} ground(s))", t.id, t.grounds.len()); ExitCode::SUCCESS }
+        Err(e) => { eprintln!("error: {e}"); ExitCode::FAILURE }
+    }
+}
+
 pub fn verify_cmd(repo: &Path, self_test: bool) -> ExitCode {
     if self_test {
         return self_test_golden();

@@ -46,6 +46,15 @@ impl Store {
         Ok(())
     }
 
+    /// The current HEAD id ("" if genesis / empty store).
+    pub fn read_head(&self) -> std::io::Result<String> {
+        match std::fs::read_to_string(self.head_path()) {
+            Ok(s) => Ok(s.trim().to_string()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+            Err(e) => Err(e),
+        }
+    }
+
     /// Read every tick file as (filename, raw JSON Value). Order is unspecified.
     pub fn read_all(&self) -> std::io::Result<Vec<(String, serde_json::Value)>> {
         let mut out = Vec::new();

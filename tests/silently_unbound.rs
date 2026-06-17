@@ -69,6 +69,15 @@ fn green_receipt(repo: &std::path::Path) {
     )
     .unwrap();
 }
+// Widen the staleness window so age-staleness never fires — isolates the L2 (silently-unbound)
+// axis from the time-stale axis (this fixture uses a fixed past date, evaluated against the real clock).
+fn disable_age_staleness(repo: &std::path::Path) {
+    let s = Store::at(repo);
+    let cfg = std::fs::read_to_string(s.config_path())
+        .unwrap()
+        .replace("staleness_days = 7", "staleness_days = 3650000");
+    std::fs::write(s.config_path(), cfg).unwrap();
+}
 fn write_selected(repo: &std::path::Path, json: &str) {
     std::fs::write(repo.join(".evolving/results/selected.json"), json).unwrap();
 }
@@ -78,6 +87,7 @@ fn check_should_flag_silently_unbound_and_gate_when_a_touched_trigger_was_not_se
     // given: a green-on-receipts binding, and a selected-list that changed its trigger but did not select it
     let r = repo();
     decide_bound(&r);
+    disable_age_staleness(&r);
     green_receipt(&r);
     write_selected(
         &r,
@@ -101,6 +111,7 @@ fn check_should_be_green_and_pass_when_the_touched_trigger_was_selected() {
     // given: the same binding, but the selected-list did select its ref
     let r = repo();
     decide_bound(&r);
+    disable_age_staleness(&r);
     green_receipt(&r);
     write_selected(
         &r,

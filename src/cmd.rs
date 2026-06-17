@@ -152,6 +152,7 @@ pub fn check(repo: &Path, exit_on_red: bool, run: bool, platform: &str) -> ExitC
     }
 
     let origin = store.read_origin_sha();
+    let selected = crate::selected::read(&store).unwrap_or(None);
     let mut rows: Vec<String> = Vec::new();
     let mut any_not_green = false;
 
@@ -170,7 +171,7 @@ pub fn check(repo: &Path, exit_on_red: bool, run: bool, platform: &str) -> ExitC
                 _ => continue,
             };
             let receipts = crate::receipt::read_for(&store, &reference).unwrap_or_default();
-            let v = verdict_for(g, &receipts, origin.as_deref());
+            let v = verdict_for(g, &receipts, origin.as_deref(), selected.as_ref());
             if !matches!(v, Verdict::Green) {
                 any_not_green = true;
             }

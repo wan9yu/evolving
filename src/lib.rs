@@ -4,6 +4,7 @@ pub mod cmd;
 pub mod config;
 pub mod guard;
 pub mod lint;
+pub mod liveness;
 pub mod receipt;
 pub mod runner;
 pub mod selected;

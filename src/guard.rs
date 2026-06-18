@@ -15,6 +15,7 @@ pub struct GuardArgs {
     pub surfaces: Vec<String>,
     pub verified_at_sha: Option<String>,
     pub blame: Option<String>,
+    pub authority: Option<String>,
 }
 
 fn resolve_target(grounds: &[Ground], target: &Option<String>) -> Result<usize, String> {
@@ -87,6 +88,9 @@ pub fn run(repo: &Path, a: GuardArgs) -> Result<Tick, String> {
             "a test binding requires at least one platform, triggered-by, and surface".into(),
         );
     }
+    if let Some(val) = &a.authority {
+        crate::capture::validate_authority(val)?;
+    }
     let verified_at_sha = crate::capture::resolve_sha(repo, &a.verified_at_sha)?;
     let blame = crate::capture::resolve_blame(repo, a.blame)?;
 
@@ -114,7 +118,7 @@ pub fn run(repo: &Path, a: GuardArgs) -> Result<Tick, String> {
         status: "live".into(),
         held_since: String::new(),
         blame,
-        authority: None,
+        authority: a.authority,
     };
     child.id = compute_id(&child);
     store
@@ -165,6 +169,7 @@ mod tests {
             surfaces: vec!["s".into()],
             verified_at_sha: Some("d308afac1b2c3d4e5f60718293a4b5c6d7e8f901".into()),
             blame: Some("Wang Yu".into()),
+            authority: None,
         }
     }
 

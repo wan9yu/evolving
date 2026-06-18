@@ -78,6 +78,15 @@ fn t_grounds_text(grounds: &[Ground]) -> Vec<String> {
     grounds.iter().map(|g| g.claim.clone()).collect()
 }
 
+/// Validate a declared authority value against the closed vocabulary.
+pub(crate) fn validate_authority(val: &str) -> Result<(), String> {
+    if val == "user-ruled" || val == "agent-disposable" {
+        Ok(())
+    } else {
+        Err("authority must be user-ruled or agent-disposable".into())
+    }
+}
+
 fn build_ground(
     repo: &Path,
     d: DraftGround,
@@ -150,6 +159,7 @@ pub fn run(repo: &Path, decision: &str, args: &[String]) -> Result<Tick, String>
     let mut observe = String::new();
     let mut blame_override: Option<String> = None;
     let mut sha_override: Option<String> = None;
+    let mut authority: Option<String> = None;
     let mut drafts: Vec<DraftGround> = Vec::new();
     let mut i = 0;
     while i < args.len() {
@@ -163,6 +173,11 @@ pub fn run(repo: &Path, decision: &str, args: &[String]) -> Result<Tick, String>
             }
             "--verified-at-sha" => {
                 sha_override = Some(need(args, i, &flag)?);
+            }
+            "--authority" => {
+                let v = need(args, i, &flag)?;
+                validate_authority(&v)?;
+                authority = Some(v);
             }
             "--reject" => {
                 let v = need(args, i, &flag)?;
@@ -241,7 +256,7 @@ pub fn run(repo: &Path, decision: &str, args: &[String]) -> Result<Tick, String>
         status: "live".into(),
         held_since: String::new(),
         blame,
-        authority: None,
+        authority,
     };
     t.id = compute_id(&t);
     store

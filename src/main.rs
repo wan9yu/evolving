@@ -46,6 +46,8 @@ enum Cmd {
         verified_at_sha: Option<String>,
         #[arg(long)]
         blame: Option<String>,
+        #[arg(long)]
+        authority: Option<String>,
     },
     /// Evaluate bound checks against cached receipts and report a flat verdict set.
     Check {
@@ -98,6 +100,7 @@ fn main() -> std::process::ExitCode {
             surfaces,
             verified_at_sha,
             blame,
+            authority,
         } => ev::cmd::guard(
             &repo,
             ev::guard::GuardArgs {
@@ -110,6 +113,7 @@ fn main() -> std::process::ExitCode {
                 surfaces,
                 verified_at_sha,
                 blame,
+                authority,
             },
         ),
         Cmd::Check {

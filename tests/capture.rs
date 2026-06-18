@@ -158,6 +158,66 @@ fn decide_should_fail_when_a_check_is_attached_to_a_rejected_ground() {
 }
 
 #[test]
+fn decide_should_record_the_authority_tag_when_user_ruled_is_declared() {
+    // given/when: a decision recorded as user-ruled
+    let r = repo();
+    let out = run(
+        &r,
+        &[
+            "decide",
+            "freeze v1.8",
+            "--assume",
+            "team agreed",
+            "--revisit",
+            "Q3",
+            "--authority",
+            "user-ruled",
+            "--blame",
+            "Wang Yu",
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let id = String::from_utf8_lossy(&out.stdout)
+        .split_whitespace()
+        .nth(1)
+        .unwrap()
+        .to_string();
+
+    // then: the on-disk tick carries authority=user-ruled
+    let raw = std::fs::read_to_string(r.join(".evolving/ticks").join(&id)).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(v["authority"], "user-ruled");
+}
+
+#[test]
+fn decide_should_fail_when_the_authority_value_is_not_in_the_vocabulary() {
+    // given/when: a decision with a bogus authority value
+    let r = repo();
+    let out = run(
+        &r,
+        &[
+            "decide",
+            "x",
+            "--assume",
+            "y",
+            "--revisit",
+            "Q3",
+            "--authority",
+            "whatever",
+            "--blame",
+            "Wang Yu",
+        ],
+    );
+
+    // then: it is rejected (closed vocabulary: user-ruled | agent-disposable)
+    assert!(!out.status.success());
+}
+
+#[test]
 fn guard_should_fail_when_the_target_tick_is_not_head() {
     // given: a repo with two decisions, so the first is no longer HEAD
     let r = repo();

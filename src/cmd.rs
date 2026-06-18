@@ -357,6 +357,44 @@ pub fn list(repo: &Path) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// Boot-read: the live user-ruled decisions and the roads they rejected. A near-zero-cost,
+/// 0-network read (read_all only; no git, no receipts) for a fresh agent to load the
+/// decisions it must respect and the options it must not re-propose. Sorted by id.
+pub fn brief(repo: &Path) -> ExitCode {
+    let store = Store::at(repo);
+    if !store.exists() {
+        eprintln!("error: no .evolving/ store here — run `ev init` first");
+        return ExitCode::FAILURE;
+    }
+    let files = match store.read_all() {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("error: reading store: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    // Keep only live, user-ruled decisions; carry the id so output is deterministic.
+    let mut kept: Vec<(String, Tick)> = files
+        .iter()
+        .filter_map(|(name, raw)| crate::tick::from_value(raw).ok().map(|t| (name.clone(), t)))
+        .filter(|(_, t)| t.status == "live" && t.authority.as_deref() == Some("user-ruled"))
+        .collect();
+    kept.sort_by(|a, b| a.0.cmp(&b.0));
+    if kept.is_empty() {
+        println!("no user-ruled decisions");
+        return ExitCode::SUCCESS;
+    }
+    for (_id, t) in &kept {
+        println!("{}  [user-ruled]", t.decision);
+        for g in &t.grounds {
+            if let Some(option) = g.supports.strip_prefix("rejected:") {
+                println!("  rejected {option}: {}", g.claim);
+            }
+        }
+    }
+    ExitCode::SUCCESS
+}
+
 /// Show the decision lineage from HEAD back to genesis (newest first).
 pub fn log(repo: &Path) -> ExitCode {
     let store = Store::at(repo);

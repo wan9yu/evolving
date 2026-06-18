@@ -17,6 +17,8 @@ enum Cmd {
     List,
     /// Show the decision lineage from HEAD back to genesis.
     Log,
+    /// Boot-read: the user-ruled decisions and the roads they rejected
+    Brief,
     /// Audit the chain + refusals
     Verify {
         /// reproduce the frozen golden vectors and exit
@@ -88,6 +90,7 @@ fn main() -> std::process::ExitCode {
         Cmd::Show { id } => ev::cmd::show(&repo, &id),
         Cmd::List => ev::cmd::list(&repo),
         Cmd::Log => ev::cmd::log(&repo),
+        Cmd::Brief => ev::cmd::brief(&repo),
         Cmd::Verify { self_test } => ev::cmd::verify_cmd(&repo, self_test),
         Cmd::Decide { decision, args } => ev::cmd::decide(&repo, &decision, &args),
         Cmd::Guard {

@@ -8,10 +8,16 @@ These docs cover the `ev` command surface: `init`, `decide`, `guard`, `check`, `
 `reopen`, `show`, `list`, `log`, `verify`. For release status (the published crate is behind
 the source tree), see the **Status** section of the [project README](../README.md).
 
+- **[usage.md](usage.md)** — a task-oriented guide: the common workflows ("I just made a
+  decision", "what's already ruled?", "is any assumption broken?") with a short example each.
 - **[commands.md](commands.md)** — the authoritative command reference: every flag, exit
   code, the exact strings each command prints, and a worked example per command.
 - **[concepts.md](concepts.md)** — the model in depth: the Tick schema, Grounds, Checks,
   content-addressed identity and the frozen golden vectors, append-only immutability, the
   refusals `ev verify` enforces, and the honesty / trust boundary.
+
+## Usage
+
+New to `ev`? Start with the workflow guide: **[usage.md](usage.md)**.
 
 Back to the [project README](../README.md).

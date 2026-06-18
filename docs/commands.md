@@ -1,8 +1,8 @@
 # `ev` command reference
 
 The authoritative reference for the `ev` command surface: the write side (`init`, `decide`,
-`guard`) and the read side (`show`, `verify`, `why`, `reopen`, `list`, `log`). The package is
-named `evolving`; the command is `ev`.
+`guard`) and the read side (`check`, `show`, `verify`, `why`, `reopen`, `brief`, `list`,
+`log`). The package is named `evolving`; the command is `ev`.
 
 Every command returns a process exit code: **`0`** on success, **`1`** (failure) otherwise.
 Throughout, errors are written to **stderr** as `error: <message>`; the per-command
@@ -14,10 +14,12 @@ see [concepts.md](concepts.md).
 - [`ev init`](#ev-init)
 - [`ev decide`](#ev-decide)
 - [`ev guard`](#ev-guard)
+- [`ev check`](#ev-check)
 - [`ev show`](#ev-show)
 - [`ev verify`](#ev-verify)
 - [`ev why`](#ev-why)
 - [`ev reopen`](#ev-reopen)
+- [`ev brief`](#ev-brief)
 - [`ev list`](#ev-list)
 - [`ev log`](#ev-log)
 
@@ -63,15 +65,20 @@ optionally binding a check to each chosen ground.
 
 ```
 ev decide "<decision>" [trailing flags…]
+ev decide --from-git <commit> [trailing flags…]
 ```
 
-The first positional argument is the **decision text** (required, non-empty). Everything
-after it is a stream of trailing flags parsed **left-to-right** (see the grammar below).
+The first positional argument is the **decision text** (required, non-empty) — *unless*
+`--from-git` is given, in which case the decision text comes from the commit (see
+[seeding from a commit](#seeding-from-a-commit-from-git) below). Everything after the source
+is a stream of trailing flags parsed **left-to-right** (see the grammar below).
 
 **Flags:**
 
 | Flag | Takes | Required | Effect |
 | --- | --- | --- | --- |
+| `--from-git` | a commit | no* | Seed the decision text (and default blame, and `Refs #<n>` provenance) from a commit instead of the positional argument. *Exactly one of `{positional decision, --from-git}` must be given.* |
+| `--authority` | `user-ruled` \| `agent-disposable` | no | A declared (non-hashed) authority tag, human-set, surfaced by `reopen` / `show` / `list` / `brief`. An out-of-vocabulary value is refused. |
 | `--observe` | a string | no | Sets the decision's `observe` field (the situation being observed). |
 | `--blame` | a name | no* | The author on the hook. *If omitted, falls back to `git config user.name`; one of the two must resolve to a non-empty name.* |
 | `--verified-at-sha` | 40 lowercase hex | no | The commit a **test** binding was last verified at. If omitted, defaults to `git rev-parse HEAD`. Only used by test bindings. |
@@ -106,6 +113,27 @@ If a per-ground flag appears before any `--assume` / `--reject`, it is refused:
 `<flag> has no preceding --assume/--reject ground`. A missing value is refused with
 `<flag> requires a value`. An unrecognized flag is refused with `decide: unknown flag <x>`.
 
+### Seeding from a commit (`--from-git`)
+
+`--from-git <commit>` seeds the decision **envelope** from a commit rather than the positional
+argument — the thinking is already written in the commit, so it is not re-typed:
+
+- the **decision text** is the commit **subject** (`git show -s --format=%s <commit>`);
+- the default **blame** is the commit **author** (`%an`); an explicit `--blame` overrides it;
+- any `Refs #<n>` lines in the commit **body** are appended to `observe` as provenance.
+
+**Grounds are NEVER inferred from the commit.** The body is scanned only for `Refs #<n>`
+lines — never parsed for reasons. The chosen reasons and roads-not-taken stay human-authored:
+add them by hand with `--assume` / `--reject` (and their bindings) exactly as for a positional
+decision. A `--from-git` decision with no `--assume` / `--reject` records just the subject and
+the provenance.
+
+Exactly **one** of `{positional decision, --from-git}` is allowed:
+
+- both given → `decide: decision given twice (positional and --from-git)`;
+- neither given → `decide: needs a decision (positional) or --from-git`;
+- a commit git cannot resolve → `decide: cannot read commit <commit>`.
+
 ### The refusals it enforces
 
 - **Empty decision** → `decision text is empty`.
@@ -127,6 +155,12 @@ If a per-ground flag appears before any `--assume` / `--reject`, it is refused:
 - **An author must be named (R5).** No `--blame` and no `git config user.name` →
   `no author: pass --blame, or set git config user.name`; an explicit empty `--blame` →
   `--blame must be non-empty`.
+- **A declared authority must be in vocabulary.** An `--authority` value other than
+  `user-ruled` or `agent-disposable` → `authority must be user-ruled or agent-disposable`.
+- **Exactly one decision source.** Positional decision *and* `--from-git` →
+  `decide: decision given twice (positional and --from-git)`; neither →
+  `decide: needs a decision (positional) or --from-git`; an unresolvable commit →
+  `decide: cannot read commit <commit>`.
 - **No store.** Running outside an initialized store →
   `no .evolving/ store here — run \`ev init\` first`.
 
@@ -169,6 +203,19 @@ ev decide "restore-safety counter DB-backed; reject Redis" \
   --blame "You"
 ```
 
+**Example** — seed the decision text + blame + provenance from a commit, then add a
+human-authored ground and a marked authority by hand:
+
+```sh
+ev decide --from-git HEAD \
+  --authority user-ruled \
+  --assume "team still wants this posture" \
+  --reject "the alternative: it would lock us in"
+# decision text = the commit subject; blame = the commit author (Refs #<n> body lines
+# are appended to observe); grounds stay hand-authored.
+# → recorded <id> (2 ground(s))
+```
+
 ---
 
 ## `ev guard`
@@ -183,7 +230,7 @@ ev guard "<selector>" <id> [<target>] \
   --on-platform <p> [--on-platform …] \
   --triggered-by <t> [--triggered-by …] \
   --surface <s> [--surface …] \
-  [--verified-at-sha <40-hex>] [--blame "<name>"]
+  [--verified-at-sha <40-hex>] [--blame "<name>"] [--authority <value>]
 ```
 
 **Positional arguments:**
@@ -204,6 +251,7 @@ ev guard "<selector>" <id> [<target>] \
 | `--surface` | a surface | yes (≥1) | Liveness surfaces. Repeatable. |
 | `--verified-at-sha` | 40 lowercase hex | no | Commit the test was verified at; defaults to `git rev-parse HEAD`. |
 | `--blame` | a name | no | Author; defaults to `git config user.name`. |
+| `--authority` | `user-ruled` \| `agent-disposable` | no | A declared (non-hashed) authority tag set on the child tick, surfaced by `reopen` / `show` / `list` / `brief`. An out-of-vocabulary value is refused. |
 
 **Target resolution:** with one unbound ground, `target` may be omitted. With more than
 one, it is required — `more than one unbound ground — name the target (claim or index)`.
@@ -225,6 +273,8 @@ ground → `no ground with claim "<t>"`; a claim that matches several →
 - **Full liveness required.** Missing platform / trigger / surface →
   `a test binding requires at least one platform, triggered-by, and surface`.
 - Plus the same `verified_at_sha` and `--blame` resolution rules as `ev decide`.
+- **A declared authority must be in vocabulary.** An `--authority` value other than
+  `user-ruled` or `agent-disposable` → `authority must be user-ruled or agent-disposable`.
 - **Unknown tick.** An `id` not present in the store → `no tick with id <id>`.
 
 **Exit code:** `0` on success; `1` on any refusal above.
@@ -249,6 +299,64 @@ ev guard "pytest tests/test_schema_frozen.py" <HEAD-id> "schema stays frozen" \
 
 ---
 
+## `ev check`
+
+**Synopsis:** evaluate every live Test-bound ground against its cached receipts and print one
+flat verdict per ground — facts, never a score or a rank. Optionally run the bound tests first
+(`--run`), and gate the exit code (`--exit-on-red`).
+
+```
+ev check [--run] [--platform <p>] [--exit-on-red] [--offline] [--attest <p1,p2,…>]
+```
+
+**Flags:**
+
+| Flag | Takes | Required | Effect |
+| --- | --- | --- | --- |
+| `--run` | — | no | For each live Test-bound ground that declares `--platform`, run its bound ref locally and append one receipt before evaluating. |
+| `--platform` | a platform | no | Which declared platform a `--run` satisfies (the receipt's platform). Defaults to `local`. |
+| `--exit-on-red` | — | no | Exit `1` if any ground is not green (and not `n/a` / `exempt`). |
+| `--offline` | — | no | Use only the cached staleness reference; never resolve it fresh (non-blocking). |
+| `--attest` | a comma-list of platforms | no | The platforms **this runner speaks for**. A declared platform **not** in this set becomes a non-gating `exempt` fact instead of `not-run`. Omit `--attest` to attest **all** declared platforms (the default). |
+
+**Per-runner attestation (`--attest`).** A test binding declares the platforms it must be live
+on (its `--on-platform` set). A single runner usually speaks for only some of them. `--attest
+linux-ci,mac` tells `ev check` that this runner attests `linux-ci` and `mac`: any *other*
+declared platform on a binding is reported as **`exempt`** — a co-equal, **non-gating** fact —
+rather than counted as a missing **`not-run`**. With `--attest` omitted, every declared
+platform is attested (the cross-platform / audit default), so a platform with no receipt is
+`not-run`. `exempt`, like `n/a` and `green`, never trips `--exit-on-red`.
+
+**The flat verdict labels** (one per Test-bound ground; non-Test grounds never print):
+`green`, `red`, `gray->red`, `not-run`, `stale`, `silently-unbound`, `exempt`. Each is a fact;
+none outranks another. See [concepts.md](concepts.md) for the resurface precedence.
+
+**Exit code:** `0` normally; `1` only under `--exit-on-red` when any ground is not green
+(`n/a` and `exempt` do not count), or when there is no store / the store cannot be read.
+
+**Output (stdout / stderr):**
+
+- per Test-bound ground (stdout, one row each): `<label>\t<file>\t<claim>\t(<detail>)` —
+  `<claim>` is quoted (`{:?}`); `<detail>` is `missing: <platforms>` for `not-run`, the stale
+  reason for `stale`, else `ran <ts>` or `no receipt`.
+- after the rows (stdout): `note: counter-tests are declared, not executed in 0.1.0 — falsifiability is author-declared, not machine-proven`
+- no Test-bound grounds (stdout): `no test-bound grounds to check`
+- no store (stderr): `error: no .evolving/ store here — run \`ev init\` first`
+- store read error (stderr): `error: reading store: <io error>`
+
+**Example** — a mac runner attests only the platforms it speaks for, so a `linux-ci`-only
+binding is `exempt` here, not `not-run`:
+
+```sh
+ev check --attest mac
+# → exempt	<file>	"<claim>"	(no receipt)
+# → note: counter-tests are declared, not executed in 0.1.0 — falsifiability is author-declared, not machine-proven
+
+ev check --run --platform linux-ci --exit-on-red
+```
+
+---
+
 ## `ev show`
 
 **Synopsis:** print one tick in full, exactly as stored on disk (the pretty JSON: hashed
@@ -265,6 +373,7 @@ ev show <id>
 **Output (stdout / stderr):**
 
 - success (stdout): the on-disk JSON of the tick, printed as-is.
+- declared authority, only when the tick carries one (stdout, after the JSON): `authority: <value>`
 - not found (stderr): `error: no tick with id <id>`
 - read error (stderr): `error: reading <id>: <io error>`
 
@@ -393,6 +502,7 @@ unreadable.
 
 - decision (stdout): `decision <id>: <decision>` — `<decision>` is quoted (`{:?}`).
 - observe, only if non-empty (stdout): `observe: <observe>` — quoted.
+- declared authority, only when present (stdout): `authority: <value>`.
 - per ground (stdout, one line each, indented two spaces):
   - Test: `  [<supports>] <claim> — test <reference> frozen@<sha8> now: <verdict>` — `<claim>`
     and `<reference>` are quoted; `<sha8>` is the first 8 chars of `verified_at_sha`;
@@ -409,6 +519,45 @@ ev reopen 638c47b0c9dd
 # → decision 638c47b0c9dd: "restore-safety counter DB-backed; reject Redis"
 # → observe: "multi-pod restore-safety counter — chat-room R2289→R2290"
 # →   [chosen] "Argus introduces no Redis; multi-pod coord via existing DB" — test "pytest tests/test_redis_absent.py" frozen@d308afac now: not-run
+```
+
+---
+
+## `ev brief`
+
+**Synopsis:** the boot-read — print every **live** decision whose declared authority is
+`user-ruled`, and the roads each of them rejected. A near-zero-cost, **0-network** read (the
+store only — no git, no receipts) for a fresh agent to load the decisions it must respect and
+the options it must not re-propose. Sorted by id (deterministic).
+
+```
+ev brief
+```
+
+**Flags:** none.
+
+**What it does:** reads every tick, keeps the **live**, `authority == "user-ruled"` ones, and
+for each prints the decision marked `[user-ruled]`, then one indented line per road-not-taken
+(each ground whose `supports` is `rejected:<option>`). Person re-checks and chosen grounds are
+not listed — `brief` is the *what was ruled and what was rejected* view, not the full reopen.
+A store with no user-ruled decisions says so. It never touches the network.
+
+**Exit code:** `0` when the store exists (including when there are no user-ruled decisions);
+`1` when there is no store.
+
+**Output (stdout / stderr):**
+
+- per user-ruled decision (stdout): `<decision>  [user-ruled]` (two spaces before the tag),
+  then one indented line per rejected road: `  rejected <option>: <claim>`.
+- none (stdout): `no user-ruled decisions`
+- no store (stderr): `error: no .evolving/ store here — run \`ev init\` first`
+
+**Example:**
+
+```sh
+ev brief
+# → restore-safety counter DB-backed; reject Redis  [user-ruled]
+# →   rejected Redis: a new infra dependency
 ```
 
 ---
@@ -435,7 +584,9 @@ store.
 **Output (stdout / stderr):**
 
 - per tick (stdout, one row each, sorted by id): `<id>\t<status>\t<decision>` — `<decision>`
-  is quoted (`{:?}`); e.g. `638c47b0c9dd\tlive\t"restore-safety counter DB-backed; reject Redis"`
+  is quoted (`{:?}`); e.g. `638c47b0c9dd\tlive\t"restore-safety counter DB-backed; reject Redis"`.
+  When the tick carries a declared authority, the row gains a trailing
+  `\tauthority=<value>` field.
 - empty ledger (stdout): `no decisions yet`
 - no store (stderr): `error: no .evolving/ store here — run \`ev init\` first`
 
@@ -444,7 +595,7 @@ store.
 ```sh
 ev list
 # → 638c47b0c9dd	live	"restore-safety counter DB-backed; reject Redis"
-# → e2b337f53a1f	live	"freeze the retrieval schema for v2"
+# → e2b337f53a1f	live	"freeze the retrieval schema for v2"	authority=user-ruled
 ```
 
 ---
@@ -487,7 +638,10 @@ ev log
 
 ---
 
-## Coming (see the project README Status)
+## Release status
 
-The `ev check` liveness evaluator is still landing toward `0.1.0` and is **not** shipped in
-`0.0.1`. See the **Status** section of the [project README](../README.md).
+Every command above — including the `ev check` liveness evaluator with per-runner `--attest`
+scoping, the `--from-git` decision source, the declared `--authority` tag, and `ev brief` — is
+present and documented in the source tree for the **`0.1.0` honest-resurface slice**. For the
+gap between the source tree and the **published** crate, see the **Status** section of the
+[project README](../README.md).

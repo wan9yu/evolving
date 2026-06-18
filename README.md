@@ -167,6 +167,12 @@ It does **not** claim tamper-resistance of offline test outcomes — `ev` record
 test was bound and the commit it was verified at, but it cannot prove an offline test
 result was honest. That is a documented boundary, not a guarantee.
 
+`ev` fires on changes recorded in **git** — a bound check going red, or a commit touching a
+declared trigger. It does **not** detect **external-state drift**: a UI click, an org/config
+change, or an upstream-API behavior change that leaves no git commit will not trigger `ev`.
+`ev` is decision memory, not a replacement for an environment sentinel; a check that can only
+fail on external state should be run on a timer (a 0.1.x capability), not bound to `triggered_by`.
+
 ## Documentation
 
 Usage docs live in [`docs/`](docs/):

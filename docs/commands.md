@@ -1,7 +1,8 @@
 # `ev` command reference
 
-The authoritative reference for the shipped `0.0.1` surface: `init`, `decide`, `guard`,
-`show`, `verify`. The package is named `evolving`; the command is `ev`.
+The authoritative reference for the `ev` command surface: the write side (`init`, `decide`,
+`guard`) and the read side (`show`, `verify`, `why`, `reopen`, `list`, `log`). The package is
+named `evolving`; the command is `ev`.
 
 Every command returns a process exit code: **`0`** on success, **`1`** (failure) otherwise.
 Throughout, errors are written to **stderr** as `error: <message>`; the per-command
@@ -15,6 +16,10 @@ see [concepts.md](concepts.md).
 - [`ev guard`](#ev-guard)
 - [`ev show`](#ev-show)
 - [`ev verify`](#ev-verify)
+- [`ev why`](#ev-why)
+- [`ev reopen`](#ev-reopen)
+- [`ev list`](#ev-list)
+- [`ev log`](#ev-log)
 
 ---
 
@@ -323,8 +328,166 @@ ev verify --self-test
 
 ---
 
+## `ev why`
+
+**Synopsis:** reverse lookup — given a test selector, name the decision(s) it guards. Scans
+every **live** tick and matches the selector against each Test-bound ground's `reference`.
+
+```
+ev why <selector>
+```
+
+**Flags:** none. The single positional `selector` is required (the test selector to look up,
+exactly as it was bound — e.g. `pytest tests/test_redis_absent.py`).
+
+**What it does:** for every live tick, for every ground whose check is a **Test** whose
+`reference` equals `selector`, it prints one line naming the tick file (its id), the guarded
+decision, the guarding claim, and what that claim supports (`chosen` or `rejected:<option>`).
+A selector that guards nothing is an error. Person re-checks and unbound grounds are never
+matched (only Test bindings carry a selector).
+
+**Exit code:** `0` when at least one ground matches; `1` when none match, or when there is
+no store.
+
+**Output (stdout / stderr):**
+
+- match (stdout, one line per matching ground): `<file>\t<decision>\tguards: <claim> (<supports>)`
+  — `<file>` is the tick id (bare), `<decision>` and `<claim>` are quoted (Rust `{:?}` debug
+  form), `<supports>` is bare: e.g.
+  `638c47b0c9dd\t"restore-safety counter DB-backed; reject Redis"\tguards: "Argus introduces no Redis; multi-pod coord via existing DB" (chosen)`
+- no match (stderr): `"<selector>" guards nothing`
+- no store (stderr): `error: no .evolving/ store here — run \`ev init\` first`
+
+**Example:**
+
+```sh
+ev why "pytest tests/test_redis_absent.py"
+# → <file>	"<decision>"	guards: "<claim>" (chosen)
+```
+
+---
+
+## `ev reopen`
+
+**Synopsis:** read one decision **as it stands now** — its text, what it observed, and the
+present verdict of every ground (for Test grounds, the frozen-at commit vs. the live check
+state). Read-only; it never writes a tick.
+
+```
+ev reopen <id>
+```
+
+**Flags:** none. The single positional `id` is required (the tick to reopen).
+
+**What it does:** loads the tick, resolves the live staleness reference (offline — no network
+fetch), then prints the decision, the `observe` line (only when non-empty), and one line per
+ground. A **Test** ground shows the commit it was frozen at (first 8 hex of
+`verified_at_sha`) and its present verdict from the same evaluator `ev check` uses (`green`,
+`red`, `stale`, `not-run`, …). A **Person** ground and an unbound ground print their claim
+without a check line.
+
+**Exit code:** `0` when the tick exists and is readable; `1` when the id is missing or
+unreadable.
+
+**Output (stdout / stderr):**
+
+- decision (stdout): `decision <id>: <decision>` — `<decision>` is quoted (`{:?}`).
+- observe, only if non-empty (stdout): `observe: <observe>` — quoted.
+- per ground (stdout, one line each, indented two spaces):
+  - Test: `  [<supports>] <claim> — test <reference> frozen@<sha8> now: <verdict>` — `<claim>`
+    and `<reference>` are quoted; `<sha8>` is the first 8 chars of `verified_at_sha`;
+    `<verdict>` is the live verdict label.
+  - Person: `  [<supports>] <claim> — person <reference>` — `<claim>` and `<reference>` quoted.
+  - unbound: `  [<supports>] <claim>` — `<claim>` quoted.
+- missing id (stderr): `error: no tick with id <id>`
+- read error (stderr): `error: reading <id>: <io error>`
+
+**Example:**
+
+```sh
+ev reopen 638c47b0c9dd
+# → decision 638c47b0c9dd: "restore-safety counter DB-backed; reject Redis"
+# → observe: "multi-pod restore-safety counter — chat-room R2289→R2290"
+# →   [chosen] "Argus introduces no Redis; multi-pod coord via existing DB" — test "pytest tests/test_redis_absent.py" frozen@d308afac now: not-run
+```
+
+---
+
+## `ev list`
+
+**Synopsis:** inventory the ledger — one line per recorded decision, sorted by id
+(deterministic).
+
+```
+ev list
+```
+
+**Flags:** none.
+
+**What it does:** reads every tick in the store, sorts by id, and prints one row per
+decision: its id, status, and decision text. A tick that fails to parse still lists its id
+with `?` for status and `<unparseable>` for the decision (so a corrupt file is never
+silently dropped — `ev verify` owns the schema error). An empty ledger says so.
+
+**Exit code:** `0` when the store exists (including when it is empty); `1` when there is no
+store.
+
+**Output (stdout / stderr):**
+
+- per tick (stdout, one row each, sorted by id): `<id>\t<status>\t<decision>` — `<decision>`
+  is quoted (`{:?}`); e.g. `638c47b0c9dd\tlive\t"restore-safety counter DB-backed; reject Redis"`
+- empty ledger (stdout): `no decisions yet`
+- no store (stderr): `error: no .evolving/ store here — run \`ev init\` first`
+
+**Example:**
+
+```sh
+ev list
+# → 638c47b0c9dd	live	"restore-safety counter DB-backed; reject Redis"
+# → e2b337f53a1f	live	"freeze the retrieval schema for v2"
+```
+
+---
+
+## `ev log`
+
+**Synopsis:** walk the decision lineage from `HEAD` back to genesis, newest first.
+
+```
+ev log
+```
+
+**Flags:** none.
+
+**What it does:** reads `HEAD`, then follows each tick's `parent_id` back to genesis,
+printing the same row shape as `ev list` for each tick in the chain (newest first). It is the
+lineage view — only the HEAD ancestry, not every tick in the store. A content-addressed chain
+cannot cycle, but a cycle guard stops the walk if one ever appears, and a `parent_id` that
+does not resolve emits a broken-lineage warning and stops. An empty ledger (no HEAD) says so.
+
+**Exit code:** `0` when the store exists (including when it is empty); `1` when there is no
+store, or when a tick in the lineage cannot be read.
+
+**Output (stdout / stderr):**
+
+- per tick (stdout, one row each, newest first): `<id>\t<status>\t<decision>` — same shape as
+  `ev list`, `<decision>` quoted (`{:?}`).
+- empty ledger (stdout): `no decisions yet`
+- broken lineage (stderr): `warning: <id> not found (broken lineage)` (the walk stops)
+- read error (stderr): `error: reading <id>: <io error>`
+- no store (stderr): `error: no .evolving/ store here — run \`ev init\` first`
+
+**Example:**
+
+```sh
+ev log
+# → 638c47b0c9dd	live	"restore-safety counter DB-backed; reject Redis"
+# → e2b337f53a1f	live	"freeze the retrieval schema for v2"
+```
+
+---
+
 ## Coming (see the project README Status)
 
-The `ev check` liveness evaluator, plus the `reopen` / `list` / `log` surface, are still
-landing toward `0.1.0` and are **not** shipped in `0.0.1`. See the **Status** section of
-the [project README](../README.md).
+The `ev check` liveness evaluator is still landing toward `0.1.0` and is **not** shipped in
+`0.0.1`. See the **Status** section of the [project README](../README.md).

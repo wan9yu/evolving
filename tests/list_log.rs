@@ -124,3 +124,44 @@ fn list_should_fail_when_there_is_no_store() {
     // then: it errors and exits non-zero
     assert!(!out.status.success());
 }
+
+#[test]
+fn check_should_note_that_counter_tests_are_declared_not_executed() {
+    // given: a decision whose chosen ground is bound to a test (so check prints a row)
+    let r = repo();
+    let parent = decide(&r, "no Redis");
+    let g = ev()
+        .args([
+            "guard",
+            "pytest x",
+            &parent,
+            "a reason",
+            "--counter-test",
+            "pytest x::flips",
+            "--on-platform",
+            "linux-ci",
+            "--triggered-by",
+            "pyproject.toml",
+            "--surface",
+            "pyproject-deps",
+            "--verified-at-sha",
+            "d308afac1b2c3d4e5f60718293a4b5c6d7e8f901",
+            "--blame",
+            "Wang Yu",
+        ])
+        .current_dir(&r)
+        .output()
+        .unwrap();
+    assert!(
+        g.status.success(),
+        "guard: {}",
+        String::from_utf8_lossy(&g.stderr)
+    );
+
+    // when: check runs
+    let out = ev().arg("check").current_dir(&r).output().unwrap();
+
+    // then: it honestly notes the counter-test is declared, not executed
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("falsifiability is author-declared"));
+}

@@ -267,6 +267,7 @@ pub fn check(
         for r in &rows {
             println!("{r}");
         }
+        println!("note: counter-tests are declared, not executed in 0.1.0 — falsifiability is author-declared, not machine-proven");
     }
     if exit_on_red && any_not_green {
         return ExitCode::FAILURE;

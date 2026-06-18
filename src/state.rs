@@ -2,52 +2,48 @@
 //! snapshot of each tick's per-ground verdicts that a consumer hook reads WITHOUT shelling
 //! `ev check`. Facts, no scores; one row per ground.
 use crate::store::Store;
-use crate::tick::{Check, Tick};
+use crate::tick::{Check, Ground};
 use crate::verdict::Verdict;
 use serde_json::{json, Map, Value};
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 
-/// Write `results/state/<tick_id>.json`: the tick's grounds paired with `verdicts` (same order,
-/// same length), the staleness reference, and the time of computation.
+/// Write `results/state/<tick_id>.json`: one row per `(ground, verdict)` pair, the staleness
+/// reference, and the time of computation. Pairing at the boundary keeps grounds and verdicts
+/// from drifting out of alignment.
 pub fn write_state(
     store: &Store,
-    tick: &Tick,
-    verdicts: &[Verdict],
+    tick_id: &str,
+    rows: &[(&Ground, Verdict)],
     staleness_policy: &str,
     staleness_sha: Option<&str>,
 ) -> std::io::Result<()> {
     let computed_at = OffsetDateTime::now_utc()
         .format(&Rfc3339)
         .unwrap_or_default();
-    let grounds: Vec<Value> = tick
-        .grounds
+    let grounds: Vec<Value> = rows
         .iter()
-        .zip(verdicts)
         .map(|(g, v)| {
             let mut row = Map::new();
             row.insert("claim".into(), Value::String(g.claim.clone()));
             row.insert("supports".into(), Value::String(g.supports.clone()));
-            let (check, reference, sha) = match &g.check {
+            let check = match &g.check {
                 Some(Check::Test {
                     reference,
                     verified_at_sha,
                     ..
-                }) => (
-                    "test",
-                    Some(reference.clone()),
-                    Some(verified_at_sha.clone()),
-                ),
-                Some(Check::Person { .. }) => ("person", None, None),
-                None => ("none", None, None),
+                }) => {
+                    row.insert("ref".into(), Value::String(reference.clone()));
+                    row.insert(
+                        "verified_at_sha".into(),
+                        Value::String(verified_at_sha.clone()),
+                    );
+                    "test"
+                }
+                Some(Check::Person { .. }) => "person",
+                None => "none",
             };
             row.insert("check".into(), Value::String(check.into()));
-            if let Some(r) = reference {
-                row.insert("ref".into(), Value::String(r));
-            }
-            if let Some(s) = sha {
-                row.insert("verified_at_sha".into(), Value::String(s));
-            }
             row.insert("verdict".into(), Value::String(v.label().into()));
             if let Verdict::NotRun { missing_platforms } = v {
                 row.insert("missing_platforms".into(), json!(missing_platforms));
@@ -56,7 +52,7 @@ pub fn write_state(
         })
         .collect();
     let doc = json!({
-        "tick_id": tick.id,
+        "tick_id": tick_id,
         "computed_at": computed_at,
         "staleness_ref": { "policy": staleness_policy, "sha": staleness_sha },
         "grounds": grounds,
@@ -64,7 +60,7 @@ pub fn write_state(
     let dir = store.root.join("results").join("state");
     std::fs::create_dir_all(&dir)?;
     std::fs::write(
-        dir.join(format!("{}.json", tick.id)),
+        dir.join(format!("{tick_id}.json")),
         serde_json::to_string_pretty(&doc).expect("serializable"),
     )
 }
@@ -72,7 +68,7 @@ pub fn write_state(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tick::{Ground, Liveness};
+    use crate::tick::{Ground, Liveness, Tick};
 
     fn store() -> (std::path::PathBuf, Store) {
         use std::sync::atomic::{AtomicU64, Ordering};
@@ -125,15 +121,18 @@ mod tests {
             held_since: "".into(),
             blame: "Wang Yu".into(),
         };
-        let verdicts = vec![
-            Verdict::NotRun {
-                missing_platforms: vec!["linux-ci".into()],
-            },
-            Verdict::NotApplicable,
+        let rows = vec![
+            (
+                &tick.grounds[0],
+                Verdict::NotRun {
+                    missing_platforms: vec!["linux-ci".into()],
+                },
+            ),
+            (&tick.grounds[1], Verdict::NotApplicable),
         ];
 
         // when: the state file is written
-        write_state(&s, &tick, &verdicts, "live-origin", None).unwrap();
+        write_state(&s, &tick.id, &rows, "live-origin", None).unwrap();
 
         // then: results/state/<id>.json records the tick id and each ground's verdict
         let text = std::fs::read_to_string(

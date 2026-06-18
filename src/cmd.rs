@@ -183,41 +183,43 @@ pub fn check(repo: &Path, exit_on_red: bool, run: bool, platform: &str, offline:
         if t.status != "live" {
             continue;
         }
-        let mut verdicts: Vec<Verdict> = Vec::with_capacity(t.grounds.len());
+        let mut verdicts = Vec::with_capacity(t.grounds.len());
         for g in &t.grounds {
-            // Compute a verdict for every ground (for the state contract); only Test-bound
-            // grounds appear in the printed set and the gate (person/unbound are NotApplicable).
-            let v = match &g.check {
+            // Receipts are read only for Test-bound grounds; person/unbound need none.
+            let receipts = match &g.check {
                 Some(Check::Test { reference, .. }) => {
-                    let receipts = crate::receipt::read_for(&store, reference).unwrap_or_default();
-                    let v = verdict_for(g, &receipts, &ctx);
-                    if !matches!(v, Verdict::Green) {
-                        any_not_green = true;
-                    }
-                    let detail = match &v {
-                        Verdict::NotRun { missing_platforms } => {
-                            format!("missing: {}", missing_platforms.join(", "))
-                        }
-                        Verdict::Stale { reason } => reason.clone(),
-                        _ => latest_ran_at(&receipts)
-                            .map(|ts| format!("ran {ts}"))
-                            .unwrap_or_else(|| "no receipt".into()),
-                    };
-                    rows.push(format!(
-                        "{}\t{filename}\t{:?}\t({detail})",
-                        v.label(),
-                        g.claim
-                    ));
-                    v
+                    crate::receipt::read_for(&store, reference).unwrap_or_default()
                 }
-                _ => Verdict::NotApplicable,
+                _ => Vec::new(),
             };
-            verdicts.push(v);
+            // verdict_for returns NotApplicable for any non-Test ground.
+            let v = verdict_for(g, &receipts, &ctx);
+            if !matches!(v, Verdict::Green | Verdict::NotApplicable) {
+                any_not_green = true;
+            }
+            // Only Test-bound grounds appear in the printed set and the gate.
+            if matches!(&g.check, Some(Check::Test { .. })) {
+                let detail = match &v {
+                    Verdict::NotRun { missing_platforms } => {
+                        format!("missing: {}", missing_platforms.join(", "))
+                    }
+                    Verdict::Stale { reason } => reason.clone(),
+                    _ => latest_ran_at(&receipts)
+                        .map(|ts| format!("ran {ts}"))
+                        .unwrap_or_else(|| "no receipt".into()),
+                };
+                rows.push(format!(
+                    "{}\t{filename}\t{:?}\t({detail})",
+                    v.label(),
+                    g.claim
+                ));
+            }
+            verdicts.push((g, v));
         }
         // The per-host verdict-cache read contract for this tick (a hook reads it without shelling check).
         let _ = crate::state::write_state(
             &store,
-            &t,
+            &t.id,
             &verdicts,
             &config.staleness_ref,
             ctx.live_origin_sha.as_deref(),

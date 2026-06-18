@@ -241,6 +241,7 @@ pub fn run(repo: &Path, decision: &str, args: &[String]) -> Result<Tick, String>
         status: "live".into(),
         held_since: String::new(),
         blame,
+        authority: None,
     };
     t.id = compute_id(&t);
     store

@@ -114,6 +114,7 @@ pub fn run(repo: &Path, a: GuardArgs) -> Result<Tick, String> {
         status: "live".into(),
         held_since: String::new(),
         blame,
+        authority: None,
     };
     child.id = compute_id(&child);
     store

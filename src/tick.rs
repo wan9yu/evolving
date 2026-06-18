@@ -3,14 +3,15 @@
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Tick {
-    pub id: String,           // bookkeeping (the hash output)
-    pub parent_id: String,    // hashed; "" on genesis, present
-    pub observe: String,      // hashed
-    pub decision: String,     // hashed
-    pub grounds: Vec<Ground>, // hashed
-    pub status: String,       // bookkeeping
-    pub held_since: String,   // bookkeeping
-    pub blame: String,        // bookkeeping
+    pub id: String,                // bookkeeping (the hash output)
+    pub parent_id: String,         // hashed; "" on genesis, present
+    pub observe: String,           // hashed
+    pub decision: String,          // hashed
+    pub grounds: Vec<Ground>,      // hashed
+    pub status: String,            // bookkeeping
+    pub held_since: String,        // bookkeeping
+    pub blame: String,             // bookkeeping
+    pub authority: Option<String>, // bookkeeping (declared, not hashed)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -51,6 +52,9 @@ pub fn full_value(t: &Tick) -> Value {
         map.insert("status".into(), Value::String(t.status.clone()));
         map.insert("held_since".into(), Value::String(t.held_since.clone()));
         map.insert("blame".into(), Value::String(t.blame.clone()));
+        if let Some(a) = &t.authority {
+            map.insert("authority".into(), Value::String(a.clone()));
+        }
     }
     v
 }
@@ -191,6 +195,7 @@ pub fn from_value(v: &Value) -> Result<Tick, String> {
             "status",
             "held_since",
             "blame",
+            "authority",
         ],
         "tick",
     )?;
@@ -211,6 +216,10 @@ pub fn from_value(v: &Value) -> Result<Tick, String> {
         status: req_str(obj, "status")?,
         held_since: req_str(obj, "held_since")?,
         blame: req_str(obj, "blame")?,
+        authority: obj
+            .get("authority")
+            .and_then(|x| x.as_str())
+            .map(String::from),
     })
 }
 
@@ -241,6 +250,33 @@ mod tests {
         assert_eq!(t.decision, "d");
         assert_eq!(t.grounds.len(), 1);
         assert!(matches!(t.grounds[0].check, Some(Check::Person { .. })));
+    }
+
+    #[test]
+    fn from_value_should_round_trip_an_authority_tag_when_present() {
+        // given: a well-formed tick carrying an authority tag
+        let mut v = genesis_full();
+        v.as_object_mut()
+            .unwrap()
+            .insert("authority".into(), json!("user-ruled"));
+
+        // when: it is parsed
+        let t = from_value(&v).expect("valid");
+
+        // then: the authority tag is preserved
+        assert_eq!(t.authority.as_deref(), Some("user-ruled"));
+    }
+
+    #[test]
+    fn from_value_should_default_authority_to_none_when_absent() {
+        // given: a tick with no authority field (the existing genesis shape)
+        let v = genesis_full();
+
+        // when: it is parsed
+        let t = from_value(&v).expect("valid");
+
+        // then: authority is None (absent = no claim)
+        assert_eq!(t.authority, None);
     }
 
     #[test]

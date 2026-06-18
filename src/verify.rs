@@ -113,6 +113,7 @@ mod tests {
             status: "live".into(),
             held_since: "".into(),
             blame: "Wang Yu".into(),
+            authority: None,
         };
         t.id = compute_id(&t);
         t

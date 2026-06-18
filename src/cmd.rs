@@ -462,6 +462,7 @@ fn self_test_golden() -> ExitCode {
         status: "live".into(),
         held_since: "".into(),
         blame: "Wang Yu".into(),
+        authority: None,
     };
     let case1 = Tick {
         id: String::new(),
@@ -500,6 +501,7 @@ fn self_test_golden() -> ExitCode {
         status: "live".into(),
         held_since: "".into(),
         blame: "Wang Yu".into(),
+        authority: None,
     };
     let mut ok = true;
     for (name, t, want) in [

@@ -53,6 +53,12 @@ pub fn show(repo: &Path, id: &str) -> ExitCode {
         Ok(text) => {
             // print as-is (the on-disk pretty JSON: hashed payload + bookkeeping).
             println!("{text}");
+            // surface the declared authority on its own line when present (boot-time read).
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                if let Some(a) = v.get("authority").and_then(|x| x.as_str()) {
+                    println!("authority: {a}");
+                }
+            }
             ExitCode::SUCCESS
         }
         Err(e) => {
@@ -330,11 +336,11 @@ pub fn list(repo: &Path) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let mut rows: Vec<(String, String, String)> = files
+    let mut rows: Vec<(String, String, String, Option<String>)> = files
         .iter()
         .map(|(name, raw)| match crate::tick::from_value(raw) {
-            Ok(t) => (name.clone(), t.status, t.decision),
-            Err(_) => (name.clone(), "?".into(), "<unparseable>".into()),
+            Ok(t) => (name.clone(), t.status, t.decision, t.authority),
+            Err(_) => (name.clone(), "?".into(), "<unparseable>".into(), None),
         })
         .collect();
     rows.sort();
@@ -342,8 +348,11 @@ pub fn list(repo: &Path) -> ExitCode {
         println!("no decisions yet");
         return ExitCode::SUCCESS;
     }
-    for (id, status, decision) in &rows {
-        println!("{id}\t{status}\t{decision:?}");
+    for (id, status, decision, authority) in &rows {
+        match authority {
+            Some(a) => println!("{id}\t{status}\t{decision:?}\tauthority={a}"),
+            None => println!("{id}\t{status}\t{decision:?}"),
+        }
     }
     ExitCode::SUCCESS
 }
@@ -409,6 +418,9 @@ pub fn reopen(repo: &Path, id: &str) -> ExitCode {
     println!("decision {}: {:?}", tick.id, tick.decision);
     if !tick.observe.is_empty() {
         println!("observe: {:?}", tick.observe);
+    }
+    if let Some(a) = &tick.authority {
+        println!("authority: {a}");
     }
     for g in &tick.grounds {
         match &g.check {

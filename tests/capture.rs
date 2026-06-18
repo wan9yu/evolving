@@ -218,6 +218,41 @@ fn decide_should_fail_when_the_authority_value_is_not_in_the_vocabulary() {
 }
 
 #[test]
+fn reopen_should_show_the_authority_tag_when_the_decision_is_user_ruled() {
+    // given: a user-ruled decision
+    let r = repo();
+    let out = run(
+        &r,
+        &[
+            "decide",
+            "freeze v1.8; reject v1.9",
+            "--assume",
+            "team agreed",
+            "--revisit",
+            "Q3",
+            "--reject",
+            "v1.9: re-milestoned without sign-off",
+            "--authority",
+            "user-ruled",
+            "--blame",
+            "Wang Yu",
+        ],
+    );
+    let id = String::from_utf8_lossy(&out.stdout)
+        .split_whitespace()
+        .nth(1)
+        .unwrap()
+        .to_string();
+
+    // when: the decision is reopened
+    let re = run(&r, &["reopen", &id]);
+
+    // then: reopen names the authority so a fresh agent sees it is user-ruled
+    assert!(re.status.success());
+    assert!(String::from_utf8_lossy(&re.stdout).contains("authority: user-ruled"));
+}
+
+#[test]
 fn guard_should_fail_when_the_target_tick_is_not_head() {
     // given: a repo with two decisions, so the first is no longer HEAD
     let r = repo();

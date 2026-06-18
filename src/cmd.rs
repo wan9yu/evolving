@@ -183,29 +183,45 @@ pub fn check(repo: &Path, exit_on_red: bool, run: bool, platform: &str, offline:
         if t.status != "live" {
             continue;
         }
+        let mut verdicts: Vec<Verdict> = Vec::with_capacity(t.grounds.len());
         for g in &t.grounds {
-            // Only Test-bound grounds appear in check; person re-checks and unbound grounds are excluded.
-            let reference = match &g.check {
-                Some(Check::Test { reference, .. }) => reference.clone(),
-                _ => continue,
-            };
-            let receipts = crate::receipt::read_for(&store, &reference).unwrap_or_default();
-            let v = verdict_for(g, &receipts, &ctx);
-            if !matches!(v, Verdict::Green) {
-                any_not_green = true;
-            }
-            let label = v.label();
-            let detail = match &v {
-                Verdict::NotRun { missing_platforms } => {
-                    format!("missing: {}", missing_platforms.join(", "))
+            // Compute a verdict for every ground (for the state contract); only Test-bound
+            // grounds appear in the printed set and the gate (person/unbound are NotApplicable).
+            let v = match &g.check {
+                Some(Check::Test { reference, .. }) => {
+                    let receipts = crate::receipt::read_for(&store, reference).unwrap_or_default();
+                    let v = verdict_for(g, &receipts, &ctx);
+                    if !matches!(v, Verdict::Green) {
+                        any_not_green = true;
+                    }
+                    let detail = match &v {
+                        Verdict::NotRun { missing_platforms } => {
+                            format!("missing: {}", missing_platforms.join(", "))
+                        }
+                        Verdict::Stale { reason } => reason.clone(),
+                        _ => latest_ran_at(&receipts)
+                            .map(|ts| format!("ran {ts}"))
+                            .unwrap_or_else(|| "no receipt".into()),
+                    };
+                    rows.push(format!(
+                        "{}\t{filename}\t{:?}\t({detail})",
+                        v.label(),
+                        g.claim
+                    ));
+                    v
                 }
-                Verdict::Stale { reason } => reason.clone(),
-                _ => latest_ran_at(&receipts)
-                    .map(|ts| format!("ran {ts}"))
-                    .unwrap_or_else(|| "no receipt".into()),
+                _ => Verdict::NotApplicable,
             };
-            rows.push(format!("{label}\t{filename}\t{:?}\t({detail})", g.claim));
+            verdicts.push(v);
         }
+        // The per-host verdict-cache read contract for this tick (a hook reads it without shelling check).
+        let _ = crate::state::write_state(
+            &store,
+            &t,
+            &verdicts,
+            &config.staleness_ref,
+            ctx.live_origin_sha.as_deref(),
+        );
     }
 
     if rows.is_empty() {

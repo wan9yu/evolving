@@ -13,7 +13,7 @@
 
 `0.0.1`——通往 **`0.1.0` honest-resurface slice** 路上的一个早期、诚实的切片。一个自包含的单一 Rust 二进制文件，无网络，无守护进程；存储位于本地的 `.evolving/` 目录中。`0.1.0` 切片在源码树中已 feature-complete；已发布的 crate 仍是 `0.0.1`，尚未打 tag。
 
-**今天已交付：** 完整的 capture→resurface 闭环——记录决策及其根据（`ev decide`）、在事后绑定一个测试或人工复检（`ev guard`）、评估某个被绑定的检查并在它变红时让决策重新浮现（`ev check [--run] [--exit-on-red]`，扁平的六态裁定）、指出某个检查守护着哪个决策（`ev why`）、完整读取一个决策（`ev reopen` / `ev show`），以及审计该链及其拒绝项（`ev verify`）。`ev check --run` 会替你运行被绑定的检查并记录一条 receipt。**仍在向 `0.1.0` 推进：** 浏览账本（`ev list` / `ev log`），以及存活性元守卫的 commit 窗口细化（在最近 N 个相关 commit 内未运行）。
+**今天已交付：** 完整的 capture→resurface 闭环——记录决策及其根据（`ev decide`）、在事后绑定一个测试或人工复检（`ev guard`）、评估某个被绑定的检查并在它变红时让决策重新浮现（`ev check [--run] [--exit-on-red]`，扁平的六态裁定）、**存活性元守卫**（`ev check` 把某个从未在某声明平台运行过的检查标为 not-run，带事件驱动的新鲜度判定与按 runner 的 `--attest` 限定）、指出某个检查守护着哪个决策（`ev why`）、完整读取一个决策（`ev reopen` / `ev show`）、浏览账本（`ev list` / `ev log`），以及审计该链及其拒绝项（`ev verify`）。`ev check --run` 会替你运行被绑定的检查并记录一条 receipt。**仍在向 `0.1.0` 推进：** **authority 标签**（把决策标记为 `user-ruled` 还是 `agent-disposable`，让 fresh agent 在重新决策前看到它），然后打 `0.1.0` 版本 tag。
 
 ## Install
 

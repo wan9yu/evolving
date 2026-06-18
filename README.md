@@ -21,7 +21,7 @@ single self-contained Rust binary, no network, no daemon; the store lives in a l
 `.evolving/` directory. The `0.1.0` slice is feature-complete in the source tree; the
 published crate is still `0.0.1`, not yet tagged.
 
-**Shipped today:** the full capture→resurface loop — recording decisions and their grounds
+**Shipped:** the full capture→resurface loop — recording decisions and their grounds
 (`ev decide`), binding a test or human re-check after the fact (`ev guard`), evaluating a
 bound check and resurfacing a decision when it goes red (`ev check [--run] [--exit-on-red]`,
 the flat six-state verdict), the **liveness meta-guard** (`ev check` flags a check that never

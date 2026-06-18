@@ -4,9 +4,9 @@
 rest on as an immutable, content-addressed *tick chain*, binds a test-check or a human
 re-check to each ground, and audits that chain against a fixed set of refusals.
 
-These docs cover the **shipped `0.0.1` surface** — the commands that exist today
-(`init`, `decide`, `guard`, `show`, `verify`). For what is still landing toward `0.1.0`,
-see the **Status** section of the [project README](../README.md).
+These docs cover the `ev` command surface: `init`, `decide`, `guard`, `check`, `why`,
+`reopen`, `show`, `list`, `log`, `verify`. For release status (the published crate is behind
+the source tree), see the **Status** section of the [project README](../README.md).
 
 - **[commands.md](commands.md)** — the authoritative command reference: every flag, exit
   code, the exact strings each command prints, and a worked example per command.

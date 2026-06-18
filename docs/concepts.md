@@ -24,8 +24,8 @@ enter the content hash.
 forging a new identity:
 
 - `id` — the content-addressed identifier (the hash output; see *Identity*).
-- `status` — the tick's status string (`"live"` today).
-- `held_since` — a timestamp slot (empty today).
+- `status` — the tick's status string (`"live"`).
+- `held_since` — a reserved timestamp slot (unused).
 - `blame` — the human author on the hook for this decision.
 
 On disk a tick is stored as pretty JSON containing the hashed payload keys **plus** the

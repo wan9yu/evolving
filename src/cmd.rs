@@ -125,16 +125,25 @@ fn live_ctx(
     store: &Store,
     staleness_days: u64,
     live_origin_sha: Option<String>,
+    attest: Option<Vec<String>>,
 ) -> crate::verdict::Ctx {
     crate::verdict::Ctx {
         live_origin_sha,
         selected: crate::selected::read(store).unwrap_or(None),
         now_unix: time::OffsetDateTime::now_utc().unix_timestamp(),
         staleness_secs: staleness_days as i64 * 86_400,
+        attest,
     }
 }
 
-pub fn check(repo: &Path, exit_on_red: bool, run: bool, platform: &str, offline: bool) -> ExitCode {
+pub fn check(
+    repo: &Path,
+    exit_on_red: bool,
+    run: bool,
+    platform: &str,
+    offline: bool,
+    attest: Vec<String>,
+) -> ExitCode {
     use crate::verdict::{verdict_for, Verdict};
     let store = Store::at(repo);
     if !store.exists() {
@@ -191,7 +200,12 @@ pub fn check(repo: &Path, exit_on_red: bool, run: bool, platform: &str, offline:
     }
 
     let live_origin = crate::staleness::resolve(repo, &store, &config.staleness_ref, offline);
-    let ctx = live_ctx(&store, config.staleness_days, live_origin);
+    let attest = if attest.is_empty() {
+        None
+    } else {
+        Some(attest)
+    };
+    let ctx = live_ctx(&store, config.staleness_days, live_origin, attest);
     let mut rows: Vec<String> = Vec::new();
     let mut any_not_green = false;
 
@@ -215,7 +229,7 @@ pub fn check(repo: &Path, exit_on_red: bool, run: bool, platform: &str, offline:
             // verdict_for returns NotApplicable for any non-Test ground.
             let ts = triggered_since(repo, g, &receipts);
             let v = verdict_for(g, &receipts, &ctx, ts);
-            if !matches!(v, Verdict::Green | Verdict::NotApplicable) {
+            if !matches!(v, Verdict::Green | Verdict::NotApplicable | Verdict::Exempt) {
                 any_not_green = true;
             }
             // Only Test-bound grounds appear in the printed set and the gate.
@@ -316,7 +330,7 @@ pub fn reopen(repo: &Path, id: &str) -> ExitCode {
     };
     let config = crate::config::read(&store);
     let live_origin = crate::staleness::resolve(repo, &store, &config.staleness_ref, true);
-    let ctx = live_ctx(&store, config.staleness_days, live_origin);
+    let ctx = live_ctx(&store, config.staleness_days, live_origin, None);
 
     println!("decision {}: {:?}", tick.id, tick.decision);
     if !tick.observe.is_empty() {

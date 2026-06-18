@@ -238,3 +238,27 @@ fn check_should_go_stale_when_a_triggering_change_lands_after_the_green_receipt(
         .lines()
         .any(|l| l.starts_with("stale\t")));
 }
+
+#[test]
+fn check_should_exempt_the_ship_image_binding_when_the_runner_attests_only_local() {
+    // given: the ship-image AC-5 binding, no receipt, a runner attesting only local
+    let (r, head) = git_repo();
+    decide_and_guard(&r, &head);
+
+    // when: check gates but attests only local (this runner does not speak for ship-image)
+    let out = ev()
+        .args(["check", "--attest", "local", "--exit-on-red"])
+        .current_dir(&r)
+        .output()
+        .unwrap();
+
+    // then: it does NOT gate — the binding is exempt here, not a not-run noise line
+    assert!(
+        out.status.success(),
+        "stdout: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    assert!(!String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .any(|l| l.starts_with("not-run\t")));
+}

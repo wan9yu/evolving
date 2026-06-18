@@ -16,6 +16,7 @@ pub enum Verdict {
     NotRun { missing_platforms: Vec<String> },
     Stale { reason: String },
     SilentlyUnbound,
+    Exempt,        // this runner attests none of the binding's declared platforms (non-gating)
     NotApplicable, // no check, or a person re-check
 }
 
@@ -29,6 +30,7 @@ impl Verdict {
             Verdict::NotRun { .. } => "not-run",
             Verdict::Stale { .. } => "stale",
             Verdict::SilentlyUnbound => "silently-unbound",
+            Verdict::Exempt => "exempt",
             Verdict::NotApplicable => "n/a",
         }
     }
@@ -43,6 +45,7 @@ pub struct Ctx {
     pub selected: Option<SelectedList>,  // None ⇒ L2 not evaluated
     pub now_unix: i64,                   // current time, unix seconds
     pub staleness_secs: i64, // a deciding receipt older than this is stale; i64::MAX disables
+    pub attest: Option<Vec<String>>, // platforms this runner speaks for; None ⇒ attest all
 }
 
 /// Verdict for one ground against `receipts` (this ground's run-receipts) and `ctx`.
@@ -70,9 +73,22 @@ pub fn verdict_for(
         }
     }
 
+    // Per-runner attestation: only platforms this runner speaks for count toward not-run.
+    // None ⇒ attest all (cross-platform audit / default).
+    let attested: Vec<&String> = match &ctx.attest {
+        Some(set) => liveness
+            .platforms
+            .iter()
+            .filter(|p| set.contains(p))
+            .collect(),
+        None => liveness.platforms.iter().collect(),
+    };
+    if ctx.attest.is_some() && attested.is_empty() {
+        return Verdict::Exempt; // this runner speaks for none of the declared platforms
+    }
     let mut missing = Vec::new();
     let mut deciding: Vec<&Receipt> = Vec::new();
-    for p in &liveness.platforms {
+    for p in attested {
         // RFC-3339 UTC timestamps sort chronologically, so the lexicographic max is the latest run.
         let latest = receipts
             .iter()
@@ -172,6 +188,16 @@ mod tests {
             selected,
             now_unix: 0,
             staleness_secs: i64::MAX,
+            attest: None,
+        }
+    }
+    fn ctx_attest(attest: Option<&[&str]>) -> Ctx {
+        Ctx {
+            live_origin_sha: None,
+            selected: None,
+            now_unix: 0,
+            staleness_secs: i64::MAX,
+            attest: attest.map(|a| a.iter().map(|s| s.to_string()).collect()),
         }
     }
 
@@ -318,6 +344,7 @@ mod tests {
                 .unwrap()
                 .unix_timestamp(),
             staleness_secs: 7 * 86_400,
+            attest: None,
         };
 
         // when: its verdict is computed against that clock
@@ -339,6 +366,7 @@ mod tests {
                 .unwrap()
                 .unix_timestamp(),
             staleness_secs: 7 * 86_400,
+            attest: None,
         };
 
         // when: its verdict is computed
@@ -376,6 +404,29 @@ mod tests {
             Verdict::NotRun {
                 missing_platforms: vec!["mac".into()]
             }
+        );
+    }
+
+    #[test]
+    fn verdict_for_should_exempt_a_binding_whose_platforms_this_runner_does_not_attest() {
+        // given: a mac-only binding, a runner attesting only linux-ci, no receipts
+        let g = test_ground(&["mac"]);
+        // then: exempt (a non-gating fact), NOT not-run
+        assert_eq!(
+            verdict_for(&g, &[], &ctx_attest(Some(&["linux-ci"])), false),
+            Verdict::Exempt
+        );
+    }
+
+    #[test]
+    fn verdict_for_should_ignore_an_unattested_platform_when_an_attested_one_is_green() {
+        // given: a [linux-ci, mac] binding, runner attests linux-ci, a green linux-ci receipt
+        let g = test_ground(&["linux-ci", "mac"]);
+        let receipts = vec![rcpt("linux-ci", "2026-01-01T00:00:00Z", "green")];
+        // then: green — mac is exempt, only the attested linux-ci needs a receipt
+        assert_eq!(
+            verdict_for(&g, &receipts, &ctx_attest(Some(&["linux-ci"])), false),
+            Verdict::Green
         );
     }
 }

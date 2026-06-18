@@ -57,6 +57,10 @@ enum Cmd {
         /// Use only the cached staleness reference; never resolve it fresh (non-blocking).
         #[arg(long)]
         offline: bool,
+        /// Platforms THIS runner speaks for (comma-separated). Declared platforms not in this
+        /// set are exempt here, not not-run. Omit to attest ALL declared platforms (default).
+        #[arg(long, value_delimiter = ',')]
+        attest: Vec<String>,
     },
     /// Reverse lookup: name the decision + ground a test selector guards.
     Why {
@@ -107,7 +111,8 @@ fn main() -> std::process::ExitCode {
             run,
             platform,
             offline,
-        } => ev::cmd::check(&repo, exit_on_red, run, &platform, offline),
+            attest,
+        } => ev::cmd::check(&repo, exit_on_red, run, &platform, offline, attest),
         Cmd::Why { selector } => ev::cmd::why(&repo, &selector),
         Cmd::Reopen { id } => ev::cmd::reopen(&repo, &id),
     }

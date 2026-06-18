@@ -67,8 +67,20 @@ pub fn show(repo: &Path, id: &str) -> ExitCode {
         }
     }
 }
-pub fn decide(repo: &Path, decision: &str, args: &[String]) -> ExitCode {
-    match crate::capture::run(repo, decision, args) {
+pub fn decide(repo: &Path, decision: Option<&str>, args: &[String]) -> ExitCode {
+    // clap fills the optional positional with the first token even when it is a flag (it carries
+    // allow_hyphen_values so a leading --from-git can reach us at all). A real decision never
+    // starts with '-', so a hyphen-leading "decision" is actually a flag: re-route it into args
+    // and leave the positional empty, letting the capture flag-loop own --from-git uniformly.
+    let (decision, args): (Option<&str>, Vec<String>) = match decision {
+        Some(d) if d.starts_with('-') => {
+            let mut v = vec![d.to_string()];
+            v.extend_from_slice(args);
+            (None, v)
+        }
+        other => (other, args.to_vec()),
+    };
+    match crate::capture::run(repo, decision, &args) {
         Ok(t) => {
             println!("recorded {} ({} ground(s))", t.id, t.grounds.len());
             ExitCode::SUCCESS

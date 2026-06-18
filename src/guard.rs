@@ -155,7 +155,7 @@ mod tests {
         .iter()
         .map(|x| x.to_string())
         .collect();
-        let t = crate::capture::run(&p, "build our own retrieval", &args).unwrap();
+        let t = crate::capture::run(&p, Some("build our own retrieval"), &args).unwrap();
         (p, t.id)
     }
     fn args(selector: &str, id: &str, target: Option<&str>) -> GuardArgs {
@@ -217,7 +217,7 @@ mod tests {
         let (p, _id) = repo_with_unbound();
         let t2 = crate::capture::run(
             &p,
-            "d2",
+            Some("d2"),
             &["--assume", "a", "--assume", "b", "--blame", "Wang Yu"]
                 .iter()
                 .map(|x| x.to_string())
@@ -238,7 +238,7 @@ mod tests {
         let p = repo_with_unbound().0;
         let t1 = crate::capture::run(
             &p,
-            "d1",
+            Some("d1"),
             &["--assume", "a", "--blame", "Wang Yu"]
                 .iter()
                 .map(|x| x.to_string())
@@ -247,7 +247,7 @@ mod tests {
         .unwrap();
         let _t2 = crate::capture::run(
             &p,
-            "d2",
+            Some("d2"),
             &["--assume", "b", "--blame", "Wang Yu"]
                 .iter()
                 .map(|x| x.to_string())
@@ -268,7 +268,7 @@ mod tests {
         let p = repo_with_unbound().0;
         let t = crate::capture::run(
             &p,
-            "d",
+            Some("d"),
             &["--reject", "x: y", "--blame", "Wang Yu"]
                 .iter()
                 .map(|x| x.to_string())

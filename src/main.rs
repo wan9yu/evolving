@@ -27,7 +27,10 @@ enum Cmd {
     },
     /// Record a decision (with grounds + roads-not-taken)
     Decide {
-        decision: String,
+        /// The decision text; omit it and pass --from-git <commit> to seed from a commit envelope.
+        /// allow_hyphen_values lets a leading --from-git reach us; cmd::decide re-routes it into args.
+        #[arg(allow_hyphen_values = true)]
+        decision: Option<String>,
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
@@ -92,7 +95,7 @@ fn main() -> std::process::ExitCode {
         Cmd::Log => ev::cmd::log(&repo),
         Cmd::Brief => ev::cmd::brief(&repo),
         Cmd::Verify { self_test } => ev::cmd::verify_cmd(&repo, self_test),
-        Cmd::Decide { decision, args } => ev::cmd::decide(&repo, &decision, &args),
+        Cmd::Decide { decision, args } => ev::cmd::decide(&repo, decision.as_deref(), &args),
         Cmd::Guard {
             selector,
             id,

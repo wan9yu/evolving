@@ -78,6 +78,46 @@ fn t_grounds_text(grounds: &[Ground]) -> Vec<String> {
     grounds.iter().map(|g| g.claim.clone()).collect()
 }
 
+/// One `git show -s --format=<fmt> <commit>` field, run in `repo`. Returns the trimmed
+/// stdout, or an error if git can't resolve the commit (the caller maps this to a clear message).
+fn git_show(repo: &Path, fmt: &str, commit: &str) -> Result<String, String> {
+    let out = Command::new("git")
+        .args(["show", "-s", fmt, commit])
+        .current_dir(repo)
+        .output()
+        .map_err(|e| format!("cannot run git: {e}"))?;
+    if !out.status.success() {
+        return Err(format!("decide: cannot read commit {commit}"));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// The commit ENVELOPE we are allowed to seed from: subject (the decision text), author name
+/// (the default blame), and any `Refs #<n>` provenance lines from the body. The body is scanned
+/// ONLY for Refs lines — never parsed for grounds (those stay human-authored via --assume/--reject).
+struct Envelope {
+    subject: String,
+    author: String,
+    refs: Vec<String>,
+}
+
+fn read_envelope(repo: &Path, commit: &str) -> Result<Envelope, String> {
+    let subject = git_show(repo, "--format=%s", commit)?;
+    let author = git_show(repo, "--format=%an", commit)?;
+    let body = git_show(repo, "--format=%b", commit)?;
+    let refs = body
+        .lines()
+        .map(str::trim)
+        .filter(|l| l.starts_with("Refs #"))
+        .map(|l| l.to_string())
+        .collect();
+    Ok(Envelope {
+        subject,
+        author,
+        refs,
+    })
+}
+
 /// Validate a declared authority value against the closed vocabulary.
 pub(crate) fn validate_authority(val: &str) -> Result<(), String> {
     if val == "user-ruled" || val == "agent-disposable" {
@@ -152,19 +192,20 @@ fn build_ground(
     })
 }
 
-pub fn run(repo: &Path, decision: &str, args: &[String]) -> Result<Tick, String> {
-    if decision.trim().is_empty() {
-        return Err("decision text is empty".into());
-    }
+pub fn run(repo: &Path, decision: Option<&str>, args: &[String]) -> Result<Tick, String> {
     let mut observe = String::new();
     let mut blame_override: Option<String> = None;
     let mut sha_override: Option<String> = None;
     let mut authority: Option<String> = None;
+    let mut from_git: Option<String> = None;
     let mut drafts: Vec<DraftGround> = Vec::new();
     let mut i = 0;
     while i < args.len() {
         let flag = args[i].clone();
         match flag.as_str() {
+            "--from-git" => {
+                from_git = Some(need(args, i, &flag)?);
+            }
             "--observe" => {
                 observe = need(args, i, &flag)?;
             }
@@ -226,6 +267,32 @@ pub fn run(repo: &Path, decision: &str, args: &[String]) -> Result<Tick, String>
             other => return Err(format!("decide: unknown flag {other}")),
         }
         i += 2;
+    }
+
+    // Decision source: exactly one of {a positional decision, --from-git}. When --from-git is
+    // used, the decision text is the commit subject, the default blame is the commit author, and
+    // any `Refs #<n>` body lines are appended to observe as provenance (grounds stay human-authored).
+    let (decision, observe) = match (decision, &from_git) {
+        (Some(_), Some(_)) => {
+            return Err("decide: decision given twice (positional and --from-git)".into())
+        }
+        (None, None) => return Err("decide: needs a decision (positional) or --from-git".into()),
+        (Some(d), None) => (d.to_string(), observe),
+        (None, Some(commit)) => {
+            let env = read_envelope(repo, commit)?;
+            if blame_override.is_none() {
+                blame_override = Some(env.author);
+            }
+            let observe = std::iter::once(observe)
+                .chain(env.refs)
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+                .join(" ");
+            (env.subject, observe)
+        }
+    };
+    if decision.trim().is_empty() {
+        return Err("decision text is empty".into());
     }
     let blame = resolve_blame(repo, blame_override)?;
     let mut grounds = Vec::new();
@@ -295,7 +362,7 @@ mod tests {
         // when: the decision is captured
         let t = run(
             &r,
-            "build our own retrieval; reject pgvector",
+            Some("build our own retrieval; reject pgvector"),
             &s(&[
                 "--observe",
                 "evaluating backend",
@@ -325,7 +392,12 @@ mod tests {
         let r = repo();
 
         // when: the decision is captured
-        let t = run(&r, "d", &s(&["--assume", "c", "--blame", "  Wang Yu  "])).expect("ok");
+        let t = run(
+            &r,
+            Some("d"),
+            &s(&["--assume", "c", "--blame", "  Wang Yu  "]),
+        )
+        .expect("ok");
 
         // then: the stored blame is trimmed
         assert_eq!(t.blame, "Wang Yu");
@@ -339,7 +411,7 @@ mod tests {
         // when: the decision is captured
         let e = run(
             &r,
-            "d",
+            Some("d"),
             &s(&[
                 "--assume",
                 "c",
@@ -364,7 +436,7 @@ mod tests {
         // when: the decision is captured
         let e = run(
             &r,
-            "d",
+            Some("d"),
             &s(&[
                 "--reject",
                 "pgvector: would lock our schema",
@@ -397,7 +469,7 @@ mod tests {
         std::fs::create_dir_all(&p).unwrap();
 
         // when: a decision is captured there
-        let e = run(&p, "d", &s(&["--blame", "x"]));
+        let e = run(&p, Some("d"), &s(&["--blame", "x"]));
 
         // then: it errors
         assert!(e.is_err());
@@ -411,7 +483,7 @@ mod tests {
         // when: the decision is captured
         let t = run(
             &r,
-            "restore-safety counter DB-backed; reject Redis",
+            Some("restore-safety counter DB-backed; reject Redis"),
             &s(&[
                 "--assume",
                 "Argus introduces no Redis; multi-pod coord via existing DB",
@@ -460,7 +532,7 @@ mod tests {
         // when: the decision is captured
         let e = run(
             &r,
-            "d",
+            Some("d"),
             &s(&[
                 "--assume",
                 "c",
@@ -491,7 +563,7 @@ mod tests {
         // when: the decision is captured
         let e = run(
             &r,
-            "d",
+            Some("d"),
             &s(&[
                 "--assume",
                 "c",
@@ -530,7 +602,7 @@ mod tests {
         }
 
         // when: a decision is captured without --blame
-        let t = run(&r, "d", &s(&["--assume", "c"])).expect("ok");
+        let t = run(&r, Some("d"), &s(&["--assume", "c"])).expect("ok");
 
         // then: blame is resolved from git config user.name
         assert_eq!(t.blame, "Ada Lovelace");

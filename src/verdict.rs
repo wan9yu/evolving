@@ -46,7 +46,12 @@ pub struct Ctx {
 }
 
 /// Verdict for one ground against `receipts` (this ground's run-receipts) and `ctx`.
-pub fn verdict_for(ground: &Ground, receipts: &[Receipt], ctx: &Ctx) -> Verdict {
+pub fn verdict_for(
+    ground: &Ground,
+    receipts: &[Receipt],
+    ctx: &Ctx,
+    triggered_since: bool,
+) -> Verdict {
     let (reference, verified_at_sha, liveness) = match &ground.check {
         Some(Check::Test {
             reference,
@@ -81,6 +86,15 @@ pub fn verdict_for(ground: &Ground, receipts: &[Receipt], ctx: &Ctx) -> Verdict 
     if !missing.is_empty() {
         return Verdict::NotRun {
             missing_platforms: missing,
+        };
+    }
+
+    // Event-driven freshness: a commit touching a declared trigger landed after the last run,
+    // so the green is for a stale world. A not-green fact (the count-N window is rejected — a
+    // refactor moving the assumption out of triggered_by would otherwise stay green forever).
+    if triggered_since {
+        return Verdict::Stale {
+            reason: "a triggering change landed after the last run".into(),
         };
     }
 
@@ -173,7 +187,7 @@ mod tests {
         };
 
         // when: its verdict is computed
-        let v = verdict_for(&g, &[], &ctx(None, None));
+        let v = verdict_for(&g, &[], &ctx(None, None), false);
 
         // then: it is not applicable (person grounds never appear in check)
         assert_eq!(v, Verdict::NotApplicable);
@@ -186,7 +200,7 @@ mod tests {
         let receipts = vec![rcpt("linux-ci", "2026-01-01T00:00:00Z", "green")];
 
         // when: its verdict is computed
-        let v = verdict_for(&g, &receipts, &ctx(None, None));
+        let v = verdict_for(&g, &receipts, &ctx(None, None), false);
 
         // then: it is not-run, naming the missing platform
         assert_eq!(
@@ -204,7 +218,7 @@ mod tests {
         let receipts = vec![rcpt("linux-ci", "2026-01-01T00:00:00Z", "gray")];
 
         // when: its verdict is computed
-        let v = verdict_for(&g, &receipts, &ctx(None, None));
+        let v = verdict_for(&g, &receipts, &ctx(None, None), false);
 
         // then: gray is promoted to red, never dropped
         assert_eq!(v, Verdict::GrayRed);
@@ -220,7 +234,7 @@ mod tests {
         ];
 
         // when: its verdict is computed
-        let v = verdict_for(&g, &receipts, &ctx(None, None));
+        let v = verdict_for(&g, &receipts, &ctx(None, None), false);
 
         // then: the latest (red) decides
         assert_eq!(v, Verdict::Red);
@@ -236,7 +250,7 @@ mod tests {
         ];
 
         // when: its verdict is computed
-        let v = verdict_for(&g, &receipts, &ctx(None, None));
+        let v = verdict_for(&g, &receipts, &ctx(None, None), false);
 
         // then: it is green
         assert_eq!(v, Verdict::Green);
@@ -250,7 +264,7 @@ mod tests {
         let origin = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
         // when: its verdict is computed against that origin
-        let v = verdict_for(&g, &receipts, &ctx(Some(origin), None));
+        let v = verdict_for(&g, &receipts, &ctx(Some(origin), None), false);
 
         // then: it is stale (binary, no grace) — never shown green
         assert!(matches!(v, Verdict::Stale { .. }));
@@ -268,7 +282,7 @@ mod tests {
         };
 
         // when: its verdict is computed against that selected-list
-        let v = verdict_for(&g, &receipts, &ctx(None, Some(sl)));
+        let v = verdict_for(&g, &receipts, &ctx(None, Some(sl)), false);
 
         // then: it is silently-unbound (never counted green)
         assert_eq!(v, Verdict::SilentlyUnbound);
@@ -286,7 +300,7 @@ mod tests {
         };
 
         // when: its verdict is computed
-        let v = verdict_for(&g, &receipts, &ctx(None, Some(sl)));
+        let v = verdict_for(&g, &receipts, &ctx(None, Some(sl)), false);
 
         // then: it is green (selected, so not silently-unbound)
         assert_eq!(v, Verdict::Green);
@@ -307,7 +321,7 @@ mod tests {
         };
 
         // when: its verdict is computed against that clock
-        let v = verdict_for(&g, &receipts, &c);
+        let v = verdict_for(&g, &receipts, &c, false);
 
         // then: it is stale (too old to trust), never green
         assert!(matches!(v, Verdict::Stale { .. }));
@@ -328,9 +342,40 @@ mod tests {
         };
 
         // when: its verdict is computed
-        let v = verdict_for(&g, &receipts, &c);
+        let v = verdict_for(&g, &receipts, &c, false);
 
         // then: it is green (fresh)
         assert_eq!(v, Verdict::Green);
+    }
+
+    #[test]
+    fn verdict_for_should_be_stale_when_a_triggering_change_landed_after_the_last_run() {
+        // given: a green binding whose deciding receipt is behind a triggering change
+        let g = test_ground(&["linux-ci"]);
+        let receipts = vec![rcpt("linux-ci", "2026-01-01T00:00:00Z", "green")];
+
+        // when: its verdict is computed with triggered_since = true
+        let v = verdict_for(&g, &receipts, &ctx(None, None), true);
+
+        // then: it is stale — the green is for a stale world, never shown green
+        assert!(matches!(v, Verdict::Stale { .. }));
+    }
+
+    #[test]
+    fn verdict_for_should_ignore_triggered_since_when_a_platform_is_already_not_run() {
+        // given: a two-platform binding missing a receipt on one platform, and a triggering change
+        let g = test_ground(&["linux-ci", "mac"]);
+        let receipts = vec![rcpt("linux-ci", "2026-01-01T00:00:00Z", "green")];
+
+        // when: its verdict is computed with triggered_since = true
+        let v = verdict_for(&g, &receipts, &ctx(None, None), true);
+
+        // then: absence-not-run still wins (precedence: not-run before triggering-stale)
+        assert_eq!(
+            v,
+            Verdict::NotRun {
+                missing_platforms: vec!["mac".into()]
+            }
+        );
     }
 }

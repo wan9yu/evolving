@@ -193,7 +193,7 @@ pub fn check(repo: &Path, exit_on_red: bool, run: bool, platform: &str, offline:
                 _ => Vec::new(),
             };
             // verdict_for returns NotApplicable for any non-Test ground.
-            let v = verdict_for(g, &receipts, &ctx);
+            let v = verdict_for(g, &receipts, &ctx, false);
             if !matches!(v, Verdict::Green | Verdict::NotApplicable) {
                 any_not_green = true;
             }
@@ -309,7 +309,7 @@ pub fn reopen(repo: &Path, id: &str) -> ExitCode {
                 ..
             }) => {
                 let receipts = crate::receipt::read_for(&store, reference).unwrap_or_default();
-                let v = crate::verdict::verdict_for(g, &receipts, &ctx);
+                let v = crate::verdict::verdict_for(g, &receipts, &ctx, false);
                 let now = v.label();
                 let short = &verified_at_sha[..verified_at_sha.len().min(8)];
                 println!(

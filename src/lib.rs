@@ -8,6 +8,7 @@ pub mod receipt;
 pub mod runner;
 pub mod selected;
 pub mod staleness;
+pub mod state;
 pub mod store;
 pub mod tick;
 pub mod verdict;

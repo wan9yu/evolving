@@ -5,6 +5,26 @@ use crate::verify::verify;
 use std::path::Path;
 use std::process::ExitCode;
 
+/// Whether a triggering change landed after this ground's most recent run. Uses the latest
+/// receipt's commit + the binding's triggered_by paths. False when there is no receipt, no
+/// Test binding, or git can't tell (None ⇒ not evaluated).
+fn triggered_since(
+    repo: &std::path::Path,
+    ground: &crate::tick::Ground,
+    receipts: &[crate::receipt::Receipt],
+) -> bool {
+    use crate::tick::Check;
+    let triggered_by = match &ground.check {
+        Some(Check::Test { liveness, .. }) => &liveness.triggered_by,
+        _ => return false,
+    };
+    let latest = receipts.iter().max_by(|a, b| a.ran_at.cmp(&b.ran_at));
+    match latest {
+        Some(r) => crate::liveness::changed_since(repo, &r.commit, triggered_by).unwrap_or(false),
+        None => false,
+    }
+}
+
 pub fn init(repo: &Path) -> ExitCode {
     let store = Store::at(repo);
     match store.init() {
@@ -193,7 +213,8 @@ pub fn check(repo: &Path, exit_on_red: bool, run: bool, platform: &str, offline:
                 _ => Vec::new(),
             };
             // verdict_for returns NotApplicable for any non-Test ground.
-            let v = verdict_for(g, &receipts, &ctx, false);
+            let ts = triggered_since(repo, g, &receipts);
+            let v = verdict_for(g, &receipts, &ctx, ts);
             if !matches!(v, Verdict::Green | Verdict::NotApplicable) {
                 any_not_green = true;
             }
@@ -309,7 +330,8 @@ pub fn reopen(repo: &Path, id: &str) -> ExitCode {
                 ..
             }) => {
                 let receipts = crate::receipt::read_for(&store, reference).unwrap_or_default();
-                let v = crate::verdict::verdict_for(g, &receipts, &ctx, false);
+                let ts = triggered_since(repo, g, &receipts);
+                let v = crate::verdict::verdict_for(g, &receipts, &ctx, ts);
                 let now = v.label();
                 let short = &verified_at_sha[..verified_at_sha.len().min(8)];
                 println!(

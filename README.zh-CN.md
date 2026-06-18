@@ -11,9 +11,9 @@
 
 ## Status
 
-`0.0.1`——通往 **`0.1.0` honest-resurface slice** 路上的一个早期、诚实的切片。一个自包含的单一 Rust 二进制文件，无网络，无守护进程；存储位于本地的 `.evolving/` 目录中。
+`0.0.1`——通往 **`0.1.0` honest-resurface slice** 路上的一个早期、诚实的切片。一个自包含的单一 Rust 二进制文件，无网络，无守护进程；存储位于本地的 `.evolving/` 目录中。`0.1.0` 切片在源码树中已 feature-complete；已发布的 crate 仍是 `0.0.1`，尚未打 tag。
 
-**今天已交付：** 记录决策及其根据（`ev decide`）、在事后绑定一个测试或人工复检（`ev guard`）、读取一个决策（`ev show`），以及审计该链及其拒绝项（`ev verify`）。**仍在向 `0.1.0` 推进：** 评估某个被绑定检查的存活状态、并在它变红时让决策重新浮现（`ev check`），以及 `reopen` / `list` / `log` 这一组能力。所以今天的 `ev` *冻结了契约*——它记录下什么必须保持为真、以及将如何被检查——但还没有替你运行这些检查。
+**今天已交付：** 完整的 capture→resurface 闭环——记录决策及其根据（`ev decide`）、在事后绑定一个测试或人工复检（`ev guard`）、评估某个被绑定的检查并在它变红时让决策重新浮现（`ev check [--run] [--exit-on-red]`，扁平的六态裁定）、指出某个检查守护着哪个决策（`ev why`）、完整读取一个决策（`ev reopen` / `ev show`），以及审计该链及其拒绝项（`ev verify`）。`ev check --run` 会替你运行被绑定的检查并记录一条 receipt。**仍在向 `0.1.0` 推进：** 浏览账本（`ev list` / `ev log`），以及存活性元守卫的 commit 窗口细化（在最近 N 个相关 commit 内未运行）。
 
 ## Install
 
@@ -87,6 +87,14 @@ ev show <id>
 ```
 
 `ev verify` 确认每个 id 都等于其负载的哈希、谱系是仅向前的，并且每个 tick 都能针对那个封闭的 schema 与检查形态通过校验。
+
+评估那些被绑定的检查，并让任何检查已变红的决策重新浮现。当一条测试检查绑定到一个可运行的命令时，`ev check --run` 会替你运行它、记录一条 receipt，并在 `--exit-on-red` 下据此决定退出码；`ev why` 把一个检查映射回它所守护的决策，`ev reopen` 则展示完整的决策对象（冻结态对比当前态，连同那条未走的路）：
+
+```sh
+ev check --run --platform linux-ci --exit-on-red
+ev why "pytest tests/test_schema_frozen.py"
+ev reopen <id>
+```
 
 ## The model
 

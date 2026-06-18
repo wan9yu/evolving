@@ -18,14 +18,18 @@ guarding each reason is still alive.
 
 `0.0.1` — an early, honest cut on the way to the **`0.1.0` honest-resurface slice**. A
 single self-contained Rust binary, no network, no daemon; the store lives in a local
-`.evolving/` directory.
+`.evolving/` directory. The `0.1.0` slice is feature-complete in the source tree; the
+published crate is still `0.0.1`, not yet tagged.
 
-**Shipped today:** recording decisions and their grounds (`ev decide`), binding a test or
-human re-check after the fact (`ev guard`), reading a decision (`ev show`), and auditing the
-chain and its refusals (`ev verify`). **Still landing toward `0.1.0`:** evaluating a bound
-check's liveness and resurfacing a decision when it goes red (`ev check`), plus the
-`reopen` / `list` / `log` surface. So today `ev` *freezes the contract* — it records what
-must stay true and how it would be checked — but does not yet run the checks for you.
+**Shipped today:** the full capture→resurface loop — recording decisions and their grounds
+(`ev decide`), binding a test or human re-check after the fact (`ev guard`), evaluating a
+bound check and resurfacing a decision when it goes red (`ev check [--run] [--exit-on-red]`,
+the flat six-state verdict), naming the decision a check guards (`ev why`), reading a
+decision in full (`ev reopen` / `ev show`), and auditing the chain and its refusals
+(`ev verify`). `ev check --run` runs the bound check for you and records a receipt.
+
+**Still landing toward `0.1.0`:** browsing the ledger (`ev list` / `ev log`), and the
+liveness meta-guard's commit-window refinement (not-run across the last N relevant commits).
 
 ## Install
 
@@ -108,6 +112,18 @@ ev show <id>
 
 `ev verify` confirms every id equals the hash of its payload, that lineage is
 forward-only, and that every tick validates against the closed schema and check shape.
+
+Evaluate the bound checks and resurface any decision whose check has gone red. With a
+test-check bound to a runnable command, `ev check --run` runs it, records a receipt, and
+gates the exit code under `--exit-on-red`; `ev why` maps a check back to the decision it
+guards, and `ev reopen` shows the full decision object (frozen-vs-current, with the
+road-not-taken):
+
+```sh
+ev check --run --platform linux-ci --exit-on-red
+ev why "pytest tests/test_schema_frozen.py"
+ev reopen <id>
+```
 
 ## The model
 

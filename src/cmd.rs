@@ -315,6 +315,79 @@ pub fn why(repo: &Path, selector: &str) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// List every decision in the ledger: id, status, decision (sorted by id, deterministic).
+pub fn list(repo: &Path) -> ExitCode {
+    let store = Store::at(repo);
+    if !store.exists() {
+        eprintln!("error: no .evolving/ store here — run `ev init` first");
+        return ExitCode::FAILURE;
+    }
+    let files = match store.read_all() {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("error: reading store: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let mut rows: Vec<(String, String, String)> = files
+        .iter()
+        .map(|(name, raw)| match crate::tick::from_value(raw) {
+            Ok(t) => (name.clone(), t.status, t.decision),
+            Err(_) => (name.clone(), "?".into(), "<unparseable>".into()),
+        })
+        .collect();
+    rows.sort();
+    if rows.is_empty() {
+        println!("no decisions yet");
+        return ExitCode::SUCCESS;
+    }
+    for (id, status, decision) in &rows {
+        println!("{id}\t{status}\t{decision:?}");
+    }
+    ExitCode::SUCCESS
+}
+
+/// Show the decision lineage from HEAD back to genesis (newest first).
+pub fn log(repo: &Path) -> ExitCode {
+    let store = Store::at(repo);
+    if !store.exists() {
+        eprintln!("error: no .evolving/ store here — run `ev init` first");
+        return ExitCode::FAILURE;
+    }
+    let mut id = match store.read_head() {
+        Ok(h) => h,
+        Err(e) => {
+            eprintln!("error: reading HEAD: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    if id.is_empty() {
+        println!("no decisions yet");
+        return ExitCode::SUCCESS;
+    }
+    let mut seen = std::collections::HashSet::new();
+    while !id.is_empty() {
+        if !seen.insert(id.clone()) {
+            break; // cycle guard (a content-addressed chain can't cycle, but never loop)
+        }
+        match store.read_tick(&id) {
+            Ok(Some(t)) => {
+                println!("{}\t{}\t{:?}", t.id, t.status, t.decision);
+                id = t.parent_id;
+            }
+            Ok(None) => {
+                eprintln!("warning: {id} not found (broken lineage)");
+                break;
+            }
+            Err(e) => {
+                eprintln!("error: reading {id}: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    ExitCode::SUCCESS
+}
+
 pub fn reopen(repo: &Path, id: &str) -> ExitCode {
     let store = Store::at(repo);
     let tick = match store.read_tick(id) {

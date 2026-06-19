@@ -109,6 +109,9 @@ pub fn run(repo: &Path, a: GuardArgs) -> Result<Tick, String> {
             },
         }),
     };
+    let held_since = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .map_err(|e| format!("timestamp: {e}"))?;
     let mut child = Tick {
         id: String::new(),
         parent_id: parent.id.clone(),
@@ -116,7 +119,7 @@ pub fn run(repo: &Path, a: GuardArgs) -> Result<Tick, String> {
         decision: parent.decision.clone(),
         grounds,
         status: "live".into(),
-        held_since: String::new(),
+        held_since,
         blame,
         authority: a.authority,
     };

@@ -351,6 +351,9 @@ pub fn run(repo: &Path, decision: Option<&str>, args: &[String]) -> Result<Tick,
     let parent_id = store
         .read_head()
         .map_err(|e| format!("reading HEAD: {e}"))?;
+    let held_since = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .map_err(|e| format!("timestamp: {e}"))?;
     let mut t = Tick {
         id: String::new(),
         parent_id,
@@ -358,7 +361,7 @@ pub fn run(repo: &Path, decision: Option<&str>, args: &[String]) -> Result<Tick,
         decision: decision.to_string(),
         grounds,
         status: "live".into(),
-        held_since: String::new(),
+        held_since,
         blame,
         authority,
     };
@@ -421,6 +424,25 @@ mod tests {
         assert_eq!(t.grounds[1].supports, "rejected:pgvector");
         assert_eq!(t.blame, "Wang Yu");
         assert_eq!(Store::at(&r).read_head().unwrap(), t.id);
+    }
+
+    #[test]
+    fn decide_should_stamp_held_since_with_a_nonempty_rfc3339_time_when_recording() {
+        // given: a store
+        let r = repo();
+
+        // when: run records a decision
+        run(&r, Some("ship it"), &s(&["--blame", "Wang Yu"])).expect("ok");
+
+        // then: the stored HEAD tick's held_since is non-empty and parses as RFC 3339
+        let head = Store::at(&r).read_head().unwrap();
+        let tick = Store::at(&r).read_tick(&head).unwrap().unwrap();
+        assert!(!tick.held_since.is_empty());
+        time::OffsetDateTime::parse(
+            &tick.held_since,
+            &time::format_description::well_known::Rfc3339,
+        )
+        .expect("held_since parses as RFC 3339");
     }
 
     #[test]

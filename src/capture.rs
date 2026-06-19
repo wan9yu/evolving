@@ -280,6 +280,11 @@ fn build_ground(
             let counter_test = d
                 .counter_test
                 .ok_or("a test binding requires --counter-test (no vacuous binding)".to_string())?;
+            if counter_test.trim().is_empty() {
+                // write/read symmetry: from_value rejects an empty counter_test, so the decide
+                // write path must too — never persist a tick its own parser would refuse.
+                return Err("a test binding requires --counter-test (no vacuous binding)".into());
+            }
             if d.platforms.is_empty() || d.triggered_by.is_empty() || d.surfaces.is_empty() {
                 return Err("a test binding requires at least one --on-platform, --triggered-by, and --surface".into());
             }
@@ -707,6 +712,39 @@ mod tests {
         );
 
         // then: it is rejected
+        assert!(e.is_err());
+    }
+
+    #[test]
+    fn decide_should_reject_a_test_binding_when_the_counter_test_is_empty() {
+        // given: a store and a test binding whose --counter-test is empty
+        let r = repo();
+
+        // when: the decision is captured with an empty counter-test
+        let e = run(
+            &r,
+            Some("d"),
+            &s(&[
+                "--assume",
+                "c",
+                "--assume-test",
+                "pytest x",
+                "--counter-test",
+                "",
+                "--on-platform",
+                "linux-ci",
+                "--triggered-by",
+                "f",
+                "--surface",
+                "s",
+                "--verified-at-sha",
+                "d308afac1b2c3d4e5f60718293a4b5c6d7e8f901",
+                "--blame",
+                "Wang Yu",
+            ]),
+        );
+
+        // then: an empty counter-test is a vacuous binding — rejected at the write path too
         assert!(e.is_err());
     }
 

@@ -211,26 +211,46 @@ fn ground_from_value(v: &Value) -> Result<Ground, String> {
     })
 }
 
+/// The hashed/identity set: top-level keys that the schema is STRICT about. A tick whose payload
+/// has an unknown key INSIDE these (e.g. a stray key on a ground/check) is rejected by the nested
+/// strict `only_keys`; these names are also what `unknown_top_level_keys` excludes when surfacing
+/// a tolerated forward-compat key as a warning.
+pub(crate) const HASHED_TOP_LEVEL_KEYS: &[&str] = &[
+    "id",
+    "parent_id",
+    "observe",
+    "decision",
+    "grounds",
+    "status",
+    "held_since",
+    "blame",
+];
+
+/// The known-non-hashed allow-list: declared bookkeeping fields, validated but not hashed.
+pub(crate) const KNOWN_NON_HASHED_KEYS: &[&str] = &["authority", "jurisdiction", "round_id"];
+
+/// A tick's top-level keys that are neither hashed/identity nor a known-non-hashed field — the
+/// truly-unknown, tolerated forward-compat keys (`from_value` parses them through; verify warns).
+pub(crate) fn unknown_top_level_keys(obj: &Map<String, Value>) -> Vec<String> {
+    obj.keys()
+        .filter(|k| {
+            !HASHED_TOP_LEVEL_KEYS.contains(&k.as_str())
+                && !KNOWN_NON_HASHED_KEYS.contains(&k.as_str())
+        })
+        .cloned()
+        .collect()
+}
+
 /// Strict parse of an on-disk tick — this IS the R1 (closed schema) + R2 (check shape) check.
+///
+/// Two-tier forward-compat (T3): the hashed/identity set (`HASHED_TOP_LEVEL_KEYS`) stays STRICT —
+/// a missing one is an Err, and the nested grounds/check schemas reject any unknown key inside the
+/// HASHED payload, so the content-addressed id can never carry an unvalidated field. The known
+/// non-hashed fields are validated. A truly-unknown OTHER top-level key is TOLERATED (parsed
+/// through, not rejected) so a newer writer's bookkeeping field does not brick an older reader;
+/// `ev verify` surfaces it as a `warning:` so a typo'd field name stays visible.
 pub fn from_value(v: &Value) -> Result<Tick, String> {
     let obj = v.as_object().ok_or("tick is not an object")?;
-    only_keys(
-        obj,
-        &[
-            "id",
-            "parent_id",
-            "observe",
-            "decision",
-            "grounds",
-            "status",
-            "held_since",
-            "blame",
-            "authority",
-            "jurisdiction",
-            "round_id",
-        ],
-        "tick",
-    )?;
     let grounds_v = obj
         .get("grounds")
         .and_then(|x| x.as_array())
@@ -330,17 +350,15 @@ mod tests {
     }
 
     #[test]
-    fn from_value_should_reject_the_tick_when_it_has_an_unknown_top_level_field() {
-        // given: a tick value carrying a field outside the closed schema
+    fn from_value_should_reject_the_tick_when_a_hashed_identity_field_is_missing() {
+        // given: a tick value missing a hashed/identity field (the strict tier stays closed)
         let mut v = genesis_full();
-        v.as_object_mut()
-            .unwrap()
-            .insert("health".into(), json!("0.8"));
+        v.as_object_mut().unwrap().remove("decision");
 
         // when: it is parsed through from_value
         let result = from_value(&v);
 
-        // then: parsing fails
+        // then: parsing fails — the hashed/identity set is not forward-compat-tolerant
         assert!(result.is_err());
     }
 
@@ -508,6 +526,39 @@ mod tests {
         let result = from_value(&v);
 
         // then: parsing fails
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn from_value_should_tolerate_an_unknown_non_hashed_key_when_reading() {
+        // given: a well-formed tick carrying a bogus extra top-level key (a forward-compat field)
+        let mut v = genesis_full();
+        v.as_object_mut()
+            .unwrap()
+            .insert("future_field".into(), json!("x"));
+
+        // when: it is parsed through from_value
+        let t = from_value(&v).expect("an unknown top-level key is tolerated (parsed-through)");
+
+        // then: the known fields are intact (the unknown key is ignored, not rejected)
+        assert_eq!(t.decision, "d");
+        assert_eq!(t.observe, "o");
+        assert_eq!(t.grounds.len(), 1);
+    }
+
+    #[test]
+    fn from_value_should_still_reject_an_unknown_key_inside_the_hashed_payload() {
+        // given: a well-formed tick whose ground (part of the hashed payload) carries an unknown key
+        let mut v = genesis_full();
+        v["grounds"][0]
+            .as_object_mut()
+            .unwrap()
+            .insert("future_field".into(), json!("x"));
+
+        // when: it is parsed through from_value
+        let result = from_value(&v);
+
+        // then: parsing fails — the hashed payload stays a strictly closed schema
         assert!(result.is_err());
     }
 }

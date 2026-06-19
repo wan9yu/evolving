@@ -92,6 +92,24 @@ pub fn verify(store: &Store) -> std::io::Result<Vec<String>> {
     Ok(violations)
 }
 
+/// Forward-compat surfacing (T3): a `warning:` (NOT a violation) per tolerated unknown top-level
+/// key, so a typo'd field name stays visible instead of silently parsing through. `schema_version`
+/// is read LAZILY here — at the tolerate-vs-reject decision — so a future reader can sharpen the
+/// rule per declared baseline without making schema_version a parsed `Config` field.
+pub fn unknown_key_warnings(store: &Store) -> std::io::Result<Vec<String>> {
+    let baseline = crate::config::schema_version(store);
+    let mut warnings = Vec::new();
+    for (filename, raw) in &store.read_all()? {
+        let Some(obj) = raw.as_object() else { continue };
+        for key in crate::tick::unknown_top_level_keys(obj) {
+            warnings.push(format!(
+                "{filename}: warning: tolerated unknown top-level field {key:?} (schema_version {baseline}) — a typo'd field name parses through but is ignored"
+            ));
+        }
+    }
+    Ok(warnings)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -189,8 +207,11 @@ mod tests {
     }
 
     #[test]
-    fn verify_should_flag_a_closed_schema_violation_when_a_tick_has_a_field_outside_the_schema() {
-        // given: a stored genesis tick whose status field is renamed on disk to an unknown field
+    fn verify_should_flag_a_closed_schema_violation_when_the_hashed_payload_has_a_field_outside_the_schema(
+    ) {
+        // given: a stored genesis tick whose ground claim (hashed payload) is renamed on disk to an
+        // unknown field — the hashed payload stays a STRICTLY closed schema (the two-tier rule
+        // tolerates unknown TOP-LEVEL keys, never unknown keys inside the hashed payload)
         let repo = tmp();
         let s = Store::at(&repo);
         s.init().unwrap();
@@ -199,7 +220,7 @@ mod tests {
         let p = s.ticks_dir().join(&g.id);
         let text = std::fs::read_to_string(&p)
             .unwrap()
-            .replace("\"status\"", "\"health\"");
+            .replace("\"claim\"", "\"health\"");
         std::fs::write(&p, text).unwrap();
 
         // when: verify scans the store
@@ -300,5 +321,37 @@ mod tests {
 
         // then: it reports an empty-blame violation
         assert!(v.iter().any(|x| x.to_lowercase().contains("blame")));
+    }
+
+    #[test]
+    fn unknown_key_warnings_should_warn_but_not_violate_when_a_tick_carries_a_tolerated_unknown_key(
+    ) {
+        // given: a stored tick that carries a tolerated unknown (forward-compat) top-level key,
+        // added on disk — the key is non-hashed, so the content-addressed id stays valid
+        let repo = tmp();
+        let s = Store::at(&repo);
+        s.init().unwrap();
+        let t = tick("");
+        s.write_tick(&t).unwrap();
+        let p = s.ticks_dir().join(&t.id);
+        let text = std::fs::read_to_string(&p)
+            .unwrap()
+            .replace("\"blame\"", "\"future_field\": \"x\",\n  \"blame\"");
+        std::fs::write(&p, text).unwrap();
+
+        // when: verify scans the store and warnings are collected
+        let v = verify(&s).unwrap();
+        let w = unknown_key_warnings(&s).unwrap();
+
+        // then: there is no violation (the unknown key is tolerated) but a warning names the key
+        assert!(
+            v.is_empty(),
+            "a tolerated unknown key must not violate: {v:?}"
+        );
+        assert!(
+            w.iter()
+                .any(|x| x.contains("future_field") && x.contains("warning")),
+            "expected a warning naming the tolerated key; got: {w:?}"
+        );
     }
 }

@@ -118,6 +118,11 @@ pub fn verify_cmd(repo: &Path, self_test: bool) -> ExitCode {
         return self_test_golden();
     }
     let store = Store::at(repo);
+    // Forward-compat: tolerated unknown top-level keys are warnings, never violations — they do
+    // not affect the verdict, but they keep a typo'd field name visible.
+    for w in crate::verify::unknown_key_warnings(&store).unwrap_or_default() {
+        eprintln!("{w}");
+    }
     match verify(&store) {
         Ok(v) if v.is_empty() => {
             println!("✓ chain intact: every id == hash(payload), lineage forward-only");

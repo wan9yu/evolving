@@ -36,6 +36,16 @@ fn unquote(s: &str) -> &str {
         .unwrap_or(s)
 }
 
+/// The store's declared `schema_version`, read LAZILY (not a parsed `Config` field, so the
+/// Config/DEFAULT_CONFIG lockstep stays intact) and consulted only at the forward-compat
+/// tolerate-vs-reject decision. Defaults to 1 (the 0.1.x baseline) when absent or malformed.
+pub fn schema_version(store: &Store) -> u64 {
+    let text = std::fs::read_to_string(store.config_path()).unwrap_or_default();
+    value_of(&text, "schema_version")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1)
+}
+
 /// Parse the store's config; any missing or malformed key falls back to its default.
 pub fn read(store: &Store) -> Config {
     let text = std::fs::read_to_string(store.config_path()).unwrap_or_default();
@@ -132,6 +142,31 @@ mod tests {
 
         // then: staleness_days is the default, not 99 (whole-token match)
         assert_eq!(c.staleness_days, 7);
+    }
+
+    #[test]
+    fn schema_version_should_read_the_declared_version_when_present() {
+        // given: a config that declares a schema_version (the DEFAULT_CONFIG init writes one)
+        let (_p, s) = store();
+
+        // when: the schema_version is read lazily
+        let v = schema_version(&s);
+
+        // then: it reflects the declared baseline (1) — and is NOT a parsed Config field
+        assert_eq!(v, 1);
+    }
+
+    #[test]
+    fn schema_version_should_default_to_one_when_the_key_is_absent() {
+        // given: a config with no schema_version key
+        let (_p, s) = store();
+        std::fs::write(s.config_path(), "brief_limit = 5\n").unwrap();
+
+        // when: the schema_version is read lazily
+        let v = schema_version(&s);
+
+        // then: it falls back to the 0.1.x baseline of 1
+        assert_eq!(v, 1);
     }
 
     #[test]

@@ -227,6 +227,7 @@ pub fn run(repo: &Path, decision: Option<&str>, args: &[String]) -> Result<Tick,
     let mut blame_override: Option<String> = None;
     let mut sha_override: Option<String> = None;
     let mut authority: Option<String> = None;
+    let mut jurisdiction: Option<String> = None;
     let mut from_git: Option<String> = None;
     let mut drafts: Vec<DraftGround> = Vec::new();
     let mut i = 0;
@@ -249,6 +250,11 @@ pub fn run(repo: &Path, decision: Option<&str>, args: &[String]) -> Result<Tick,
                 let v = need(args, i, &flag)?;
                 validate_authority(&v)?;
                 authority = Some(v);
+            }
+            "--jurisdiction" => {
+                let v = need(args, i, &flag)?;
+                crate::tick::validate_jurisdiction(&v)?;
+                jurisdiction = Some(v);
             }
             "--reject" => {
                 let v = need(args, i, &flag)?;
@@ -364,6 +370,7 @@ pub fn run(repo: &Path, decision: Option<&str>, args: &[String]) -> Result<Tick,
         held_since,
         blame,
         authority,
+        jurisdiction,
     };
     t.id = compute_id(&t);
     store

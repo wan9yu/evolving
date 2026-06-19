@@ -121,6 +121,7 @@ mod tests {
             held_since: "".into(),
             blame: "Wang Yu".into(),
             authority: None,
+            jurisdiction: None,
         };
         let rows = vec![
             (

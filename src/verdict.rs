@@ -18,6 +18,7 @@ pub enum Verdict {
     Stale { reason: String },
     SilentlyUnbound,
     Exempt,        // this runner attests none of the binding's declared platforms (non-gating)
+    Memo, // a C/D-jurisdiction (detect-only) not-green fact — surfaced but never gates (non-gating)
     NotApplicable, // no check, or a person re-check
 }
 
@@ -33,6 +34,7 @@ impl Verdict {
             Verdict::Stale { .. } => "stale",
             Verdict::SilentlyUnbound => "silently-unbound",
             Verdict::Exempt => "exempt",
+            Verdict::Memo => "memo",
             Verdict::NotApplicable => "n/a",
         }
     }

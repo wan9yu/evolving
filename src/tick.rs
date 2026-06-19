@@ -3,15 +3,16 @@
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Tick {
-    pub id: String,                // bookkeeping (the hash output)
-    pub parent_id: String,         // hashed; "" on genesis, present
-    pub observe: String,           // hashed
-    pub decision: String,          // hashed
-    pub grounds: Vec<Ground>,      // hashed
-    pub status: String,            // bookkeeping
-    pub held_since: String,        // bookkeeping
-    pub blame: String,             // bookkeeping
-    pub authority: Option<String>, // bookkeeping (declared, not hashed)
+    pub id: String,                   // bookkeeping (the hash output)
+    pub parent_id: String,            // hashed; "" on genesis, present
+    pub observe: String,              // hashed
+    pub decision: String,             // hashed
+    pub grounds: Vec<Ground>,         // hashed
+    pub status: String,               // bookkeeping
+    pub held_since: String,           // bookkeeping
+    pub blame: String,                // bookkeeping
+    pub authority: Option<String>,    // bookkeeping (declared, not hashed)
+    pub jurisdiction: Option<String>, // bookkeeping (declared ∈ {A,B,C,D}, not hashed); C/D = detect-only
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -55,8 +56,22 @@ pub fn full_value(t: &Tick) -> Value {
         if let Some(a) = &t.authority {
             map.insert("authority".into(), Value::String(a.clone()));
         }
+        if let Some(j) = &t.jurisdiction {
+            map.insert("jurisdiction".into(), Value::String(j.clone()));
+        }
     }
     v
+}
+
+/// The closed jurisdiction vocabulary: A/B may gate; C/D are detect-only (structurally ungateable).
+pub(crate) fn validate_jurisdiction(val: &str) -> Result<(), String> {
+    if matches!(val, "A" | "B" | "C" | "D") {
+        Ok(())
+    } else {
+        Err(format!(
+            "jurisdiction must be one of A, B, C, D (got {val:?})"
+        ))
+    }
 }
 
 pub(crate) fn only_keys(
@@ -207,6 +222,7 @@ pub fn from_value(v: &Value) -> Result<Tick, String> {
             "held_since",
             "blame",
             "authority",
+            "jurisdiction",
         ],
         "tick",
     )?;
@@ -231,6 +247,13 @@ pub fn from_value(v: &Value) -> Result<Tick, String> {
             .get("authority")
             .and_then(|x| x.as_str())
             .map(String::from),
+        jurisdiction: match obj.get("jurisdiction").and_then(|x| x.as_str()) {
+            None => None,
+            Some(j) => {
+                validate_jurisdiction(j)?; // out-of-vocab → Err
+                Some(j.to_string())
+            }
+        },
     })
 }
 
@@ -370,6 +393,48 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn from_value_should_round_trip_a_jurisdiction_tag_when_present() {
+        // given: a well-formed tick carrying a jurisdiction tag in the vocabulary
+        let mut v = genesis_full();
+        v.as_object_mut()
+            .unwrap()
+            .insert("jurisdiction".into(), json!("C"));
+
+        // when: it is parsed
+        let t = from_value(&v).expect("valid");
+
+        // then: the jurisdiction tag is preserved
+        assert_eq!(t.jurisdiction.as_deref(), Some("C"));
+    }
+
+    #[test]
+    fn from_value_should_default_jurisdiction_to_none_when_absent() {
+        // given: a tick with no jurisdiction field (the existing genesis shape)
+        let v = genesis_full();
+
+        // when: it is parsed
+        let t = from_value(&v).expect("valid");
+
+        // then: jurisdiction is None (absent = no claim)
+        assert_eq!(t.jurisdiction, None);
+    }
+
+    #[test]
+    fn from_value_should_reject_an_out_of_vocab_jurisdiction() {
+        // given: a tick whose jurisdiction is outside the closed {A,B,C,D} vocabulary
+        let mut v = genesis_full();
+        v.as_object_mut()
+            .unwrap()
+            .insert("jurisdiction".into(), json!("Z"));
+
+        // when: it is parsed
+        let result = from_value(&v);
+
+        // then: parsing fails (vocab-validated, like authority)
+        assert!(result.is_err());
     }
 
     #[test]

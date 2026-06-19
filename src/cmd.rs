@@ -58,6 +58,9 @@ pub fn show(repo: &Path, id: &str) -> ExitCode {
                 if let Some(a) = v.get("authority").and_then(|x| x.as_str()) {
                     println!("authority: {a}");
                 }
+                if let Some(j) = v.get("jurisdiction").and_then(|x| x.as_str()) {
+                    println!("jurisdiction: {j}");
+                }
             }
             ExitCode::SUCCESS
         }
@@ -263,8 +266,20 @@ pub fn check(
             };
             // verdict_for returns NotApplicable for any non-Test ground.
             let ts = triggered_since(repo, g, &receipts);
-            let v = verdict_for(g, &receipts, &ctx, ts);
-            if !matches!(v, Verdict::Green | Verdict::NotApplicable | Verdict::Exempt) {
+            let mut v = verdict_for(g, &receipts, &ctx, ts);
+            // LOCK 1 (gate-time, structural): a C/D-jurisdiction (detect-only) decision is
+            // structurally ungateable — map ANY not-green verdict to the non-gating Memo BEFORE the
+            // any_not_green writer below, so it can never flip --exit-on-red. Remapping every
+            // not-green at once is more robust than threading Memo through each gate site.
+            if matches!(t.jurisdiction.as_deref(), Some("C") | Some("D"))
+                && !matches!(v, Verdict::Green | Verdict::NotApplicable | Verdict::Exempt)
+            {
+                v = Verdict::Memo;
+            }
+            if !matches!(
+                v,
+                Verdict::Green | Verdict::NotApplicable | Verdict::Exempt | Verdict::Memo
+            ) {
                 any_not_green = true;
             }
             // Only Test-bound grounds appear in the printed set and the gate.
@@ -371,11 +386,25 @@ pub fn list(repo: &Path) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let mut rows: Vec<(String, String, String, Option<String>)> = files
+    // One pre-rendered line per tick, keyed by id so the output is deterministic. The bookkeeping
+    // tags (authority, jurisdiction) are appended inline when present — same one-line shape as show.
+    let mut rows: Vec<(String, String)> = files
         .iter()
-        .map(|(name, raw)| match crate::tick::from_value(raw) {
-            Ok(t) => (name.clone(), t.status, t.decision, t.authority),
-            Err(_) => (name.clone(), "?".into(), "<unparseable>".into(), None),
+        .map(|(name, raw)| {
+            let line = match crate::tick::from_value(raw) {
+                Ok(t) => {
+                    let mut l = format!("{name}\t{}\t{:?}", t.status, t.decision);
+                    if let Some(a) = &t.authority {
+                        l.push_str(&format!("\tauthority={a}"));
+                    }
+                    if let Some(j) = &t.jurisdiction {
+                        l.push_str(&format!("\tjurisdiction={j}"));
+                    }
+                    l
+                }
+                Err(_) => format!("{name}\t?\t\"<unparseable>\""),
+            };
+            (name.clone(), line)
         })
         .collect();
     rows.sort();
@@ -383,11 +412,8 @@ pub fn list(repo: &Path) -> ExitCode {
         println!("no decisions yet");
         return ExitCode::SUCCESS;
     }
-    for (id, status, decision, authority) in &rows {
-        match authority {
-            Some(a) => println!("{id}\t{status}\t{decision:?}\tauthority={a}"),
-            None => println!("{id}\t{status}\t{decision:?}"),
-        }
+    for (_id, line) in &rows {
+        println!("{line}");
     }
     ExitCode::SUCCESS
 }
@@ -533,6 +559,9 @@ pub fn reopen(repo: &Path, id: &str) -> ExitCode {
     if let Some(a) = &tick.authority {
         println!("authority: {a}");
     }
+    if let Some(j) = &tick.jurisdiction {
+        println!("jurisdiction: {j}");
+    }
     for g in &tick.grounds {
         match &g.check {
             Some(Check::Test {
@@ -586,6 +615,7 @@ fn self_test_golden() -> ExitCode {
         held_since: "".into(),
         blame: "Wang Yu".into(),
         authority: None,
+        jurisdiction: None,
     };
     let case1 = Tick {
         id: String::new(),
@@ -626,6 +656,7 @@ fn self_test_golden() -> ExitCode {
         held_since: "".into(),
         blame: "Wang Yu".into(),
         authority: None,
+        jurisdiction: None,
     };
     // A harvested binding: case1's first ground with counter_test omitted (None). Pins that
     // omit-on-None keeps every harvested id byte-stable — moving it would mean the payload changed.

@@ -14,6 +14,7 @@ fn book(parent: &str, observe: &str, decision: &str, grounds: Vec<Ground>) -> Ti
         held_since: "".into(),
         blame: "Wang Yu".into(),
         authority: None,
+        jurisdiction: None,
     }
 }
 

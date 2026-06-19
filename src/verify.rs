@@ -36,6 +36,18 @@ pub fn verify(store: &Store) -> std::io::Result<Vec<String>> {
                         "{filename}: empty blame (R5) — every mutating op names a human"
                     ));
                 }
+                // LOCK 2 (at-rest, structural): a C/D-jurisdiction (detect-only) tick may carry NO
+                // Test check on any ground — a detect-only decision must not be able to gate, so it
+                // must hold no runnable test binding. A distinct invariant from no-vacuous-binding.
+                if matches!(t.jurisdiction.as_deref(), Some("C") | Some("D"))
+                    && t.grounds
+                        .iter()
+                        .any(|g| matches!(g.check, Some(crate::tick::Check::Test { .. })))
+                {
+                    violations.push(format!(
+                        "{filename}: a C/D jurisdiction (detect-only) tick may carry no test check"
+                    ));
+                }
                 // R3 / R5 lexical lints over the free-text fields (best-effort; a re-wording evades).
                 let mut texts = vec![t.decision.clone(), t.observe.clone()];
                 texts.extend(t.grounds.iter().map(|g| g.claim.clone()));
@@ -114,6 +126,7 @@ mod tests {
             held_since: "".into(),
             blame: "Wang Yu".into(),
             authority: None,
+            jurisdiction: None,
         };
         t.id = compute_id(&t);
         t
@@ -213,6 +226,58 @@ mod tests {
         assert!(v
             .iter()
             .any(|x| x.contains("self-improve") || x.to_lowercase().contains("r3")));
+    }
+
+    #[test]
+    fn verify_should_reject_a_c_tagged_tick_that_carries_a_test_check() {
+        // given: a stored tick tagged jurisdiction=C whose ground carries a Test check
+        use crate::tick::{Check, Liveness};
+        let repo = tmp();
+        let s = Store::at(&repo);
+        s.init().unwrap();
+        let mut t = tick("");
+        t.jurisdiction = Some("C".into());
+        t.grounds[0].check = Some(Check::Test {
+            reference: "pytest x".into(),
+            verified_at_sha: "d308afac1b2c3d4e5f60718293a4b5c6d7e8f901".into(),
+            counter_test: Some("pytest x::flips".into()),
+            liveness: Liveness {
+                platforms: vec!["linux-ci".into()],
+                triggered_by: vec!["f".into()],
+                surfaces: vec!["s".into()],
+            },
+        });
+        t.id = compute_id(&t);
+        s.write_tick(&t).unwrap();
+
+        // when: verify scans the store
+        let v = verify(&s).unwrap();
+
+        // then: it reports a C/D-carries-a-test violation (a detect-only jurisdiction may not gate)
+        assert!(
+            v.iter()
+                .any(|x| x.to_lowercase().contains("jurisdiction")
+                    && x.to_lowercase().contains("test")),
+            "expected a C/D-with-test violation; got: {v:?}"
+        );
+    }
+
+    #[test]
+    fn verify_should_accept_a_c_tagged_tick_when_it_carries_no_test_check() {
+        // given: a stored tick tagged jurisdiction=C whose grounds carry no Test check
+        let repo = tmp();
+        let s = Store::at(&repo);
+        s.init().unwrap();
+        let mut t = tick("");
+        t.jurisdiction = Some("C".into());
+        t.id = compute_id(&t);
+        s.write_tick(&t).unwrap();
+
+        // when: verify scans the store
+        let v = verify(&s).unwrap();
+
+        // then: there are no violations (a test-free C tick is well-formed)
+        assert!(v.is_empty(), "unexpected violations: {v:?}");
     }
 
     #[test]

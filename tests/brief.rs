@@ -184,3 +184,101 @@ fn brief_should_fail_when_there_is_no_store() {
     // then: it errors and exits non-zero
     assert!(!out.status.success());
 }
+
+#[test]
+fn brief_should_pin_a_rejected_road_ruling_above_the_cap_over_newer_plain_rulings() {
+    // given: an OLD user-ruled decision that closed a road, then several NEWER plain user-ruled ones
+    let r = repo();
+    decide(
+        &r,
+        "the closed road",
+        &["--authority", "user-ruled", "--reject", "x: closed"],
+    );
+    decide(&r, "newer plain one", &["--authority", "user-ruled"]);
+    decide(&r, "newer plain two", &["--authority", "user-ruled"]);
+    decide(&r, "newer plain three", &["--authority", "user-ruled"]);
+
+    // when: ev brief runs with a cap of 2
+    let out = ev()
+        .args(["brief", "--limit", "2"])
+        .current_dir(&r)
+        .output()
+        .unwrap();
+
+    // then: the OLD rejected-road decision is pinned and shown, not buried by the newer plain ones
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("the closed road"),
+        "load-bearing ruling must be pinned above the cap:\n{stdout}"
+    );
+}
+
+#[test]
+fn brief_should_count_hidden_load_bearing_rulings_in_the_footer_when_they_exceed_the_cap() {
+    // given: three user-ruled decisions, EACH closing a road
+    let r = repo();
+    decide(
+        &r,
+        "closed road one",
+        &["--authority", "user-ruled", "--reject", "a: one"],
+    );
+    decide(
+        &r,
+        "closed road two",
+        &["--authority", "user-ruled", "--reject", "b: two"],
+    );
+    decide(
+        &r,
+        "closed road three",
+        &["--authority", "user-ruled", "--reject", "c: three"],
+    );
+
+    // when: ev brief runs with a cap of 1
+    let out = ev()
+        .args(["brief", "--limit", "1"])
+        .current_dir(&r)
+        .output()
+        .unwrap();
+
+    // then: the footer makes the elided load-bearing rulings visible by counting them
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("2 with rejected roads"),
+        "footer must count hidden load-bearing rulings:\n{stdout}"
+    );
+}
+
+#[test]
+fn brief_should_not_mention_rejected_roads_in_the_footer_when_none_are_hidden() {
+    // given: one rejected-road ruling plus three plain user-ruled decisions
+    let r = repo();
+    decide(
+        &r,
+        "the closed road",
+        &["--authority", "user-ruled", "--reject", "x: closed"],
+    );
+    decide(&r, "plain one", &["--authority", "user-ruled"]);
+    decide(&r, "plain two", &["--authority", "user-ruled"]);
+    decide(&r, "plain three", &["--authority", "user-ruled"]);
+
+    // when: ev brief runs with a cap of 2 (the rejected-road ruling is pinned + shown)
+    let out = ev()
+        .args(["brief", "--limit", "2"])
+        .current_dir(&r)
+        .output()
+        .unwrap();
+
+    // then: the footer counts the two hidden plain rulings and does NOT mention rejected roads
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("… 2 more user-ruled decision(s) — `ev list` for all"),
+        "footer must read exactly without rejected-roads clause:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("with rejected roads"),
+        "no hidden load-bearing ruling, so no rejected-roads clause:\n{stdout}"
+    );
+}

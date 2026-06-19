@@ -388,10 +388,21 @@ pub fn list(repo: &Path) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// A decision is "load-bearing" iff any of its grounds closes a road (`supports` starts with
+/// `"rejected:"`). Those are the rulings a fresh agent must not re-walk, so they pin above the cap.
+/// Detectable straight from the tick — 0-network, no receipts, no git.
+fn load_bearing(t: &Tick) -> bool {
+    t.grounds
+        .iter()
+        .any(|g| g.supports.starts_with("rejected:"))
+}
+
 /// Boot-read: the live user-ruled decisions and the roads they rejected. A near-zero-cost,
 /// 0-network read (read_all only; no git, no receipts) for a fresh agent to load the
-/// decisions it must respect and the options it must not re-propose. Ordered most-recent-first
-/// (by held_since), capped to the effective limit, with an honest remainder footer.
+/// decisions it must respect and the options it must not re-propose. Load-bearing rulings
+/// (those that closed a road) sort FIRST — pinned above the cap regardless of recency — then
+/// by recency (held_since), then id. Capped to the effective limit, with a remainder footer
+/// that counts how many hidden rulings closed a road so the elision stays visible.
 pub fn brief(repo: &Path, limit: Option<usize>) -> ExitCode {
     let store = Store::at(repo);
     if !store.exists() {
@@ -413,16 +424,25 @@ pub fn brief(repo: &Path, limit: Option<usize>) -> ExitCode {
         .filter_map(|(name, raw)| crate::tick::from_value(raw).ok().map(|t| (name.clone(), t)))
         .filter(|(_, t)| t.status == "live" && t.authority.as_deref() == Some("user-ruled"))
         .collect();
-    // Most-recent-first by held_since; tie-break by id descending so output is deterministic.
-    kept.sort_by(|a, b| b.1.held_since.cmp(&a.1.held_since).then(b.0.cmp(&a.0)));
+    let lb = load_bearing;
+    // Load-bearing first (true > false, so descending pins them), then most-recent-first by
+    // held_since, then id descending — all deterministic.
+    kept.sort_by(|a, b| {
+        lb(&b.1)
+            .cmp(&lb(&a.1))
+            .then(b.1.held_since.cmp(&a.1.held_since))
+            .then(b.0.cmp(&a.0))
+    });
     if kept.is_empty() {
         println!("no user-ruled decisions");
         return ExitCode::SUCCESS;
     }
     let total = kept.len();
-    if limit > 0 {
-        kept.truncate(limit);
-    }
+    // 0 means "show all"; otherwise cap at the limit (never past the end).
+    let n = if limit == 0 { total } else { limit.min(total) };
+    // Count load-bearing rulings about to be elided, before we truncate the shown set.
+    let dropped_lb = kept[n..].iter().filter(|(_, t)| lb(t)).count();
+    kept.truncate(n);
     for (_id, t) in &kept {
         println!("{}  [user-ruled]", t.decision);
         for g in &t.grounds {
@@ -431,11 +451,14 @@ pub fn brief(repo: &Path, limit: Option<usize>) -> ExitCode {
             }
         }
     }
-    if total > kept.len() {
-        println!(
-            "… {} more user-ruled decision(s) — `ev list` for all",
-            total - kept.len()
-        );
+    if total > n {
+        let dropped = total - n;
+        let lb_clause = if dropped_lb > 0 {
+            format!(", {dropped_lb} with rejected roads")
+        } else {
+            String::new()
+        };
+        println!("… {dropped} more user-ruled decision(s){lb_clause} — `ev list` for all");
     }
     ExitCode::SUCCESS
 }

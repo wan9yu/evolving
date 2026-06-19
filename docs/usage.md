@@ -126,6 +126,57 @@ the claim breaks) is mandatory, along with at least one platform, trigger, and s
 
 ---
 
+## "Catch a dependency that silently changes behavior"
+
+A decision often rests on *how an external dependency behaves* — the shape of its output, the set
+of fields it redacts, the columns it returns. That shape can drift under you when the dependency
+upgrades, with no compile error and no failing build: a silent false-green.
+
+The pattern that catches it has four parts:
+
+1. **Snapshot the behavior-shape to a tracked file.** A small exporter (a script you own, run
+   outside `ev`) writes the dependency's current behavior-shape to a file, e.g.
+   `shape-snapshot.txt`. A human **reviews and commits** that file — the snapshot is the reviewed
+   baseline, and its diff is the review surface.
+
+2. **Capture the decision, bound to a PURE compare-check.** The check only *reads* the snapshot
+   and the current shape and compares them — it is 0-network, builds no fixture, and so cannot
+   fail-soft to a false-green:
+
+   ```sh
+   # the exporter refreshes the current shape on every CI run (your script, not ev):
+   your-exporter > current-shape.txt
+
+   ev decide "the behavior surface = {redaction set frozen}" --authority user-ruled \
+     --assume "the dependency's behavior-shape matches the reviewed snapshot"
+
+   ev guard "diff -q current-shape.txt shape-snapshot.txt" <HEAD-id> \
+     "the dependency's behavior-shape matches the reviewed snapshot" \
+     --counter-test "! diff -q current-shape.txt shape-snapshot.txt" \
+     --on-platform linux-ci \
+     --triggered-by current-shape.txt \
+     --surface shape
+   ```
+
+3. **Gate every CI run.** `ev check --run` runs the compare-check (and proves it falsifiable via
+   the inverse counter-test). While the shape matches, it is **green and proven**; the instant the
+   dependency's output drifts, the check goes **red** and the decision resurfaces — naming what was
+   assumed and why:
+
+   ```sh
+   ev check --run --platform linux-ci --exit-on-red
+   ```
+
+4. **Re-decide on the diff.** A red row points at the snapshot. Diff the current shape against it,
+   decide whether the drift is acceptable, and — if it is — re-snapshot (review + commit the new
+   `shape-snapshot.txt`) so the green is earned again, not assumed.
+
+Because `diff -q` and `! diff -q` are logical inverses, `ev check --run` can *prove* the check is
+falsifiable: a binding that can never flip is reported **unproven** and gates, so this pattern can
+never decay into a check that always passes.
+
+---
+
 ## "Review the chain / its history"
 
 ```sh

@@ -3,7 +3,7 @@
 This is the model in depth — deeper than the project README. It describes the on-disk Tick
 schema, the parts of a decision (Ground, Check), content-addressed identity and the frozen
 golden vectors, append-only immutability, the refusals `ev verify` enforces, and the
-honesty / trust boundary. Everything here is accurate to the `0.1.1` code; nothing is
+honesty / trust boundary. Everything here is accurate to the `0.1.2` code; nothing is
 overstated.
 
 For the commands that produce and read these records, see [commands.md](commands.md).

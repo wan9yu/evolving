@@ -16,7 +16,7 @@ guarding each reason is still alive.
 
 ## Status
 
-`0.1.1` — the **migration release**, on top of the `0.1.0` honest-resurface slice. A single
+`0.1.2` — the **migration release**, on top of the `0.1.0` honest-resurface slice. A single
 self-contained Rust binary, no network, no daemon; the store lives in a local `.evolving/`
 directory: the full capture → bind → resurface loop, content-addressed and append-only.
 
@@ -40,9 +40,10 @@ roads-not-taken (a prose reason is never NLP'd into a ground), never inventing a
 un-attributed record is a surfaced gap, R5 intact). It **harvests existing tests** as bound
 checks (`--bind-check`, counter-test absent — `ev check` marks them `harvested — falsifiability
 not proven` until `ev guard` adds one), **reconciles** a source against the store (`--reconcile`,
-the capture-gap report), and adds the declared **`--jurisdiction A|B|C|D`** tag (`C`/`D` are
-structurally **detect-only** — surfaced via the non-gating `memo` verdict, never able to gate)
-and a durable **`--round-id`** join key. The on-disk schema is now **forward-compatible**: a
+the capture-gap report), and carries a declared **`jurisdiction A|B|C|D`** tag — set with
+`ev decide --jurisdiction`, or applied across a backfill by `ev migrate --jurisdiction-map`
+(`C`/`D` are structurally **detect-only**, surfaced via the non-gating `memo` verdict and never
+able to gate) — plus a durable **`round_id`** join key. The on-disk schema is now **forward-compatible**: a
 newer writer's non-hashed bookkeeping field is tolerated (surfaced as a `verify` warning) while
 the hashed/identity payload stays strictly closed. The three golden vectors (`genesis`,
 `case1`, and the new `harvested`) are unmoved — `0.1.1` adds fields and a subcommand without

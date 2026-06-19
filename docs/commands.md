@@ -317,7 +317,7 @@ sources already record. Also reconciles a source against the store (the capture-
 and harvests an existing test as a check shape (`--bind-check`).
 
 ```
-ev migrate --source <kind>:<path> [--source …] [--dry-run] [--blame <fallback>]
+ev migrate --source <kind>:<path> [--source …] [--jurisdiction-map <path>] [--dry-run] [--blame <fallback>]
 ev migrate --reconcile --against <kind>:<path>
 ev migrate --bind-check <selector> --on-platform <p> --triggered-by <t> --surface <s> [--verified-at-sha <40-hex>]
 ```
@@ -327,6 +327,7 @@ ev migrate --bind-check <selector> --on-platform <p> --triggered-by <t> --surfac
 | Flag | Takes | Required | Effect |
 | --- | --- | --- | --- |
 | `--source` | `<kind>:<path>` | for a backfill | A source to import. `<kind>` ∈ `{gitlog, to-human, decisions-immutable, escalation}`; `<path>` is read from disk. Repeatable; sources import in deterministic `source_key` order. |
+| `--jurisdiction-map` | a `<path>` | no | A `source_key → A/B/C/D` bucket map (see below). It is **how an imported decision gets its jurisdiction**: a record whose `source_key` is in the map carries that bucket; a record **absent** from the map imports **untagged**. Purely additive — omitting it imports every record untagged. |
 | `--dry-run` | — | no | Parse + report what **would** import; write no tick. |
 | `--blame` | a name | no | Fallback author for any source record carrying none. **R5 stays intact** — a record with neither its own author nor this fallback is *not* imported; it is reported as a source-only gap (an author is never invented). |
 | `--reconcile` | — | no | Reconcile mode: join `--against` against the store and report the buckets instead of importing. |
@@ -365,6 +366,38 @@ twice writes nothing the second time. The chain is **kept** (`keep-chain`): a ba
 mid-chain insert that re-parents an existing tick is counted and reported as **re-linked**,
 never rewritten. A harvested decision is appended through the **same** single hashing path as
 `ev decide` (one `compute_id`, one write, one R3 lint).
+
+### Jurisdiction on import (`--jurisdiction-map <path>`)
+
+An imported decision is **untagged by default** — and an untagged decision can gate. `--jurisdiction-map
+<path>` is how a backfilled record gets its A/B/C/D jurisdiction tag, so a `C`/`D` import becomes
+**structurally detect-only** rather than landing as a gating record.
+
+The file is a plain text `source_key → bucket` map, one pair per line:
+
+```
+# round-id -> bucket   (a `#` line is a comment; blank lines are skipped)
+R2289 C
+#1194 C
+§3   A
+```
+
+- each non-blank, non-`#` line is **exactly two whitespace-separated tokens**: `<source_key> <bucket>`;
+- `<source_key>` is the record's durable key (its `R<N>` / `#<n>` / `§N` token — the same key the
+  extractors carry into `round_id` and used by reconcile);
+- `<bucket>` is one of `{A, B, C, D}`. An out-of-vocabulary or malformed line is a **hard error that
+  names the offending line** and writes nothing (`jurisdiction-map line "<line>": …`).
+
+A record whose key is in the map imports carrying that jurisdiction; a record **absent** from the map
+imports **untagged** (the map is purely additive — an omitted `--jurisdiction-map` tags nothing). Because
+jurisdiction is **non-hashed**, tagging never moves a tick id: a re-run is still idempotent (a tagged
+record already in the store is skipped, not rewritten), and the golden vectors do not move.
+
+This is how a detect-only import is made detect-only **structurally**, not by convention. A
+`C`/`D`-tagged decision can **never gate**: any not-green verdict on it is mapped to the non-gating
+`memo` label (so `ev check --exit-on-red` can never trip on it), and `ev verify` forbids a `C`/`D` tick
+from carrying a runnable `Test` check at all. So a gateway record like `#1194` mapped to bucket `C`
+imports as a **permanent detect-only MISS** — surfaced forever, gating never (see [concepts.md](concepts.md)).
 
 ### Reconcile (`--reconcile --against <src>`)
 
@@ -416,6 +449,21 @@ ev migrate \
 
 ev migrate --reconcile --against to-human:to-human.md
 # → reconcile: in-both 5, source-only 3 (the capture gap), store-only 1, un-keyable 0
+```
+
+**Example** — import another team's rulings tagged detect-only via a `--jurisdiction-map`, so the
+gateway record `#1194` lands as a permanent detect-only MISS (bucket `C`) instead of a gating record:
+
+```sh
+cat gateway.map
+# # round-id -> bucket
+# #1194 C
+# R2289 C
+
+ev migrate --source escalation:escalation.md --jurisdiction-map gateway.map --blame "Wang Yu"
+# → imported 2, skipped 0, re-linked 0, 0 source-only gap(s)
+# `#1194` now carries jurisdiction C: surfaced forever (memo), gating never; a record absent
+# from the map imports untagged.
 ```
 
 **Example** — harvest an existing test as a check shape (a counter-test-less binding;
@@ -825,7 +873,8 @@ ev log
 
 Every command above — including the `ev check` liveness evaluator with per-runner `--attest`
 scoping, the `--from-git` decision source, the declared `--authority` / `--jurisdiction` /
-`--round-id` tags, `ev brief`, and the **`0.1.1` migration release** (`ev migrate` + the
-harvested-binding surfacing) — is present and documented in the source tree. For the gap
-between the source tree and the **published** crate, see the **Status** section of the
-[project README](../README.md).
+`--round-id` tags, `ev brief`, the **`0.1.1` migration release** (`ev migrate` + the
+harvested-binding surfacing), and the **`0.1.2` jurisdiction-on-import** step (`ev migrate
+--jurisdiction-map`, so a `C`/`D` import is structurally detect-only) — is present and documented
+in the source tree. For the gap between the source tree and the **published** crate, see the
+**Status** section of the [project README](../README.md).

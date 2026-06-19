@@ -236,6 +236,26 @@ ev migrate --source gitlog:chat-room.md --blame "Wang Yu"
 # → imported 7, skipped 0, re-linked 0, 2 source-only gap(s)
 ```
 
+**Tag the imports as you backfill** with `--jurisdiction-map <path>` — this is **how a bulk-imported
+decision gets its jurisdiction**. The map is a plain `source_key → bucket` file (one `<source_key>
+<bucket>` pair per line; `#` comments and blank lines skipped; bucket ∈ `{A, B, C, D}`):
+
+```sh
+cat gateway.map
+# # round-id -> bucket
+# #1194 C
+# R2289 C
+
+ev migrate --source escalation:escalation.md --jurisdiction-map gateway.map --blame "Wang Yu"
+```
+
+A record whose key is in the map carries that jurisdiction; a record **absent** from the map imports
+**untagged** (the map is additive). So a `C`/`D` import becomes **structurally detect-only** instead of
+a gating record — the gateway record `#1194` mapped to bucket `C` imports as a permanent detect-only
+MISS (surfaced forever via `memo`, gating never; see the watch-not-fail section below). Because
+jurisdiction is non-hashed, tagging never moves a tick id, so the backfill stays idempotent. An
+out-of-vocabulary or malformed map line is a hard error that names the offending line.
+
 **Find the capture gap** — which rulings your source records but the ledger never captured:
 
 ```sh
@@ -275,6 +295,11 @@ A `C`/`D`-jurisdiction decision is **structurally ungateable**: any not-green ve
 mapped to the non-gating `memo` label, so it can never trip `ev check --exit-on-red`, and
 `ev verify` refuses to let it carry a runnable test check at all. It is surfaced forever,
 gating never — see [concepts.md](concepts.md) for the two-lock guarantee.
+
+To tag rulings the **same way at import time** — so a bulk backfill lands `C`/`D` rather than
+untagged-and-gateable — pass `ev migrate --jurisdiction-map <path>` (the `source_key → A/B/C/D`
+map above): the gateway record `#1194` mapped to bucket `C` imports as a permanent detect-only
+MISS, while any record absent from the map imports untagged.
 
 ---
 

@@ -113,6 +113,20 @@ ev migrate --source gitlog:chat-room.md --source decisions-immutable:DECISIONS.m
 ev migrate --reconcile --against to-human:to-human.md   # find the capture gap (source-only rulings)
 ```
 
+**Tag the imports as you backfill** with `--jurisdiction-map <path>` — this is **how a bulk-imported
+decision gets its jurisdiction** (an untagged import can gate; a `C`/`D` one cannot). The map is a
+plain `source_key → bucket` file: one `<source_key> <bucket>` pair per line, `#` comments + blanks
+skipped, bucket ∈ `{A, B, C, D}`. A record whose key is in the map carries that bucket; a record
+**absent** from the map imports **untagged**. Because jurisdiction is non-hashed, tagging never moves
+a tick id (the backfill stays idempotent); a bad bucket is a hard error naming the line. So a `C`/`D`
+import becomes **structurally detect-only** — the gateway record `#1194` mapped to bucket `C` imports
+as a permanent detect-only MISS (surfaced forever via `memo`, gating never):
+
+```sh
+ev migrate --source escalation:escalation.md --jurisdiction-map gateway.map --blame "<fallback author>"
+# gateway.map:  `#1194 C`  on one line  →  #1194 imports detect-only, never able to gate
+```
+
 **Harvest an existing test** as a check with `ev migrate --bind-check <selector>` (full
 liveness required; **no counter-test**, so falsifiability is not yet proven). A harvested
 binding is evaluated like any other but `ev check` tags its row `harvested — falsifiability not
@@ -120,12 +134,13 @@ proven` and prints a `harvested-unproven: N of M …` debt line. **The way out i
 add a `--counter-test` and the binding becomes proven. Do not present a harvested green as a
 proven one.
 
-**Import a ruling to *watch*, not to *fail on*** — tag it `--jurisdiction C` (or `D`). A
-`C`/`D`-jurisdiction decision is **detect-only**: any not-green verdict on it becomes the
-non-gating `memo` label (it can never trip `--exit-on-red`), and `ev verify` refuses to let it
-carry a runnable test check at all. Use it for another team's rulings you must surface but have
-no authority to gate on. (`--jurisdiction A`/`B` gate normally; `--round-id <key>` sets a
-durable join/dedup key.)
+**Import a ruling to *watch*, not to *fail on*** — tag it `--jurisdiction C` (or `D`) on `ev decide`,
+or, for a **bulk import**, give `ev migrate` a `--jurisdiction-map` so the backfilled record lands
+`C`/`D` instead of untagged-and-gateable. A `C`/`D`-jurisdiction decision is **detect-only**: any
+not-green verdict on it becomes the non-gating `memo` label (it can never trip `--exit-on-red`), and
+`ev verify` refuses to let it carry a runnable test check at all. Use it for another team's rulings
+you must surface but have no authority to gate on. (`--jurisdiction A`/`B` gate normally; `--round-id
+<key>` sets a durable join/dedup key.)
 
 **Run the resurface / liveness gate** and surface anything not-green to the human:
 

@@ -532,8 +532,10 @@ ev reopen 638c47b0c9dd
 **Synopsis:** the boot-read — print the **live** decisions whose declared authority is
 `user-ruled`, and the roads each of them rejected. A near-zero-cost, **0-network** read (the
 store only — no git, no receipts) for a fresh agent to load the decisions it must respect and
-the options it must not re-propose. Ordered **most-recent-first** and **capped**, with an
-honest remainder footer so nothing is silently hidden.
+the options it must not re-propose. **Load-bearing rulings** — user-ruled decisions that
+closed a road via `--reject` — are **pinned above the cap** so recency never buries them; the
+rest follow **most-recent-first**, **capped**, with an honest remainder footer so nothing is
+silently hidden (and a hidden closed-road ruling is counted, never silent).
 
 ```
 ev brief [--limit N]
@@ -546,26 +548,35 @@ ev brief [--limit N]
 | `--limit` | non-negative integer | no | Cap the number of decisions shown. Overrides the config default `brief_limit` (which itself defaults to `10`). `--limit 0` shows **all** decisions (no cap, no footer). |
 
 **What it does:** reads every tick, keeps the **live**, `authority == "user-ruled"` ones,
-orders them **most-recent-first** (by `held_since`, tie-broken by id descending so output is
-deterministic), then caps to the effective limit. The effective limit is `--limit N` when
+then orders them so that **load-bearing rulings come first**. A ruling is *load-bearing* iff
+any of its grounds closes a road (its `supports` starts with `rejected:`) — those are the
+decisions a fresh agent must not re-walk, so they sort ahead of every non-load-bearing ruling
+**regardless of recency** and are pinned above the cap. Within each of those two groups the
+order is **most-recent-first** (by `held_since`, tie-broken by id descending so output is
+deterministic). It then caps to the effective limit. The effective limit is `--limit N` when
 given, else the config `brief_limit` (default `10`); a limit of `0` from either source means
 "show all". For each shown decision it prints the decision marked `[user-ruled]`, then one
 indented line per road-not-taken (each ground whose `supports` is `rejected:<option>`). When
-the cap drops decisions, a remainder footer is printed pointing at `ev list` (see below), so a
-capped brief never hides a ruling without saying so. Person re-checks and chosen grounds are
-not listed — `brief` is the *what was ruled and what was rejected* view, not the full reopen.
-A store with no user-ruled decisions says so. It never touches the network.
+the cap drops decisions, a remainder footer is printed pointing at `ev list` (see below), and
+when any of the hidden decisions are themselves load-bearing the footer **counts them** — so a
+capped brief never hides a closed-road ruling without saying so. Person re-checks and chosen
+grounds are not listed — `brief` is the *what was ruled and what was rejected* view, not the
+full reopen. A store with no user-ruled decisions says so. It never touches the network.
 
 **Exit code:** `0` when the store exists (including when there are no user-ruled decisions);
 `1` when there is no store.
 
 **Output (stdout / stderr):**
 
-- per user-ruled decision (stdout, most-recent-first): `<decision>  [user-ruled]` (two spaces
-  before the tag), then one indented line per rejected road: `  rejected <option>: <claim>`.
+- per user-ruled decision (stdout, load-bearing first then most-recent-first):
+  `<decision>  [user-ruled]` (two spaces before the tag), then one indented line per rejected
+  road: `  rejected <option>: <claim>`.
 - remainder footer (stdout, only when the cap drops decisions): `… <N> more user-ruled
-  decision(s) — \`ev list\` for all` — where `<N>` is the number of user-ruled decisions beyond
-  the cap. Not printed when nothing is dropped (including `--limit 0`).
+  decision(s)<, M with rejected roads> — \`ev list\` for all` — where `<N>` is the number of
+  user-ruled decisions beyond the cap, and the conditional `, <M> with rejected roads` clause
+  is appended **only when** `M > 0` of those hidden decisions are load-bearing (carry a
+  rejected road); when `M` is `0` the clause is omitted entirely. Not printed when nothing is
+  dropped (including `--limit 0`).
 - none (stdout): `no user-ruled decisions`
 - no store (stderr): `error: no .evolving/ store here — run \`ev init\` first`
 
@@ -577,10 +588,10 @@ ev brief
 # →   rejected Redis: a new infra dependency
 
 ev brief --limit 2
-# → <newest user-ruled decision>  [user-ruled]
+# → <a load-bearing ruling — pinned above the cap>  [user-ruled]
 # →   rejected …
-# → <second-newest user-ruled decision>  [user-ruled]
-# → … 3 more user-ruled decision(s) — `ev list` for all
+# → <next ruling, load-bearing first then most-recent-first>  [user-ruled]
+# → … 3 more user-ruled decision(s), 1 with rejected roads — `ev list` for all
 
 ev brief --limit 0   # show every user-ruled decision, no cap, no footer
 ```

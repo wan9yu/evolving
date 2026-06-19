@@ -28,10 +28,13 @@ ev brief --limit 5             # cap the count (default brief_limit=10; --limit 
 
 `ev brief` prints only the **live, `user-ruled`** decisions and, under each, the options
 they explicitly rejected (`rejected <option>: <why>`). It does no git and no receipt I/O —
-it is a near-zero-cost boot read. Output is ordered **most-recent-first** and **capped**
-(default `brief_limit`=10 from config; `--limit N` overrides; `--limit 0` shows all). When
-the cap drops decisions it prints a `… N more user-ruled decision(s) — \`ev list\` for all`
-footer, so nothing is silently hidden — run `ev list` for the full inventory.
+it is a near-zero-cost boot read. **Load-bearing rulings** — user-ruled decisions that closed
+a road via `--reject` — are **pinned above the cap** so recency never buries a closed road you
+must not re-walk; the rest follow **most-recent-first**, and the output is **capped** (default
+`brief_limit`=10 from config; `--limit N` overrides; `--limit 0` shows all). When the cap
+drops decisions it prints a `… N more user-ruled decision(s) — \`ev list\` for all` footer
+(with a `, M with rejected roads` clause when any hidden ruling closed a road), so nothing is
+silently hidden — run `ev list` for the full inventory.
 
 **Respect what it prints:**
 

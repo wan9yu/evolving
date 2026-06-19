@@ -59,16 +59,21 @@ ev decide --from-git <commit> \
 
 ## "What have we already decided / what's ruled?"
 
-Start with the rulings and the closed roads — a fast, no-network read, newest first:
+Start with the rulings and the closed roads — a fast, no-network read; load-bearing rulings
+(those that closed a road) come first, then newest first:
 
 ```sh
 ev brief            # the live, user-ruled decisions + the options each one rejected
 ev brief --limit 5  # cap the count; --limit 0 shows all (default cap is brief_limit=10)
 ```
 
-`ev brief` orders **most-recent-first** and **caps** the output (default `brief_limit`=10
-from config; `--limit N` overrides; `--limit 0` shows all). When the cap drops decisions it
-prints a `… N more user-ruled decision(s) — \`ev list\` for all` footer, so nothing is hidden.
+`ev brief` pins **load-bearing rulings** — user-ruled decisions that closed a road via
+`--reject` — **above the cap** so recency never buries the closed roads a fresh agent must not
+re-walk; the rest follow **most-recent-first**, and the output is **capped** (default
+`brief_limit`=10 from config; `--limit N` overrides; `--limit 0` shows all). When the cap
+drops decisions it prints a `… N more user-ruled decision(s) — \`ev list\` for all` footer
+(with a `, M with rejected roads` clause when any hidden ruling closed a road), so nothing —
+least of all a closed-road ruling — is silently hidden.
 
 See everything, not just the rulings, or pull one decision in full:
 

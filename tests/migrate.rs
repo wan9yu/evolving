@@ -40,6 +40,13 @@ fn write_source(repo: &std::path::Path, kind: &str, name: &str, body: &str) -> S
     format!("{kind}:{}", path.display())
 }
 
+/// Write a `--jurisdiction-map` file under the repo and return its path as a string.
+fn write_map(repo: &std::path::Path, name: &str, body: &str) -> String {
+    let path = repo.join(name);
+    std::fs::write(&path, body).unwrap();
+    path.display().to_string()
+}
+
 /// How many tick files the store holds.
 fn tick_count(repo: &std::path::Path) -> usize {
     std::fs::read_dir(repo.join(".evolving/ticks"))
@@ -241,6 +248,170 @@ fn migrate_bind_check_should_print_a_harvested_check_when_a_selector_is_given() 
     assert!(
         s.contains("pytest tests/test_invariant_no_redis.py"),
         "output was {s:?}"
+    );
+}
+
+#[test]
+fn migrate_should_tag_an_imported_decision_from_the_jurisdiction_map() {
+    // given: a store, a 1-record gitlog source (R2289), and a map line tagging R2289 as C
+    let r = repo();
+    let src = write_source(
+        &r,
+        "gitlog",
+        "chat-room.md",
+        "## R2289 restore-safety counter DB-backed\n",
+    );
+    let map = write_map(&r, "jurisdiction.map", "# round -> bucket\nR2289 C\n");
+
+    // when: migrate imports it WITH the --jurisdiction-map
+    let out = run(
+        &r,
+        &[
+            "migrate",
+            "--source",
+            &src,
+            "--blame",
+            "Wang Yu",
+            "--jurisdiction-map",
+            &map,
+        ],
+    );
+
+    // then: it succeeds and the imported decision carries jurisdiction=C on both list and show
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let list = run(&r, &["list"]);
+    let l = String::from_utf8_lossy(&list.stdout);
+    assert!(
+        l.contains("jurisdiction=C"),
+        "list did not render the imported jurisdiction: {l:?}"
+    );
+    // the id leads the list row — pull it and confirm `show` agrees (the from_value round-trip)
+    let id = l
+        .lines()
+        .find(|line| line.contains("jurisdiction=C"))
+        .and_then(|line| line.split('\t').next())
+        .expect("a row with the tagged decision");
+    let show = run(&r, &["show", id]);
+    assert!(
+        String::from_utf8_lossy(&show.stdout).contains("jurisdiction: C"),
+        "show did not render jurisdiction: {}",
+        String::from_utf8_lossy(&show.stdout)
+    );
+}
+
+#[test]
+fn migrate_should_leave_a_decision_untagged_when_its_key_is_absent_from_the_map() {
+    // given: a store, a 1-record source (R2290), and a map that names a DIFFERENT key only
+    let r = repo();
+    let src = write_source(
+        &r,
+        "gitlog",
+        "chat-room.md",
+        "## R2290 ship the cross-pod drain\n",
+    );
+    let map = write_map(&r, "jurisdiction.map", "R9999 C\n");
+
+    // when: migrate imports it with the map (whose only entry does not match R2290)
+    let out = run(
+        &r,
+        &[
+            "migrate",
+            "--source",
+            &src,
+            "--blame",
+            "Wang Yu",
+            "--jurisdiction-map",
+            &map,
+        ],
+    );
+
+    // then: it succeeds and the imported decision is UNTAGGED (purely additive — absent key ⇒ None)
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let list = run(&r, &["list"]);
+    assert!(
+        !String::from_utf8_lossy(&list.stdout).contains("jurisdiction="),
+        "an unmapped key must import untagged: {}",
+        String::from_utf8_lossy(&list.stdout)
+    );
+}
+
+#[test]
+fn migrate_should_reject_an_out_of_vocab_bucket_in_the_jurisdiction_map() {
+    // given: a store, a source, and a map whose bucket is outside the {A,B,C,D} vocabulary
+    let r = repo();
+    let src = write_source(
+        &r,
+        "gitlog",
+        "chat-room.md",
+        "## R2289 restore-safety counter DB-backed\n",
+    );
+    let map = write_map(&r, "jurisdiction.map", "R2289 Z\n");
+
+    // when: migrate runs with that map
+    let out = run(
+        &r,
+        &[
+            "migrate",
+            "--source",
+            &src,
+            "--blame",
+            "Wang Yu",
+            "--jurisdiction-map",
+            &map,
+        ],
+    );
+
+    // then: it is a hard error (out-of-vocab bucket), names the offending line, and writes nothing
+    assert!(!out.status.success(), "an out-of-vocab bucket must fail");
+    assert_eq!(tick_count(&r), 0, "no tick is written on a bad map");
+    let e = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        e.contains("R2289 Z") || e.contains("R2289"),
+        "the error should name the offending line: {e:?}"
+    );
+}
+
+#[test]
+fn migrate_should_still_skip_a_tagged_record_on_a_re_run_because_jurisdiction_is_non_hashed() {
+    // given: a store with R2289 imported once, tagged C from the map
+    let r = repo();
+    let src = write_source(
+        &r,
+        "gitlog",
+        "chat-room.md",
+        "## R2289 restore-safety counter DB-backed\n",
+    );
+    let map = write_map(&r, "jurisdiction.map", "R2289 C\n");
+    let args = [
+        "migrate",
+        "--source",
+        &src,
+        "--blame",
+        "Wang Yu",
+        "--jurisdiction-map",
+        &map,
+    ];
+    assert!(run(&r, &args).status.success());
+    assert_eq!(tick_count(&r), 1, "first import writes the record");
+
+    // when: the SAME tagged migrate runs again (jurisdiction is non-hashed ⇒ the id is unchanged)
+    let second = run(&r, &args);
+
+    // then: it is idempotent — nothing new is written and the record is reported skipped
+    assert!(second.status.success());
+    assert_eq!(tick_count(&r), 1, "a re-run writes no new ticks");
+    let s = String::from_utf8_lossy(&second.stdout);
+    assert!(
+        s.contains("imported 0") && s.contains("skipped 1"),
+        "summary was {s:?}"
     );
 }
 

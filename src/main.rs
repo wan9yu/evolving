@@ -112,6 +112,10 @@ enum Cmd {
         /// The 40-hex sha the --bind-check harvest was verified at (defaults to HEAD).
         #[arg(long)]
         verified_at_sha: Option<String>,
+        /// A `<source_key> <bucket>` map file (one pair per line, `#` comments + blanks skipped) tagging
+        /// each imported decision with its A/B/C/D jurisdiction. Omitted ⇒ every record imports untagged.
+        #[arg(long = "jurisdiction-map")]
+        jurisdiction_map: Option<String>,
     },
     /// Reverse lookup: name the decision + ground a test selector guards.
     Why {
@@ -180,6 +184,7 @@ fn main() -> std::process::ExitCode {
             triggered_by,
             surfaces,
             verified_at_sha,
+            jurisdiction_map,
         } => ev::cmd::migrate(
             &repo,
             ev::cmd::MigrateArgs {
@@ -193,6 +198,7 @@ fn main() -> std::process::ExitCode {
                 triggered_by,
                 surfaces,
                 verified_at_sha,
+                jurisdiction_map,
             },
         ),
         Cmd::Why { selector } => ev::cmd::why(&repo, &selector),

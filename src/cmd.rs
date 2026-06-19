@@ -373,6 +373,37 @@ pub struct MigrateArgs {
     pub triggered_by: Vec<String>,
     pub surfaces: Vec<String>,
     pub verified_at_sha: Option<String>,
+    pub jurisdiction_map: Option<String>,
+}
+
+/// Read a `--jurisdiction-map` file into a `source_key -> bucket` map. Each non-blank, non-`#` line is
+/// exactly two whitespace-separated tokens `<source_key> <bucket>`; every bucket is validated against
+/// the closed A/B/C/D vocabulary so an out-of-vocab bucket (or a malformed line) is a hard error that
+/// names the offending line. jurisdiction is non-hashed, so the map only adds a detect-only tag — it
+/// never moves a tick id. An absent path yields an empty map (every record imports untagged).
+fn parse_jurisdiction_map(path: &str) -> Result<std::collections::HashMap<String, String>, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("reading {path}: {e}"))?;
+    let mut map = std::collections::HashMap::new();
+    for line in text.lines() {
+        let l = line.trim();
+        if l.is_empty() || l.starts_with('#') {
+            continue;
+        }
+        let mut tokens = l.split_whitespace();
+        match (tokens.next(), tokens.next(), tokens.next()) {
+            (Some(key), Some(bucket), None) => {
+                crate::tick::validate_jurisdiction(bucket)
+                    .map_err(|e| format!("jurisdiction-map line {l:?}: {e}"))?;
+                map.insert(key.to_string(), bucket.to_string());
+            }
+            _ => {
+                return Err(format!(
+                    "jurisdiction-map line {l:?}: expected `<source_key> <bucket>`"
+                ))
+            }
+        }
+    }
+    Ok(map)
 }
 
 /// Read a `<kind>:<path>` source spec, dispatch to the matching pure extractor, and return the
@@ -481,7 +512,24 @@ pub fn migrate(repo: &Path, a: MigrateArgs) -> ExitCode {
             }
         }
     }
-    match crate::migrate::backfill(repo, records, a.blame.as_deref(), a.dry_run) {
+    // An omitted --jurisdiction-map ⇒ an empty map ⇒ every record imports untagged (prior behavior).
+    let jurisdiction_map = match &a.jurisdiction_map {
+        Some(path) => match parse_jurisdiction_map(path) {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("error: {e}");
+                return ExitCode::FAILURE;
+            }
+        },
+        None => std::collections::HashMap::new(),
+    };
+    match crate::migrate::backfill(
+        repo,
+        records,
+        a.blame.as_deref(),
+        &jurisdiction_map,
+        a.dry_run,
+    ) {
         Ok(s) => {
             if !a.dry_run {
                 crate::events::append(&Store::at(repo), "migrate", None, None);

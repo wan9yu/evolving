@@ -16,6 +16,7 @@ use crate::canonical::compute_id;
 use crate::capture::{harvested_test_check, Decision};
 use crate::store::Store;
 use crate::tick::{Ground, Tick};
+use std::collections::HashMap;
 use std::path::Path;
 
 /// One extracted, not-yet-appended decision from a source substrate. `source_key` is the stable,
@@ -277,11 +278,16 @@ fn store_key_index(
 /// stable across re-runs. A skipped record whose stored parent differs from where it would now land
 /// is a back-dated mid-chain insert and is reported as re-linked. `blame_fallback` supplies the
 /// author for a record carrying none; a record with neither is a source-only gap (R5 stays intact —
-/// we never invent an author). `--dry-run` reports the would-import count but writes nothing.
+/// we never invent an author). `jurisdiction_map` (source_key → A/B/C/D bucket) tags each imported
+/// decision: a record whose key is in the map carries that jurisdiction, one absent imports untagged
+/// (None) — so the map is purely additive (an empty map ⇒ every record None, the prior behavior).
+/// jurisdiction is NON-hashed, so tagging never moves a tick id (idempotency holds across re-runs).
+/// `--dry-run` reports the would-import count but writes nothing.
 pub fn backfill(
     repo: &Path,
     mut records: Vec<MigrationRecord>,
     blame_fallback: Option<&str>,
+    jurisdiction_map: &HashMap<String, String>,
     dry_run: bool,
 ) -> Result<BackfillSummary, String> {
     records.sort_by(|a, b| a.source_key.cmp(&b.source_key));
@@ -346,13 +352,14 @@ pub fn backfill(
                 held_since: String::new(),
                 blame: blame.clone(),
                 authority: None,
-                jurisdiction: None,
+                jurisdiction: jurisdiction_map.get(&r.source_key).cloned(),
                 round_id: Some(r.source_key.clone()),
             };
             prospective_parent = compute_id(&probe);
             summary.imported += 1;
             continue;
         }
+        let jurisdiction = jurisdiction_map.get(&r.source_key).cloned();
         let written = crate::capture::append(
             repo,
             Decision {
@@ -361,7 +368,7 @@ pub fn backfill(
                 grounds: r.grounds,
                 blame,
                 authority: None,
-                jurisdiction: None,
+                jurisdiction,
                 round_id: Some(r.source_key),
             },
         )?;

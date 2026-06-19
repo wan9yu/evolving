@@ -16,9 +16,9 @@ guarding each reason is still alive.
 
 ## Status
 
-`0.1.0` — the **honest-resurface slice**. A single self-contained Rust binary, no network,
-no daemon; the store lives in a local `.evolving/` directory: the full capture → bind →
-resurface loop, content-addressed and append-only.
+`0.1.1` — the **migration release**, on top of the `0.1.0` honest-resurface slice. A single
+self-contained Rust binary, no network, no daemon; the store lives in a local `.evolving/`
+directory: the full capture → bind → resurface loop, content-addressed and append-only.
 
 **Shipped:** the full capture→resurface loop — recording decisions and their grounds
 (`ev decide`), binding a test or human re-check after the fact (`ev guard`), evaluating a
@@ -32,6 +32,30 @@ and runs its counter-test to prove the binding can actually flip — a check tha
 reported `unproven`. The **authority tag** (`--authority user-ruled` / `agent-disposable`, surfaced
 by `ev brief` so a fresh agent reads a human's ruling before re-deciding) and seeding a decision from
 a commit (`ev decide --from-git`) are shipped too.
+
+**New in `0.1.1` — migration:** `ev migrate` backfills an existing decision history into the
+ledger from four source formats (`gitlog` / `to-human` / `decisions-immutable` / `escalation`),
+**idempotently** and keeping the chain — harvesting only the rulings and *structured*
+roads-not-taken (a prose reason is never NLP'd into a ground), never inventing an author (an
+un-attributed record is a surfaced gap, R5 intact). It **harvests existing tests** as bound
+checks (`--bind-check`, counter-test absent — `ev check` marks them `harvested — falsifiability
+not proven` until `ev guard` adds one), **reconciles** a source against the store (`--reconcile`,
+the capture-gap report), and adds the declared **`--jurisdiction A|B|C|D`** tag (`C`/`D` are
+structurally **detect-only** — surfaced via the non-gating `memo` verdict, never able to gate)
+and a durable **`--round-id`** join key. The on-disk schema is now **forward-compatible**: a
+newer writer's non-hashed bookkeeping field is tolerated (surfaced as a `verify` warning) while
+the hashed/identity payload stays strictly closed. The three golden vectors (`genesis`,
+`case1`, and the new `harvested`) are unmoved — `0.1.1` adds fields and a subcommand without
+disturbing a single existing id.
+
+> **Honest limits.** Migration imports another team's rulings as jurisdiction `C` —
+> **detect-only, forever**: such a record is surfaced when it goes red but, by construction,
+> can never gate a build (it is watched, not owned). And the dependency-behavior-drift pattern
+> (see [docs/usage.md](docs/usage.md)) is a **fixture-regression-lock**: it fires when a
+> reviewed snapshot file changes in a *commit*, not on the silent runtime drift itself — it
+> locks the reviewed fixture against regression, which is narrower than catching every silent
+> drift. `0.1.1` does not retroactively teach a shipped `0.1.0` reader to tolerate the new
+> fields — that forward-compat is from `0.1.1` on (see [docs/concepts.md](docs/concepts.md)).
 
 ## Install
 
@@ -130,15 +154,16 @@ ev reopen <id>
 ## The model
 
 - **Tick** — one decision in the chain. Its hashed payload is `{decision, observe,
-  grounds, parent_id}`; `id`, `status`, `held_since`, `blame`, and `authority` are
-  bookkeeping kept outside the hash.
+  grounds, parent_id}`; `id`, `status`, `held_since`, `blame`, `authority`, `jurisdiction`,
+  and `round_id` are bookkeeping kept outside the hash.
 - **Ground** — a reason a decision rests on. A ground is either **chosen** (a reason for
   the decision taken) or a **road-not-taken** (`rejected:<option>`, a reason an
   alternative was declined).
 - **Check** — what keeps a chosen ground honest over time. Either a **Test** (a test
-  selector plus its counter-test, the platforms/triggers/surfaces that keep it live, and
-  the `verified_at_sha` it last passed at) or a human **Person** re-check (a reference to
-  when/where a person re-affirms the ground).
+  selector plus an optional counter-test, the platforms/triggers/surfaces that keep it live,
+  and the `verified_at_sha` it last passed at — a *harvested* binding from `ev migrate` carries
+  no counter-test and reads as falsifiability-not-proven) or a human **Person** re-check (a
+  reference to when/where a person re-affirms the ground).
 - **Identity** — `id = first 12 hex of SHA-256` over the canonical-JSON of `{decision,
   observe, grounds, parent_id}`.
 - **Append-only** — the chain is never edited in place. A change is a **new child** whose

@@ -109,10 +109,14 @@ Reading the flat verdict (each is a co-equal **fact**, never a rank or score):
   bound check); the check is **vacuous** and proves nothing until the counter-test is fixed.
 - **silently-unbound** — a binding that is not in the selected set, so it can never be counted
   green — surfaced rather than ignored.
+- **memo** — a not-green verdict on a **`C`/`D`-jurisdiction** (detect-only) decision: still
+  printed and named, but **non-gating** by construction (it can never trip `--exit-on-red`).
 
 Under `--attest <p1,p2>` (the platforms **this runner speaks for**), a declared platform this
 runner does not attest is reported **exempt** (non-gating here) instead of not-run — so one
-runner never falsely fails another's platform.
+runner never falsely fails another's platform. A **harvested** binding (no counter-test, from
+`ev migrate`) reads its real verdict but is tagged `harvested — falsifiability not proven`,
+with a trailing `harvested-unproven: …` debt line — run `ev guard` to add a counter-test.
 
 > `ev check --run` **executes** each counter-test to prove the binding can actually flip; a binding
 > whose counter-test does not flip is reported **unproven** (vacuous). A red/not-run/stale/unproven
@@ -188,6 +192,89 @@ The pattern that catches it has four parts:
 Because `diff -q` and `! diff -q` are logical inverses, `ev check --run` can *prove* the check is
 falsifiable: a binding that can never flip is reported **unproven** and gates, so this pattern can
 never decay into a check that always passes.
+
+> **What this actually locks (honest scope).** This pattern is a **fixture-regression-lock**: it
+> fires when the snapshot (or the freshly-exported current-shape) file changes **in a commit** —
+> a git-recorded event on a `triggered_by` path. It is **not** a sentinel for the *silent runtime
+> drift itself*: if a dependency's behavior changes but no exporter re-runs and no file is
+> committed, nothing fires (`ev` is decision memory, not an environment monitor — see the
+> external-state-drift boundary below). It locks the **reviewed fixture** against regression,
+> which is narrower than catching every silent drift — run the exporter in CI so the current
+> shape is re-committed on every run, and the lock has something to compare against.
+
+---
+
+## "Migrate your existing decisions, and harvest the tests you already have"
+
+You do not start from an empty ledger. A team usually already has its decisions written
+somewhere — a chat-room/git log, a `RESOLVED` / `FLAG` to-human doc, a numbered
+decisions-immutable document, an escalation log — and a pile of tests that already guard those
+decisions. `ev migrate` backfills that history into the ledger and adopts those tests, without
+re-typing anything.
+
+```sh
+ev migrate \
+  --source gitlog:chat-room.md \
+  --source decisions-immutable:DECISIONS.md \
+  --blame "Wang Yu"          # fallback author for any un-attributed record
+```
+
+Each source is read by a format-aware extractor (`gitlog` / `to-human` /
+`decisions-immutable` / `escalation`). It harvests the **rulings** and the **structured**
+roads-not-taken (`rejected: <option>: <why>`) — and **only** those. A free-text prose reason is
+**never** mined into a ground: a block with no structured road imports as an honest
+zero-grounds capture, not a synthesized one.
+
+It is **idempotent** — run it twice and the second pass writes nothing (records are deduped on
+their durable `round_id` / round token). It **keeps the chain**: a back-dated mid-chain insert
+is reported as *re-linked*, never rewritten. And it **never invents an author** — a record with
+no author and no `--blame` fallback is reported as a source-only gap (R5 stays intact), not
+imported with a fabricated name:
+
+```sh
+ev migrate --source gitlog:chat-room.md --blame "Wang Yu"
+# → imported 7, skipped 0, re-linked 0, 2 source-only gap(s)
+```
+
+**Find the capture gap** — which rulings your source records but the ledger never captured:
+
+```sh
+ev migrate --reconcile --against to-human:to-human.md
+# → reconcile: in-both 5, source-only 3 (the capture gap), store-only 1, un-keyable 0
+```
+
+**Harvest a test you already have** as a check. `ev migrate --bind-check` builds a *harvested*
+binding — a real test with full liveness, but **no counter-test**, so its falsifiability is not
+yet proven:
+
+```sh
+ev migrate --bind-check "pytest tests/test_redis_absent.py" \
+  --on-platform linux-ci --triggered-by pyproject.toml --surface pyproject-deps
+```
+
+A harvested binding is honest about its debt. `ev check` evaluates it exactly like any other
+(a passing harvested test reads `green`, a failing one `red`), but tags the row
+`(harvested — falsifiability not proven; …)` and prints a trailing
+`harvested-unproven: N of M test bindings have no counter-test (run ev guard to add one)`. The
+way out is `ev guard`: add a `--counter-test` and the binding becomes a proven `0.1.0`-style
+check.
+
+### "Import another team's rulings to *watch*, but not to *fail on*"
+
+Sometimes you want a decision in the ledger as a **detect-only** record — surfaced when it goes
+red, but never able to fail *your* build (it is not yours to gate on). Tag it jurisdiction `C`
+(or `D`):
+
+```sh
+ev decide "the gateway's #1194 invariant holds" --jurisdiction C \
+  --observe "backfilled from the gateway history" \
+  --assume "the imported invariant still holds" --blame "Wang Yu"
+```
+
+A `C`/`D`-jurisdiction decision is **structurally ungateable**: any not-green verdict on it is
+mapped to the non-gating `memo` label, so it can never trip `ev check --exit-on-red`, and
+`ev verify` refuses to let it carry a runnable test check at all. It is surfaced forever,
+gating never — see [concepts.md](concepts.md) for the two-lock guarantee.
 
 ---
 

@@ -98,6 +98,35 @@ ev guard "<test selector>" <HEAD-id> "<ground claim>" \
   --counter-test "<selector>" --on-platform linux-ci --triggered-by schema.sql --surface ddl
 ```
 
+**Backfill an existing decision history** with `ev migrate` — don't re-type a ledger you
+already have written down. Each `--source <kind>:<path>` (kind ∈ `gitlog` / `to-human` /
+`decisions-immutable` / `escalation`) is harvested for its **rulings** and **structured**
+roads-not-taken (`rejected: <opt>: <why>`) only — a prose reason is **never** NLP'd into a
+ground (a block with no structured road imports as an honest zero-grounds capture). It is
+**idempotent** (a re-run writes nothing), **keeps the chain** (a back-dated insert is reported
+*re-linked*, never rewritten), and **never invents an author** (a record with no author and no
+`--blame` fallback is a source-only gap, R5 intact):
+
+```sh
+ev migrate --source gitlog:chat-room.md --source decisions-immutable:DECISIONS.md --blame "<fallback author>"
+# → imported N, skipped M, re-linked K, J source-only gap(s)
+ev migrate --reconcile --against to-human:to-human.md   # find the capture gap (source-only rulings)
+```
+
+**Harvest an existing test** as a check with `ev migrate --bind-check <selector>` (full
+liveness required; **no counter-test**, so falsifiability is not yet proven). A harvested
+binding is evaluated like any other but `ev check` tags its row `harvested — falsifiability not
+proven` and prints a `harvested-unproven: N of M …` debt line. **The way out is `ev guard`** —
+add a `--counter-test` and the binding becomes proven. Do not present a harvested green as a
+proven one.
+
+**Import a ruling to *watch*, not to *fail on*** — tag it `--jurisdiction C` (or `D`). A
+`C`/`D`-jurisdiction decision is **detect-only**: any not-green verdict on it becomes the
+non-gating `memo` label (it can never trip `--exit-on-red`), and `ev verify` refuses to let it
+carry a runnable test check at all. Use it for another team's rulings you must surface but have
+no authority to gate on. (`--jurisdiction A`/`B` gate normally; `--round-id <key>` sets a
+durable join/dedup key.)
+
 **Run the resurface / liveness gate** and surface anything not-green to the human:
 
 ```sh
@@ -107,8 +136,10 @@ ev reopen <id>                  # pull the full decision object (frozen vs curre
 ```
 
 `ev check` reports a flat, **unscored** set of facts — `green` / `red` / `gray->red` /
-`not-run` / `stale` / `unproven` / `silently-unbound` (and `exempt` under `--attest`) — each row naming
-the decision + ground. `--exit-on-red` makes any not-green a non-zero exit (a CI gate). Pass
+`not-run` / `stale` / `unproven` / `silently-unbound` (plus `exempt` under `--attest`, and
+`memo` for a not-green on a `C`/`D` detect-only decision) — each row naming
+the decision + ground. `--exit-on-red` makes any not-green a non-zero exit (a CI gate);
+`exempt` and `memo` are non-gating. Pass
 `--attest <p1,p2>` with the platforms **this runner speaks for**: a declared platform this
 runner does not attest is reported `exempt` (non-gating) here rather than `not-run`, so a
 single runner never falsely fails another runner's platform. As the curator, **surface any
@@ -149,6 +180,13 @@ guarding it itself alive?* Respect these limits; do not over-claim them to the h
   counter-test does **not** flip is reported `unproven` (vacuous) and gates under `--exit-on-red`
   — do **not** trust a guard that has not been *shown* to flip. Without `--run` it is not re-proven,
   so run it in CI.
+- **A harvested binding's falsifiability is *not* proven.** A binding from `ev migrate` carries
+  no counter-test, so even a green is unproven — `ev check` says so (`harvested — falsifiability
+  not proven`, plus a `harvested-unproven: …` debt line). Treat it as adopted-but-unproven debt
+  and pay it down with `ev guard --counter-test`; never present a harvested green as a proven one.
+- **`C`/`D`-jurisdiction decisions are detect-only.** They are surfaced (`memo`) but
+  **structurally cannot gate** — by design, for rulings you watch but do not own. Do not present
+  a `memo` as a passing gate, and do not try to force a test check onto one (`ev verify` refuses).
 - **`ev` does not fire on external-state drift.** Its triggers are **git-recorded**: a bound
   check going red, or a commit touching a declared `triggered_by` path. A UI click, an
   org/config change, or an upstream-API behavior change that leaves **no git commit** will not

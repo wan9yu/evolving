@@ -1,8 +1,8 @@
 # `ev` command reference
 
 The authoritative reference for the `ev` command surface: the write side (`init`, `decide`,
-`guard`) and the read side (`check`, `show`, `verify`, `why`, `reopen`, `brief`, `list`,
-`log`). The package is named `evolving`; the command is `ev`.
+`guard`, `migrate`) and the read side (`check`, `show`, `verify`, `why`, `reopen`, `brief`,
+`list`, `log`). The package is named `evolving`; the command is `ev`.
 
 Every command returns a process exit code: **`0`** on success, **`1`** (failure) otherwise.
 Throughout, errors are written to **stderr** as `error: <message>`; the per-command
@@ -14,6 +14,7 @@ see [concepts.md](concepts.md).
 - [`ev init`](#ev-init)
 - [`ev decide`](#ev-decide)
 - [`ev guard`](#ev-guard)
+- [`ev migrate`](#ev-migrate)
 - [`ev check`](#ev-check)
 - [`ev show`](#ev-show)
 - [`ev verify`](#ev-verify)
@@ -79,6 +80,8 @@ is a stream of trailing flags parsed **left-to-right** (see the grammar below).
 | --- | --- | --- | --- |
 | `--from-git` | a commit | no* | Seed the decision text (and blame — the commit author, or a leading `Role:` subject prefix when present — and the subject's `#<n>` / `R<n>` plus body `Refs #<n>` provenance) from a commit instead of the positional argument. *Exactly one of `{positional decision, --from-git}` must be given.* |
 | `--authority` | `user-ruled` \| `agent-disposable` | no | A declared (non-hashed) authority tag, human-set, surfaced by `reopen` / `show` / `list` / `brief`. An out-of-vocabulary value is refused. |
+| `--jurisdiction` | `A` \| `B` \| `C` \| `D` | no | A declared (non-hashed) jurisdiction tag. `A`/`B` may gate; `C`/`D` are **detect-only** — structurally ungateable (see [concepts.md](concepts.md)). Surfaced by `show` / `list` / `reopen`. An out-of-vocabulary value is refused. |
+| `--round-id` | a key | no | A declared (non-hashed) join/dedup key (e.g. `R2289`, `#555`). Durable; used by `ev migrate` to dedup + reconcile a backfill. Surfaced by `show` / `list` / `reopen`. Non-empty if given. |
 | `--observe` | a string | no | Sets the decision's `observe` field (the situation being observed). |
 | `--blame` | a name | no* | The author on the hook. *If omitted, falls back to `git config user.name`; one of the two must resolve to a non-empty name.* |
 | `--verified-at-sha` | 40 lowercase hex | no | The commit a **test** binding was last verified at. If omitted, defaults to `git rev-parse HEAD`. Only used by test bindings. |
@@ -107,7 +110,8 @@ The trailing flags are walked in order and bound to **the most recently opened g
    + at least one `--triggered-by` + at least one `--surface` (and a `verified_at_sha`,
    resolved from `--verified-at-sha` or `git rev-parse HEAD`) make the ground's check a
    **Test**.
-5. `--observe`, `--blame`, and `--verified-at-sha` are decision-level, not per-ground.
+5. `--observe`, `--blame`, `--verified-at-sha`, `--authority`, `--jurisdiction`, and
+   `--round-id` are decision-level, not per-ground.
 
 If a per-ground flag appears before any `--assume` / `--reject`, it is refused:
 `<flag> has no preceding --assume/--reject ground`. A missing value is refused with
@@ -158,6 +162,9 @@ Exactly **one** of `{positional decision, --from-git}` is allowed:
   `--blame must be non-empty`.
 - **A declared authority must be in vocabulary.** An `--authority` value other than
   `user-ruled` or `agent-disposable` → `authority must be user-ruled or agent-disposable`.
+- **A declared jurisdiction must be in vocabulary.** A `--jurisdiction` value outside
+  `{A, B, C, D}` → `jurisdiction must be one of A, B, C, D (got <v>)`.
+- **A round-id must be non-empty.** An empty `--round-id` → `--round-id needs a non-empty value`.
 - **Exactly one decision source.** Positional decision *and* `--from-git` →
   `decide: decision given twice (positional and --from-git)`; neither →
   `decide: needs a decision (positional) or --from-git`; an unresolvable commit →
@@ -302,6 +309,126 @@ ev guard "pytest tests/test_schema_frozen.py" <HEAD-id> "schema stays frozen" \
 
 ---
 
+## `ev migrate`
+
+**Synopsis:** backfill an *existing* decision history into the ledger from one or more source
+documents — idempotently, by HARVESTING the rulings and structured roads-not-taken those
+sources already record. Also reconciles a source against the store (the capture-gap report),
+and harvests an existing test as a check shape (`--bind-check`).
+
+```
+ev migrate --source <kind>:<path> [--source …] [--dry-run] [--blame <fallback>]
+ev migrate --reconcile --against <kind>:<path>
+ev migrate --bind-check <selector> --on-platform <p> --triggered-by <t> --surface <s> [--verified-at-sha <40-hex>]
+```
+
+**Flags:**
+
+| Flag | Takes | Required | Effect |
+| --- | --- | --- | --- |
+| `--source` | `<kind>:<path>` | for a backfill | A source to import. `<kind>` ∈ `{gitlog, to-human, decisions-immutable, escalation}`; `<path>` is read from disk. Repeatable; sources import in deterministic `source_key` order. |
+| `--dry-run` | — | no | Parse + report what **would** import; write no tick. |
+| `--blame` | a name | no | Fallback author for any source record carrying none. **R5 stays intact** — a record with neither its own author nor this fallback is *not* imported; it is reported as a source-only gap (an author is never invented). |
+| `--reconcile` | — | no | Reconcile mode: join `--against` against the store and report the buckets instead of importing. |
+| `--against` | `<kind>:<path>` | with `--reconcile` | The source to reconcile against. |
+| `--bind-check` | a selector | no | Harvest an existing test as a bound check **shape** (counter-test absent, full liveness still required) and print it. Does not write a tick by itself. |
+| `--on-platform` / `--triggered-by` / `--surface` | a value (repeatable) | with `--bind-check` (≥1 each) | The liveness the harvested check declares. A harvest with an empty set is refused (no half-harvest). |
+| `--verified-at-sha` | 40 lowercase hex | no | The sha the `--bind-check` harvest was verified at; defaults to `git rev-parse HEAD`. |
+
+### The four extractors (rulings + structured roads only — never NLP'd)
+
+Each `<kind>` is a pure, format-aware extractor turning a source's text into records. They
+parse **rulings and *structured* rejected-roads only** — a road becomes a ground iff the
+source declares it with an explicit `rejected: <option>: <why>` (or `reject …`) token. A
+free-text prose reason is **never** mined into a ground: a block with no structured road yields
+a record with **zero grounds** (an honest capture), never a synthesized one.
+
+- **`gitlog`** — a chat-room / git log; each `## R<N> …` header is one decision, keyed by its
+  `R<N>` / `#<n>` round token.
+- **`to-human`** — the `RESOLVED` / `FLAG` markdown blocks (the authority substrate); a
+  `### RESOLVED <key>: <decision>` is a user-ruled decision, a `### FLAG` an open one — both
+  captured.
+- **`decisions-immutable`** — a document split on numbered `## N.` / `## §N` sections, one
+  decision per section, keyed `§N`.
+- **`escalation`** — the *same* `RESOLVED` / `FLAG` reader as `to-human`, path-parameterized
+  (no layout of its own).
+
+Each record's `source_key` (e.g. `R2289`, `#555`, `§3`) is carried into the hashed `observe`
+**and** written to the non-hashed `round_id`, so the backfill can dedup and reconcile durably —
+from the record's own payload, never from the events log.
+
+### The idempotent backfill
+
+A backfill sorts records by `source_key`, then for each computes the content-addressed id it
+*would* take and **skips it if that key is already in the store** — so running `ev migrate`
+twice writes nothing the second time. The chain is **kept** (`keep-chain`): a back-dated
+mid-chain insert that re-parents an existing tick is counted and reported as **re-linked**,
+never rewritten. A harvested decision is appended through the **same** single hashing path as
+`ev decide` (one `compute_id`, one write, one R3 lint).
+
+### Reconcile (`--reconcile --against <src>`)
+
+Reconcile does not import. It reads the source's `source_key`s and the store's durable keys
+(each tick's `round_id`, else the first round token in its hashed `observe`) and reports four
+buckets: **in-both**, **source-only** (the *capture gap* — a ruling the source has that the
+ledger never captured), **store-only**, and **un-keyable** (store ticks with no derivable key,
+counted separately).
+
+**The refusals it enforces:**
+
+- **A backfill needs a source.** No `--source` (and not `--reconcile` / `--bind-check`) →
+  `ev migrate needs at least one --source <kind>:<path> (or --reconcile / --bind-check)`.
+- **Reconcile needs a target.** `--reconcile` without `--against` →
+  `--reconcile requires --against <kind>:<path>`.
+- **A known source kind.** A `<kind>` outside the four →
+  `unknown source kind <k> (expected gitlog | to-human | decisions-immutable | escalation)`.
+- **A `<kind>:<path>` shape.** A `--source` / `--against` missing the colon →
+  `--source expects <kind>:<path>, got <spec>`; an unreadable path → `reading <path>: <io error>`.
+- **No half-harvest (`--bind-check`).** An empty platform / trigger / surface →
+  `a harvested binding requires at least one platform, triggered-by, and surface (no half-harvest)`;
+  an empty selector → `a harvested binding requires a non-empty test reference`; a malformed
+  sha → `verified_at_sha must be 40 lowercase hex: <sha>`.
+- **R5 is never bypassed.** A source record with no author and no `--blame` fallback is not
+  imported — it is surfaced as a source-only gap (an author is never fabricated).
+- **No store.** → `no .evolving/ store here — run \`ev init\` first`.
+
+**Exit code:** `0` on success; `1` on any refusal above.
+
+**Output (stdout / stderr):**
+
+- backfill (stdout): `<(dry-run) >imported N, skipped M, re-linked K, J source-only gap(s)`
+  (the `(dry-run) ` prefix only under `--dry-run`).
+- reconcile (stdout): `reconcile: in-both N, source-only M (the capture gap), store-only K, un-keyable J`.
+- `--bind-check` (stdout):
+  `harvested check (falsifiability not proven; no counter-test): "<selector>" on [<platforms>] triggered-by [<triggers>] surface [<surfaces>]`.
+- failure (stderr): `error: <message>`.
+
+**Example** — backfill a chat-room log and a decisions doc in one idempotent pass (with a
+blame fallback for un-attributed records), then reconcile the authority substrate against the
+store to find the capture gap:
+
+```sh
+ev migrate \
+  --source gitlog:chat-room.md \
+  --source decisions-immutable:DECISIONS.md \
+  --blame "Wang Yu"
+# → imported 7, skipped 0, re-linked 0, 2 source-only gap(s)
+
+ev migrate --reconcile --against to-human:to-human.md
+# → reconcile: in-both 5, source-only 3 (the capture gap), store-only 1, un-keyable 0
+```
+
+**Example** — harvest an existing test as a check shape (a counter-test-less binding;
+falsifiability is *not* proven, so add one later with `ev guard`):
+
+```sh
+ev migrate --bind-check "pytest tests/test_redis_absent.py" \
+  --on-platform linux-ci --triggered-by pyproject.toml --surface pyproject-deps
+# → harvested check (falsifiability not proven; no counter-test): "pytest tests/test_redis_absent.py" …
+```
+
+---
+
 ## `ev check`
 
 **Synopsis:** evaluate every live Test-bound ground against its cached receipts and print one
@@ -331,12 +458,23 @@ platform is attested (the cross-platform / audit default), so a platform with no
 `not-run`. `exempt`, like `n/a` and `green`, never trips `--exit-on-red`.
 
 **The flat verdict labels** (one per Test-bound ground; non-Test grounds never print):
-`green`, `red`, `gray->red`, `not-run`, `stale`, `unproven`, `silently-unbound`, `exempt`. Each is
-a fact; none outranks another (`unproven` = `ev check --run` ran the counter-test and it did not
-flip — a vacuous check).
+`green`, `red`, `gray->red`, `not-run`, `stale`, `unproven`, `silently-unbound`, `exempt`,
+`memo`. Each is a fact; none outranks another (`unproven` = `ev check --run` ran the
+counter-test and it did not flip — a vacuous check). **`memo`** is the non-gating label a
+not-green verdict takes on a **`C`/`D`-jurisdiction** (detect-only) decision: the row still
+prints, naming the decision, but it can never trip `--exit-on-red` — a structural guarantee
+(see [concepts.md](concepts.md)), the sibling of `exempt`.
+
+**Harvested rows.** A Test binding whose `counter_test` is **absent** (a *harvested* binding
+from `ev migrate`) is evaluated exactly as any other — a passing harvested test still reads
+`green`, a failing one still `red` — but its row's `<detail>` is prefixed
+`harvested — falsifiability not proven; …`, and after the rows a trailing
+`harvested-unproven: N of M test bindings have no counter-test (run ev guard to add one)` line
+counts the debt. Run `ev guard` to add a counter-test and prove falsifiability.
 
 **Exit code:** `0` normally; `1` only under `--exit-on-red` when any ground is not green
-(`n/a` and `exempt` do not count), or when there is no store / the store cannot be read.
+(`n/a`, `exempt`, and `memo` do not count), or when there is no store / the store cannot be
+read.
 
 **Output (stdout / stderr):**
 
@@ -377,7 +515,8 @@ ev show <id>
 **Output (stdout / stderr):**
 
 - success (stdout): the on-disk JSON of the tick, printed as-is.
-- declared authority, only when the tick carries one (stdout, after the JSON): `authority: <value>`
+- declared tags, each only when the tick carries one (stdout, after the JSON):
+  `authority: <value>`, then `jurisdiction: <value>`, then `round_id: <value>`.
 - not found (stderr): `error: no tick with id <id>`
 - read error (stderr): `error: reading <id>: <io error>`
 
@@ -392,7 +531,7 @@ ev show 638c47b0c9dd
 ## `ev verify`
 
 **Synopsis:** audit the whole chain and its refusals; or, with `--self-test`, reproduce the
-two frozen golden vectors.
+three frozen golden vectors.
 
 ```
 ev verify [--self-test]
@@ -402,14 +541,17 @@ ev verify [--self-test]
 
 | Flag | Takes | Required | Effect |
 | --- | --- | --- | --- |
-| `--self-test` | — | no | Recompute the two frozen golden-vector ids and exit. |
+| `--self-test` | — | no | Recompute the three frozen golden-vector ids and exit. |
 
-**What `ev verify` checks:** every tick parses against the closed schema (R1) and check
-shape (R2); every stored `id` equals the hash of its payload and matches its filename
-(R4 / R6); every `parent_id` resolves and the lineage is forward-only and acyclic (R6);
-every tick carries a non-empty `blame` (R5); and a best-effort lexical lint flags
-self-evolve subject (R3) and forbidden-op (R5) language. It reports **all** violations, not
-just the first. See [concepts.md](concepts.md) for the refusals in depth.
+**What `ev verify` checks:** every tick parses against the closed *hashed*-schema (R1) and
+check shape (R2); a `C`/`D`-jurisdiction (detect-only) tick carries no test check; every
+stored `id` equals the hash of its payload and matches its filename (R4 / R6); every
+`parent_id` resolves and the lineage is forward-only and acyclic (R6); every tick carries a
+non-empty `blame` (R5); and a best-effort lexical lint flags self-evolve subject (R3) and
+forbidden-op (R5) language. It reports **all** violations, not just the first. A *tolerated*
+unknown top-level (non-hashed) key is not a violation — it is surfaced as a `warning:` on
+stderr (see the two-tier schema in [concepts.md](concepts.md)). See concepts.md for the
+refusals in depth.
 
 **Exit code:** `0` when the chain is clean (or all golden vectors match); `1` when any
 violation is found (or any golden id drifts), or if the store cannot be read.
@@ -427,7 +569,11 @@ violation is found (or any golden id drifts), or if the store cannot be read.
 ```
 ✓ genesis: e2b337f53a1f (want e2b337f53a1f)
 ✓ case1: 638c47b0c9dd (want 638c47b0c9dd)
+✓ harvested: 0cf784b51331 (want 0cf784b51331)
 ```
+
+The `harvested` vector pins that omitting an absent `counter_test` keeps a harvested binding's
+id byte-stable (see [concepts.md](concepts.md)).
 
 **Example:**
 
@@ -506,7 +652,8 @@ unreadable.
 
 - decision (stdout): `decision <id>: <decision>` — `<decision>` is quoted (`{:?}`).
 - observe, only if non-empty (stdout): `observe: <observe>` — quoted.
-- declared authority, only when present (stdout): `authority: <value>`.
+- declared tags, each only when present (stdout): `authority: <value>`, then
+  `jurisdiction: <value>`, then `round_id: <value>`.
 - per ground (stdout, one line each, indented two spaces):
   - Test: `  [<supports>] <claim> — test <reference> frozen@<sha8> now: <verdict>` — `<claim>`
     and `<reference>` are quoted; `<sha8>` is the first 8 chars of `verified_at_sha`;
@@ -621,8 +768,8 @@ store.
 
 - per tick (stdout, one row each, sorted by id): `<id>\t<status>\t<decision>` — `<decision>`
   is quoted (`{:?}`); e.g. `638c47b0c9dd\tlive\t"restore-safety counter DB-backed; reject Redis"`.
-  When the tick carries a declared authority, the row gains a trailing
-  `\tauthority=<value>` field.
+  When the tick carries a declared tag, the row gains a trailing field for each set, in order:
+  `\tauthority=<value>`, `\tjurisdiction=<value>`, `\tround_id=<value>`.
 - empty ledger (stdout): `no decisions yet`
 - no store (stderr): `error: no .evolving/ store here — run \`ev init\` first`
 
@@ -677,7 +824,8 @@ ev log
 ## Release status
 
 Every command above — including the `ev check` liveness evaluator with per-runner `--attest`
-scoping, the `--from-git` decision source, the declared `--authority` tag, and `ev brief` — is
-present and documented in the source tree for the **`0.1.0` honest-resurface slice**. For the
-gap between the source tree and the **published** crate, see the **Status** section of the
+scoping, the `--from-git` decision source, the declared `--authority` / `--jurisdiction` /
+`--round-id` tags, `ev brief`, and the **`0.1.1` migration release** (`ev migrate` + the
+harvested-binding surfacing) — is present and documented in the source tree. For the gap
+between the source tree and the **published** crate, see the **Status** section of the
 [project README](../README.md).

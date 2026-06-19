@@ -11,9 +11,13 @@
 
 ## Status
 
-`0.1.0`——**honest-resurface slice**。一个自包含的单一 Rust 二进制文件，无网络，无守护进程；存储位于本地的 `.evolving/` 目录中：完整的 capture → bind → resurface 闭环，内容寻址、仅追加。
+`0.1.1`——**migration release**，构筑在 `0.1.0` 的 honest-resurface slice 之上。一个自包含的单一 Rust 二进制文件，无网络，无守护进程；存储位于本地的 `.evolving/` 目录中：完整的 capture → bind → resurface 闭环，内容寻址、仅追加。
 
 **已交付：** 完整的 capture→resurface 闭环——记录决策及其根据（`ev decide`）、在事后绑定一个测试或人工复检（`ev guard`）、评估某个被绑定的检查并在它变红时让决策重新浮现（`ev check [--run] [--exit-on-red]`，扁平的裁定状态）、**存活性元守卫**（`ev check` 把某个从未在某声明平台运行过的检查标为 not-run，带事件驱动的新鲜度判定与按 runner 的 `--attest` 限定）、指出某个检查守护着哪个决策（`ev why`）、完整读取一个决策（`ev reopen` / `ev show`）、浏览账本（`ev list` / `ev log`），以及审计该链及其拒绝项（`ev verify`）。`ev check --run` 会替你运行被绑定的检查、记录一条 receipt，并运行其 counter-test 以证明该绑定确实能翻转——无法翻转的检查会被标为 `unproven`。**authority 标签**（`--authority user-ruled` / `agent-disposable`，由 `ev brief` 呈现，让 fresh agent 在重新决策前先读到人的裁定）以及从某个 commit 播种决策（`ev decide --from-git`）也都已交付。
+
+**`0.1.1` 新增——迁移：** `ev migrate` 把一份既有的决策历史从四种源格式（`gitlog` / `to-human` / `decisions-immutable` / `escalation`）**幂等地**回填进账本、并保持该链——只采集裁定与**结构化**声明的「未走的路」（散文式的理由绝不被 NLP 成一条根据），也绝不编造作者（一条无归属的记录会被作为缺口浮现，R5 完好）。它会把既有测试**采集（harvest）**为被绑定的检查（`--bind-check`，不带 counter-test——在用 `ev guard` 补上之前，`ev check` 会把它们标为 `harvested — falsifiability not proven`），把一份源与存储**对账（reconcile）**（`--reconcile`，即捕获缺口报告），并新增了声明式的 **`--jurisdiction A|B|C|D`** 标签（`C`/`D` 在结构上是**只侦测（detect-only）**——通过不参与门禁的 `memo` 裁定呈现，永远无法 gate）以及一个持久的 **`--round-id`** 连接键。on-disk schema 现在是**向前兼容**的：一个更新版写入者的非哈希簿记字段会被容忍（由 `verify` 作为 warning 浮现），而被哈希的身份负载保持严格封闭。三条 golden vector（`genesis`、`case1`，以及新增的 `harvested`）纹丝未动——`0.1.1` 新增字段与子命令，却没有扰动任何一个既有 id。
+
+> **诚实的边界。** 迁移把另一个团队的裁定作为 jurisdiction `C` 导入——**只侦测，永远如此**：这样一条记录在变红时会被浮现，但在构造上永远无法 gate 一次构建（它是被观察的，不是被拥有的）。而依赖行为漂移模式（见 [docs/usage.md](docs/usage.md)）是一个 **fixture-regression-lock**：它在某个被审阅的快照文件于一次 *commit* 中变化时触发，而非在那次无声的运行时漂移本身——它把被审阅的 fixture 锁定以防回归，这比「捕获每一次无声漂移」更窄。`0.1.1` 不会反过来教会一个已发布的 `0.1.0` 读取者去容忍这些新字段——那份向前兼容是从 `0.1.1` 起算的（见 [docs/concepts.md](docs/concepts.md)）。
 
 ## Install
 
@@ -98,9 +102,9 @@ ev reopen <id>
 
 ## The model
 
-- **Tick**——链中的一个决策。它被哈希的负载是 `{decision, observe, grounds, parent_id}`；`id`、`status`、`held_since`、`blame` 与 `authority` 是保存在哈希之外的簿记信息。
+- **Tick**——链中的一个决策。它被哈希的负载是 `{decision, observe, grounds, parent_id}`；`id`、`status`、`held_since`、`blame`、`authority`、`jurisdiction` 与 `round_id` 是保存在哈希之外的簿记信息。
 - **Ground**——一个决策所依据的理由。一条根据要么是**被选中的**（支持所采取决策的理由），要么是一条**未走的路**（`rejected:<option>`，即拒绝某个备选方案的理由）。
-- **Check**——随着时间推移、使一条被选中的根据保持诚实的东西。它要么是一个**Test**（一个测试选择器加上它的对照测试、使其保持存活的平台/触发器/表面，以及它上次通过时所在的 `verified_at_sha`），要么是一次人工的 **Person** 复检（对某人在何时/何地重新确认该根据的一个引用）。
+- **Check**——随着时间推移、使一条被选中的根据保持诚实的东西。它要么是一个**Test**（一个测试选择器加上一个可选的对照测试、使其保持存活的平台/触发器/表面，以及它上次通过时所在的 `verified_at_sha`——来自 `ev migrate` 的一个 *harvested* 绑定不带对照测试，会被读作 falsifiability-not-proven），要么是一次人工的 **Person** 复检（对某人在何时/何地重新确认该根据的一个引用）。
 - **Identity**——`id = first 12 hex of SHA-256`，对 `{decision, observe, grounds, parent_id}` 的规范化 JSON 计算得出。
 - **Append-only**——该链从不被就地编辑。一次变更是一个**新的子节点**，其 `parent_id` 指向它的前驱。
 

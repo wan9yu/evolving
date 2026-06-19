@@ -254,6 +254,11 @@ pub fn check(
     let ctx = live_ctx(&store, config.staleness_days, live_origin, attest);
     let mut rows: Vec<String> = Vec::new();
     let mut any_not_green = false;
+    // Harvested-binding honesty debt: N test bindings carry no counter-test (counter_test None) out
+    // of M total test bindings. Surfaced as a trailing line so the missing falsifiability proof is
+    // never silent — the verdict itself stays honest (a harvested green/red reads exactly as it ran).
+    let mut total_test_bindings = 0usize;
+    let mut harvested_unproven = 0usize;
 
     for (filename, raw) in &files {
         let t = match crate::tick::from_value(raw) {
@@ -291,8 +296,10 @@ pub fn check(
                 any_not_green = true;
             }
             // Only Test-bound grounds appear in the printed set and the gate.
-            if matches!(&g.check, Some(Check::Test { .. })) {
-                let detail = match &v {
+            if let Some(Check::Test { counter_test, .. }) = &g.check {
+                total_test_bindings += 1;
+                let harvested = counter_test.is_none();
+                let mut detail = match &v {
                     Verdict::NotRun { missing_platforms } => {
                         format!("missing: {}", missing_platforms.join(", "))
                     }
@@ -301,6 +308,14 @@ pub fn check(
                         .map(|ts| format!("ran {ts}"))
                         .unwrap_or_else(|| "no receipt".into()),
                 };
+                // A harvested binding carries no counter-test, so its falsifiability was never
+                // proven; annotate the row honestly. The verdict is UNCHANGED — a passing harvested
+                // test still reads green (pass-green), a failing one still reads red (a real gate).
+                if harvested {
+                    harvested_unproven += 1;
+                    detail = format!("harvested — falsifiability not proven; {detail}");
+                    crate::events::append(&store, "harvested", Some(&t.id), Some(v.label()));
+                }
                 rows.push(format!(
                     "{}\t{filename}\t{:?}\t({detail})",
                     v.label(),
@@ -325,6 +340,13 @@ pub fn check(
     } else {
         for r in &rows {
             println!("{r}");
+        }
+        // The harvested-binding debt: how many of the test bindings have no counter-test (so their
+        // falsifiability is unproven). Pointed at `ev guard`, which is how a counter-test is added.
+        if harvested_unproven > 0 {
+            println!(
+                "harvested-unproven: {harvested_unproven} of {total_test_bindings} test bindings have no counter-test (run ev guard to add one)"
+            );
         }
         if !run {
             // under --run the verdict itself carries falsifiability (an `unproven` row is a

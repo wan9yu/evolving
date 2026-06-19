@@ -157,6 +157,47 @@ pub(crate) fn validate_authority(val: &str) -> Result<(), String> {
     }
 }
 
+/// The migrate-only harvested-binding constructor: build a `Check::Test` carrying NO counter-test
+/// (`counter_test: None`), as used when backfilling an existing `test_invariant_*`/`test_br_*` test
+/// whose falsifiability was never proven. You cannot half-harvest: the FULL 3-key liveness
+/// (≥1 platform, triggered-by, surface) stays MANDATORY — only the counter-test is dropped. There is
+/// no `--counter-test` flag on this path; the decide (capture.rs) and `ev guard` (guard.rs) paths
+/// stay byte-for-byte strict and still reject a vacuous binding. The honesty debt (the missing
+/// falsifiability proof) is surfaced later at `ev check`, never hidden.
+pub fn harvested_test_check(
+    reference: String,
+    verified_at_sha: String,
+    platforms: Vec<String>,
+    triggered_by: Vec<String>,
+    surfaces: Vec<String>,
+) -> Result<Check, String> {
+    use crate::tick::Liveness;
+    if reference.trim().is_empty() {
+        return Err("a harvested binding requires a non-empty test reference".into());
+    }
+    if !crate::tick::is_40_lower_hex(&verified_at_sha) {
+        return Err(format!(
+            "verified_at_sha must be 40 lowercase hex: {verified_at_sha}"
+        ));
+    }
+    if platforms.is_empty() || triggered_by.is_empty() || surfaces.is_empty() {
+        return Err(
+            "a harvested binding requires at least one platform, triggered-by, and surface (no half-harvest)"
+                .into(),
+        );
+    }
+    Ok(Check::Test {
+        reference,
+        verified_at_sha,
+        counter_test: None, // harvested: falsifiability not yet proven
+        liveness: Liveness {
+            platforms,
+            triggered_by,
+            surfaces,
+        },
+    })
+}
+
 fn build_ground(
     repo: &Path,
     d: DraftGround,
@@ -661,6 +702,86 @@ mod tests {
         );
 
         // then: it is rejected
+        assert!(e.is_err());
+    }
+
+    #[test]
+    fn migrate_bind_should_build_a_harvested_test_check_when_no_counter_test() {
+        // given: the migrate-only inputs — a ref, a sha, and the FULL 3-key liveness, but NO
+        // counter-test (you cannot half-harvest: liveness stays mandatory, falsifiability does not)
+        let check = harvested_test_check(
+            "pytest tests/test_invariant_no_redis.py".into(),
+            "d308afac1b2c3d4e5f60718293a4b5c6d7e8f901".into(),
+            vec!["linux-ci".into()],
+            vec!["pyproject.toml".into()],
+            vec!["pyproject-deps".into()],
+        )
+        .expect("the full liveness is present, so the harvested binding is well-formed");
+
+        // then: it is a Test check carrying counter_test None (harvested) with liveness intact
+        match check {
+            Check::Test {
+                reference,
+                counter_test,
+                liveness,
+                verified_at_sha,
+            } => {
+                assert_eq!(reference, "pytest tests/test_invariant_no_redis.py");
+                assert_eq!(counter_test, None); // harvested: falsifiability not yet proven
+                assert_eq!(liveness.platforms, vec!["linux-ci".to_string()]);
+                assert_eq!(liveness.triggered_by, vec!["pyproject.toml".to_string()]);
+                assert_eq!(liveness.surfaces, vec!["pyproject-deps".to_string()]);
+                assert_eq!(verified_at_sha.len(), 40);
+            }
+            _ => panic!("expected a harvested test check"),
+        }
+    }
+
+    #[test]
+    fn migrate_bind_should_reject_a_harvested_binding_when_a_liveness_key_is_missing() {
+        // given: the migrate-only inputs with an empty surfaces key (a half-harvest attempt)
+        let e = harvested_test_check(
+            "pytest x".into(),
+            "d308afac1b2c3d4e5f60718293a4b5c6d7e8f901".into(),
+            vec!["linux-ci".into()],
+            vec!["pyproject.toml".into()],
+            vec![], // no --surface: the 3-key liveness is incomplete
+        );
+
+        // then: it is rejected — harvesting drops the counter-test, never the liveness
+        assert!(e.is_err());
+    }
+
+    #[test]
+    fn decide_should_still_error_without_a_counter_test() {
+        // given: the migrate-only harvested path now exists; pin that the decide path is UNCHANGED
+        // — a `--assume-test` binding with full liveness but no --counter-test STILL errors (the
+        // strict capture.rs guard stays byte-for-byte; harvesting is migrate-only, not decide-wide).
+        let r = repo();
+
+        // when: a decision binds a test with full liveness but omits --counter-test
+        let e = run(
+            &r,
+            Some("d"),
+            &s(&[
+                "--assume",
+                "c",
+                "--assume-test",
+                "pytest x",
+                "--on-platform",
+                "linux-ci",
+                "--triggered-by",
+                "f",
+                "--surface",
+                "s",
+                "--verified-at-sha",
+                "d308afac1b2c3d4e5f60718293a4b5c6d7e8f901",
+                "--blame",
+                "Wang Yu",
+            ]),
+        );
+
+        // then: it errors — no vacuous binding on the decide path
         assert!(e.is_err());
     }
 

@@ -205,6 +205,22 @@ mod tests {
     }
 
     #[test]
+    fn guard_should_still_error_without_a_counter_test() {
+        // given: the migrate-only harvested path now exists; pin that the guard path is UNCHANGED
+        // — guard.rs:83-85 stays byte-for-byte strict, so an empty counter-test STILL errors here
+        // (harvesting drops the counter-test ONLY on the migrate path, never on `ev guard`).
+        let (p, id) = repo_with_unbound();
+        let mut a = args("pytest x", &id, Some("schema stays frozen"));
+        a.counter_test = "   ".into(); // an empty/whitespace counter-test is a vacuous binding
+
+        // when: that ground is guarded with no real counter-test
+        let e = run(&p, a);
+
+        // then: it errors — no vacuous binding on the guard path
+        assert!(e.is_err());
+    }
+
+    #[test]
     fn guard_should_refuse_the_target_when_the_ground_is_human_rechecked() {
         // given: a HEAD tick whose "team ok" ground is a human-rechecked (person) check
         let (p, id) = repo_with_unbound();

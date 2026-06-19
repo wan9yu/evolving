@@ -86,14 +86,16 @@ ev check --exit-on-red          # non-zero exit if anything is not green (a CI g
 ev check --run --platform linux-ci   # also run each bound test for this platform first, recording a receipt
 ```
 
-Reading the six-state verdict (each is a co-equal **fact**, never a rank or score):
+Reading the flat verdict (each is a co-equal **fact**, never a rank or score):
 
 - **green** — the bound check ran and passed; the assumption still holds.
 - **red** — the check ran and failed; the decision's assumption is broken — re-decide.
-- **not-run** — the check has never run on a platform it declares; its liveness is unproven.
+- **not-run** — the check has never run on a platform it declares; its liveness is unestablished.
 - **stale** — a triggering commit landed after the last run, the run is older than the
   staleness window, or the verified-at commit is behind the live origin.
 - **gray→red** — the last run was inconclusive (`gray`); treated as red, never silently dropped.
+- **unproven** — `ev check --run` ran the counter-test and it did **not** flip (it agreed with the
+  bound check); the check is **vacuous** and proves nothing until the counter-test is fixed.
 - **silently-unbound** — a binding that is not in the selected set, so it can never be counted
   green — surfaced rather than ignored.
 
@@ -101,8 +103,9 @@ Under `--attest <p1,p2>` (the platforms **this runner speaks for**), a declared 
 runner does not attest is reported **exempt** (non-gating here) instead of not-run — so one
 runner never falsely fails another's platform.
 
-> The counter-test is **declared, not executed** in this version — `ev check` prints a note
-> saying so. A red/not-run/stale row is an invitation to re-decide, not a machine verdict.
+> `ev check --run` **executes** each counter-test to prove the binding can actually flip; a binding
+> whose counter-test does not flip is reported **unproven** (vacuous). A red/not-run/stale/unproven
+> row is an invitation to re-decide, not a machine verdict.
 
 ---
 

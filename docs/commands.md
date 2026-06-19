@@ -328,8 +328,9 @@ platform is attested (the cross-platform / audit default), so a platform with no
 `not-run`. `exempt`, like `n/a` and `green`, never trips `--exit-on-red`.
 
 **The flat verdict labels** (one per Test-bound ground; non-Test grounds never print):
-`green`, `red`, `gray->red`, `not-run`, `stale`, `silently-unbound`, `exempt`. Each is a fact;
-none outranks another. See [concepts.md](concepts.md) for the resurface precedence.
+`green`, `red`, `gray->red`, `not-run`, `stale`, `unproven`, `silently-unbound`, `exempt`. Each is
+a fact; none outranks another (`unproven` = `ev check --run` ran the counter-test and it did not
+flip — a vacuous check). See [concepts.md](concepts.md) for the resurface precedence.
 
 **Exit code:** `0` normally; `1` only under `--exit-on-red` when any ground is not green
 (`n/a` and `exempt` do not count), or when there is no store / the store cannot be read.
@@ -339,7 +340,7 @@ none outranks another. See [concepts.md](concepts.md) for the resurface preceden
 - per Test-bound ground (stdout, one row each): `<label>\t<file>\t<claim>\t(<detail>)` —
   `<claim>` is quoted (`{:?}`); `<detail>` is `missing: <platforms>` for `not-run`, the stale
   reason for `stale`, else `ran <ts>` or `no receipt`.
-- after the rows (stdout): `note: counter-tests are declared, not executed in 0.1.0 — falsifiability is author-declared, not machine-proven`
+- after the rows, only when `--run` was **not** passed (stdout): a note pointing the reader to run `ev check --run` to execute each counter-test and prove its falsifiability (under `--run` the verdict itself carries it — an `unproven` row — so no note prints)
 - no Test-bound grounds (stdout): `no test-bound grounds to check`
 - no store (stderr): `error: no .evolving/ store here — run \`ev init\` first`
 - store read error (stderr): `error: reading store: <io error>`
@@ -350,7 +351,7 @@ binding is `exempt` here, not `not-run`:
 ```sh
 ev check --attest mac
 # → exempt	<file>	"<claim>"	(no receipt)
-# → note: counter-tests are declared, not executed in 0.1.0 — falsifiability is author-declared, not machine-proven
+# → note: run `ev check --run` to execute each counter-test and prove its falsifiability
 
 ev check --run --platform linux-ci --exit-on-red
 ```

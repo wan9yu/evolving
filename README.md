@@ -24,14 +24,16 @@ published crate is still `0.0.1`, not yet tagged.
 **Shipped:** the full capture→resurface loop — recording decisions and their grounds
 (`ev decide`), binding a test or human re-check after the fact (`ev guard`), evaluating a
 bound check and resurfacing a decision when it goes red (`ev check [--run] [--exit-on-red]`,
-the flat six-state verdict), the **liveness meta-guard** (`ev check` flags a check that never
+the flat verdict states), the **liveness meta-guard** (`ev check` flags a check that never
 ran on a declared platform as not-run, with event-driven freshness and per-runner `--attest`
 scoping), naming the decision a check guards (`ev why`), reading a decision in full
 (`ev reopen` / `ev show`), browsing the ledger (`ev list` / `ev log`), and auditing the chain
-and its refusals (`ev verify`). `ev check --run` runs the bound check for you and records a receipt.
-
-**Still landing toward `0.1.0`:** the **authority tag** (marking a decision `user-ruled` vs
-`agent-disposable`, so a fresh agent sees it before re-deciding), then tagging the `0.1.0` release.
+and its refusals (`ev verify`). `ev check --run` runs the bound check for you, records a receipt,
+and runs its counter-test to prove the binding can actually flip — a check that cannot flip is
+reported `unproven`. The **authority tag** (`--authority user-ruled` / `agent-disposable`, surfaced
+by `ev brief` so a fresh agent reads a human's ruling before re-deciding) and seeding a decision from
+a commit (`ev decide --from-git`) are shipped too — the `0.1.0` slice is feature-complete; only the
+release cut and tag remain.
 
 ## Install
 

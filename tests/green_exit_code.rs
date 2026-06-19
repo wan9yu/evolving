@@ -52,7 +52,9 @@ fn repo_green_is_1() -> (std::path::PathBuf, String) {
     (p, head)
 }
 
-fn decide_bound(repo: &std::path::Path, cmd: &str, sha: &str) {
+// `counter` must produce the OPPOSITE result of `cmd` under this store's green_exit_code, or
+// `--run` reports the binding `unproven` (vacuous) rather than green/red.
+fn decide_bound(repo: &std::path::Path, cmd: &str, counter: &str, sha: &str) {
     let out = ev()
         .args([
             "decide",
@@ -62,7 +64,7 @@ fn decide_bound(repo: &std::path::Path, cmd: &str, sha: &str) {
             "--assume-test",
             cmd,
             "--counter-test",
-            "true",
+            counter,
             "--on-platform",
             "local",
             "--triggered-by",
@@ -86,9 +88,9 @@ fn decide_bound(repo: &std::path::Path, cmd: &str, sha: &str) {
 
 #[test]
 fn check_run_should_be_green_when_the_command_exits_the_configured_green_code() {
-    // given: green_exit_code = 1 and a ground bound to a command that exits 1
+    // given: green_exit_code = 1 and a ground bound to a command that exits 1 (counter exits 0 → flips)
     let (r, head) = repo_green_is_1();
-    decide_bound(&r, "false", &head);
+    decide_bound(&r, "false", "true", &head);
 
     // when: check --run runs the bound command
     let out = ev()
@@ -108,9 +110,9 @@ fn check_run_should_be_green_when_the_command_exits_the_configured_green_code() 
 
 #[test]
 fn check_run_should_be_red_when_the_command_exits_a_non_green_code() {
-    // given: green_exit_code = 1 and a ground bound to a command that exits 0
+    // given: green_exit_code = 1 and a ground bound to a command that exits 0 (counter exits 1 → flips)
     let (r, head) = repo_green_is_1();
-    decide_bound(&r, "true", &head);
+    decide_bound(&r, "true", "false", &head);
 
     // when: check --run runs the bound command
     let out = ev()

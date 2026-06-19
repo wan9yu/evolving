@@ -126,7 +126,7 @@ fn list_should_fail_when_there_is_no_store() {
 }
 
 #[test]
-fn check_should_note_that_counter_tests_are_declared_not_executed() {
+fn check_should_point_to_run_to_prove_falsifiability_when_not_run() {
     // given: a decision whose chosen ground is bound to a test (so check prints a row)
     let r = repo();
     let parent = decide(&r, "no Redis");
@@ -161,7 +161,7 @@ fn check_should_note_that_counter_tests_are_declared_not_executed() {
     // when: check runs
     let out = ev().arg("check").current_dir(&r).output().unwrap();
 
-    // then: it honestly notes the counter-test is declared, not executed
+    // then: it points the reader at --run to prove falsifiability (the counter-test runs there)
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("falsifiability is author-declared"));
+    assert!(stdout.contains("prove its falsifiability"));
 }

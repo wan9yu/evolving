@@ -7,7 +7,7 @@ fresh-actor-every-round system. The wording below is the *post-pressure-test* fo
 with the lessons folded in.
 
 ## 1. Facts, not verdicts
-ev surfaces flat, unscored facts (green / red / not-run / stale / gray→red / silently-unbound /
+ev surfaces flat, unscored facts (green / red / not-run / stale / gray→red / unproven / silently-unbound /
 exempt). Never a score, rank, or health number — precision past the real noise floor is a lie, and a
 score invites chasing the number instead of the action. **Necessary but not sufficient:** a flat fact
 list still rots if it has no discipline — cap the item count, lead each item with the action, and
@@ -42,7 +42,7 @@ content retracted — or the ledger becomes a permanent liability.
 
 ## 5. State the honesty boundary — and cover the painful half
 Say plainly what ev does not do (it does not prevent the mistake, does not fire on external-state
-drift, does not execute the counter-test, covers only the machine-bindable share). Stated limits earn
+drift, covers only the machine-bindable share). Stated limits earn
 trust **on one condition: the half ev covers must be the painful half.** "Only half" is dismissed if
 it is the easy half; it is adopted when the covered half (durable capture of the human-judged
 decisions that otherwise scroll away) is the one that actually hurts.

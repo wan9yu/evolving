@@ -95,12 +95,12 @@ ev reopen <id>                  # pull the full decision object (frozen vs curre
 ```
 
 `ev check` reports a flat, **unscored** set of facts — `green` / `red` / `gray->red` /
-`not-run` / `stale` / `silently-unbound` (and `exempt` under `--attest`) — each row naming
+`not-run` / `stale` / `unproven` / `silently-unbound` (and `exempt` under `--attest`) — each row naming
 the decision + ground. `--exit-on-red` makes any not-green a non-zero exit (a CI gate). Pass
 `--attest <p1,p2>` with the platforms **this runner speaks for**: a declared platform this
 runner does not attest is reported `exempt` (non-gating) here rather than `not-run`, so a
 single runner never falsely fails another runner's platform. As the curator, **surface any
-red / not-run / stale / silently-unbound to the human** — these are invitations to re-decide,
+red / not-run / stale / unproven / silently-unbound to the human** — these are invitations to re-decide,
 not verdicts the agent should silently act on.
 
 ## Work with the refusals, do not fight them
@@ -128,9 +128,10 @@ guarding it itself alive?* Respect these limits; do not over-claim them to the h
   instruction to the agent.
 - **Detect, not prevent.** `ev` surfaces a broken assumption; it does not block the change
   that broke it.
-- **The counter-test is declared, not executed** in this version. `ev check` prints a note
-  saying so. Do **not** trust a guard that has never been *shown* to flip red — author-declared
-  falsifiability is not machine-proven falsifiability.
+- **`ev check --run` executes the counter-test and proves falsifiability.** A binding whose
+  counter-test does **not** flip is reported `unproven` (vacuous) and gates under `--exit-on-red`
+  — do **not** trust a guard that has not been *shown* to flip. Without `--run` it is not re-proven,
+  so run it in CI.
 - **`ev` does not fire on external-state drift.** Its triggers are **git-recorded**: a bound
   check going red, or a commit touching a declared `triggered_by` path. A UI click, an
   org/config change, or an upstream-API behavior change that leaves **no git commit** will not

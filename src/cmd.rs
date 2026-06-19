@@ -299,7 +299,12 @@ pub fn check(
         for r in &rows {
             println!("{r}");
         }
-        println!("note: counter-tests are declared, not executed in 0.1.0 — falsifiability is author-declared, not machine-proven");
+        if !run {
+            // under --run the verdict itself carries falsifiability (an `unproven` row is a
+            // counter-test that did not flip); without it, point at the proof step rather than
+            // implying one already happened.
+            println!("note: run `ev check --run` to execute each counter-test and prove its falsifiability");
+        }
     }
     if exit_on_red && any_not_green {
         return ExitCode::FAILURE;

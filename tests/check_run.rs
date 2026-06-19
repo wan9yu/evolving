@@ -48,8 +48,10 @@ fn git_repo() -> (std::path::PathBuf, String) {
     (p, head)
 }
 
-// Decide a chosen ground bound to shell command `cmd` on platform "local", verified at `sha`.
-fn decide_bound(repo: &std::path::Path, cmd: &str, sha: &str) {
+// Decide a chosen ground bound to shell command `cmd` (with `counter` as its counter-test) on
+// platform "local", verified at `sha`. The counter-test must produce the OPPOSITE result of `cmd`
+// for the binding to be falsifiable — otherwise `--run` reports it `unproven`, not green/red.
+fn decide_bound(repo: &std::path::Path, cmd: &str, counter: &str, sha: &str) {
     let out = ev()
         .args([
             "decide",
@@ -59,7 +61,7 @@ fn decide_bound(repo: &std::path::Path, cmd: &str, sha: &str) {
             "--assume-test",
             cmd,
             "--counter-test",
-            "false",
+            counter,
             "--on-platform",
             "local",
             "--triggered-by",
@@ -83,9 +85,9 @@ fn decide_bound(repo: &std::path::Path, cmd: &str, sha: &str) {
 
 #[test]
 fn check_run_should_record_green_and_pass_when_the_bound_test_succeeds() {
-    // given: a git repo with a ground bound to a passing command
+    // given: a git repo with a ground bound to a passing command (counter-test flips → falsifiable)
     let (r, head) = git_repo();
-    decide_bound(&r, "true", &head);
+    decide_bound(&r, "true", "false", &head);
 
     // when: check --run --platform local runs the bound test and gates
     let out = ev()
@@ -105,9 +107,9 @@ fn check_run_should_record_green_and_pass_when_the_bound_test_succeeds() {
 
 #[test]
 fn check_run_should_record_red_and_gate_when_the_bound_test_fails() {
-    // given: a git repo with a ground bound to a failing command
+    // given: a git repo with a ground bound to a failing command (counter-test flips → falsifiable)
     let (r, head) = git_repo();
-    decide_bound(&r, "false", &head);
+    decide_bound(&r, "false", "true", &head);
 
     // when: check --run --platform local runs the bound test and gates
     let out = ev()
@@ -125,7 +127,7 @@ fn check_run_should_record_red_and_gate_when_the_bound_test_fails() {
 fn check_run_should_leave_other_platforms_not_run_when_only_local_is_run() {
     // given: a ground that declares platform "local" only, run on a different platform name
     let (r, head) = git_repo();
-    decide_bound(&r, "true", &head);
+    decide_bound(&r, "true", "false", &head);
 
     // when: check --run targets a platform the ground does not declare
     let out = ev()

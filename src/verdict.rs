@@ -2,8 +2,8 @@
 //! No I/O — receipts, the live-origin sha, and the selected-list are passed in. Facts,
 //! not verdicts: every not-green state is a co-equal fact, never ranked or scored.
 //!
-//! Precedence (first match wins): sha-stale → not-run → age-stale → gray→red → red →
-//! silently-unbound → green.
+//! Precedence (first match wins): sha-stale → not-run → age-stale → unproven → gray→red →
+//! red → silently-unbound → green.
 use crate::receipt::Receipt;
 use crate::selected::SelectedList;
 use crate::tick::{Check, Ground};
@@ -13,6 +13,7 @@ pub enum Verdict {
     Green,
     Red,
     GrayRed,
+    Unproven,
     NotRun { missing_platforms: Vec<String> },
     Stale { reason: String },
     SilentlyUnbound,
@@ -27,6 +28,7 @@ impl Verdict {
             Verdict::Green => "green",
             Verdict::Red => "red",
             Verdict::GrayRed => "gray->red",
+            Verdict::Unproven => "unproven",
             Verdict::NotRun { .. } => "not-run",
             Verdict::Stale { .. } => "stale",
             Verdict::SilentlyUnbound => "silently-unbound",
@@ -125,6 +127,12 @@ pub fn verdict_for(
         return Verdict::Stale {
             reason: "deciding receipt older than the staleness window".into(),
         };
+    }
+
+    // The check could not be shown to flip (its counter-test failed to produce the opposite) —
+    // its green/red reading is untrustworthy, so this overrides them.
+    if deciding.iter().any(|r| r.falsifiable == Some(false)) {
+        return Verdict::Unproven;
     }
 
     if deciding.iter().any(|r| r.result == "gray") {
@@ -429,5 +437,41 @@ mod tests {
             verdict_for(&g, &receipts, &ctx_attest(Some(&["linux-ci"])), false),
             Verdict::Green
         );
+    }
+
+    #[test]
+    fn verdict_for_should_be_unproven_when_a_deciding_receipt_is_not_falsifiable() {
+        // given: a single-platform binding whose green receipt failed its falsifiability proof
+        let g = test_ground(&["linux-ci"]);
+        let receipts = vec![Receipt {
+            test: "pytest x".into(),
+            platform: "linux-ci".into(),
+            commit: "d308afac1b2c3d4e5f60718293a4b5c6d7e8f901".into(),
+            ran_at: "2026-01-01T00:00:00Z".into(),
+            result: "green".into(),
+            falsifiable: Some(false),
+        }];
+        // when: its verdict is computed
+        let v = verdict_for(&g, &receipts, &ctx(None, None), false);
+        // then: it is unproven (the check can't be shown to flip), never shown green
+        assert_eq!(v, Verdict::Unproven);
+    }
+
+    #[test]
+    fn verdict_for_should_be_green_when_a_deciding_receipt_is_proven_falsifiable() {
+        // given: a green receipt that passed its falsifiability proof
+        let g = test_ground(&["linux-ci"]);
+        let receipts = vec![Receipt {
+            test: "pytest x".into(),
+            platform: "linux-ci".into(),
+            commit: "d308afac1b2c3d4e5f60718293a4b5c6d7e8f901".into(),
+            ran_at: "2026-01-01T00:00:00Z".into(),
+            result: "green".into(),
+            falsifiable: Some(true),
+        }];
+        // when: its verdict is computed
+        let v = verdict_for(&g, &receipts, &ctx(None, None), false);
+        // then: it is green (proven + passing)
+        assert_eq!(v, Verdict::Green);
     }
 }

@@ -48,7 +48,10 @@ footer, so nothing is silently hidden — run `ev list` for the full inventory.
 You record decisions, bind checks, and run the resurface gate.
 
 **Record a decision.** Each `--assume` opens a *chosen* ground; `--reject "<opt>: <why>"`
-records a road-not-taken. Flags after a ground attach to it. Set `--authority user-ruled`
+records a road-not-taken. Per-ground flags (`--revisit`, `--assume-test`, `--counter-test`,
+`--on-platform`, `--triggered-by`, `--surface`) attach to the ground they follow; the
+decision-global flags (`--observe`, `--blame`, `--authority`, `--verified-at-sha`,
+`--from-git`) may appear anywhere. Set `--authority user-ruled`
 when you are capturing a **human's** ruling (so a future fresh agent sees it via `ev brief`);
 use `--authority agent-disposable` for a working call an agent may later revise.
 
@@ -71,9 +74,11 @@ least one `--on-platform` / `--triggered-by` / `--surface`. A **human re-check**
 `--revisit "<when/where a person re-affirms it>"`.
 
 **Seed a decision that already lives in a commit** with `--from-git <commit>`: the decision
-text becomes the commit subject, the default `--blame` becomes the commit author, and any
-`Refs #<n>` body lines are carried into `observe` as provenance. The **grounds are still
-added by hand** (`--assume` / `--reject`) — they are never inferred from the diff or body:
+text becomes the commit subject; the default `--blame` is a leading `<Role>:` prefix on the
+subject (`Dev`/`QA`/`Product`/`Mac`/`User`) when present, else the commit author; and
+provenance from the subject's own `#<n>` / `R<n>` tokens plus any `Refs #<n>` body lines is
+carried into `observe`. The **grounds are still added by hand** (`--assume` / `--reject`) —
+they are never inferred from the diff or body:
 
 ```sh
 ev decide --from-git <commit> \
@@ -119,8 +124,13 @@ not verdicts the agent should silently act on.
   declined; they take no `--assume-test`.
 - **A test binding is never vacuous** — it needs a `--counter-test` and non-empty
   platform/trigger/surface.
-- **The system is never the subject of self-evolve language** — write "the team will
-  re-vet…", not "the system will self-improve…".
+
+And one item is a *warning*, not a hard refusal:
+
+- **Self-evolve language gets a best-effort warning (not a refusal)** — if a free-text field
+  makes *the system* the subject of self-evolve/self-improve language, `ev` prints a
+  non-blocking `warning:` and still records the tick (a re-wording evades it). Heed it anyway:
+  write "the team will re-vet…", not "the system will self-improve…".
 
 ## Honesty boundary — what `ev` does and does NOT promise
 

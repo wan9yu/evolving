@@ -7,7 +7,7 @@ fresh-actor-every-round system. The wording below is the *post-pressure-test* fo
 with the lessons folded in.
 
 ## 1. Facts, not verdicts
-ev surfaces flat, unscored facts (green / red / not-run / stale / gray→red / unproven / silently-unbound /
+ev surfaces flat, unscored facts (green / red / not-run / stale / gray->red / unproven / silently-unbound /
 exempt). Never a score, rank, or health number — precision past the real noise floor is a lie, and a
 score invites chasing the number instead of the action. **Necessary but not sufficient:** a flat fact
 list still rots if it has no discipline — cap the item count, lead each item with the action, and
@@ -31,14 +31,15 @@ that never produces a red; a philosophy that only fires "on a verified red, neve
 defenseless against exactly that — so the liveness meta-guard, which treats absence as red, is the
 heart of this tenet, not an exception to it.)
 
-## 4. Immutable chain — but hot/cold by read path, and retractable by tombstone
+## 4. Immutable chain — but hot/cold by read path, and retractable in principle
 A decision is never edited in place; a re-judgment is a new child; the chain is append-only and
 content-addressed. But immutability has a cost: records pushed into a cold, rarely-read archive
 **rot** (they go stale unnoticed — legible but dead). So split by read path: keep the live decisions
 on the **hot** path (what `brief`/`list` surface every round); let the chain be the **cold** archive.
 And immutability is a property of the *chain*, not a ban on retraction: regretted or sensitive content
-(e.g. anything that shouldn't live forever in history) must be **tombstone-able** — id preserved,
-content retracted — or the ledger becomes a permanent liability.
+(e.g. anything that shouldn't live forever in history) must become **tombstone-able** — id preserved,
+content retracted — or the ledger becomes a permanent liability. (0.1.0 does not yet implement
+tombstoning; this is a stated requirement for the chain, not a shipped capability.)
 
 ## 5. State the honesty boundary — and cover the painful half
 Say plainly what ev does not do (it does not prevent the mistake, does not fire on external-state

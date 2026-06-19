@@ -3,7 +3,7 @@
 This is the model in depth — deeper than the project README. It describes the on-disk Tick
 schema, the parts of a decision (Ground, Check), content-addressed identity and the frozen
 golden vectors, append-only immutability, the refusals `ev verify` enforces, and the
-honesty / trust boundary. Everything here is accurate to the `0.0.1` code; nothing is
+honesty / trust boundary. Everything here is accurate to the `0.1.0` code; nothing is
 overstated.
 
 For the commands that produce and read these records, see [commands.md](commands.md).
@@ -25,29 +25,41 @@ forging a new identity:
 
 - `id` — the content-addressed identifier (the hash output; see *Identity*).
 - `status` — the tick's status string (`"live"`).
-- `held_since` — a reserved timestamp slot (unused).
+- `held_since` — an RFC 3339 timestamp stamped when the tick is written (at `ev decide` /
+  `ev guard`). It is bookkeeping (excluded from the hash), so it never affects the `id`.
 - `blame` — the human author on the hook for this decision.
+- `authority` — an optional declared tag (`user-ruled` | `agent-disposable`), excluded from
+  the hash; written only when set, and surfaced by `show`/`list`/`brief`/`reopen`.
 
 On disk a tick is stored as pretty JSON containing the hashed payload keys **plus** the
-four bookkeeping keys at top level. `ev show` prints that file as-is. A minimal genesis
-tick on disk looks like:
+bookkeeping keys at top level (`id`, `status`, `held_since`, `blame`, and `authority` when
+set). `ev show` prints that file as-is. The genesis tick on disk looks like:
 
 ```json
 {
-  "decision": "d",
-  "observe": "o",
+  "decision": "freeze the retrieval schema for v2",
+  "observe": "evaluating retrieval backend",
   "grounds": [
-    { "claim": "c", "supports": "chosen", "check": { "by": "person", "ref": "Q3 review" } }
+    {
+      "claim": "team still wants a frozen schema",
+      "supports": "chosen",
+      "check": { "by": "person", "ref": "Q3 infra review" }
+    },
+    { "claim": "pgvector would lock our schema", "supports": "rejected:pgvector" }
   ],
   "parent_id": "",
   "id": "e2b337f53a1f",
   "status": "live",
-  "held_since": "",
+  "held_since": "<rfc3339-time>",
   "blame": "Wang Yu"
 }
 ```
 
-Because `blame`, `status`, and `held_since` sit outside the hash, blanking `blame` on disk
+This is the frozen `genesis` golden vector, so its `id` is genuinely `e2b337f53a1f` (the
+same id pinned in the *Identity* table below). The `held_since` is shown as a placeholder; the
+real one is an RFC3339 time stamped at write time.
+
+Because `blame`, `status`, `held_since`, and `authority` sit outside the hash, blanking `blame` on disk
 does **not** change the `id` — which is exactly why `ev verify` checks `blame` separately
 (R5).
 

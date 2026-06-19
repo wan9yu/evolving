@@ -3,7 +3,7 @@
 **English** | [中文](README.zh-CN.md)
 
 [![CI](https://github.com/wan9yu/evolving/actions/workflows/ci.yml/badge.svg)](https://github.com/wan9yu/evolving/actions/workflows/ci.yml)
-[![crates.io](https://img.shields.io/badge/crates.io-v0.0.1-orange)](https://crates.io/crates/evolving)
+[![crates.io](https://img.shields.io/crates/v/evolving.svg)](https://crates.io/crates/evolving)
 [![codecov](https://codecov.io/gh/wan9yu/evolving/branch/main/graph/badge.svg)](https://codecov.io/gh/wan9yu/evolving)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
@@ -16,10 +16,9 @@ guarding each reason is still alive.
 
 ## Status
 
-`0.0.1` — an early, honest cut on the way to the **`0.1.0` honest-resurface slice**. A
-single self-contained Rust binary, no network, no daemon; the store lives in a local
-`.evolving/` directory. The `0.1.0` slice is feature-complete in the source tree; the
-published crate is still `0.0.1`, not yet tagged.
+`0.1.0` — the **honest-resurface slice**. A single self-contained Rust binary, no network,
+no daemon; the store lives in a local `.evolving/` directory: the full capture → bind →
+resurface loop, content-addressed and append-only.
 
 **Shipped:** the full capture→resurface loop — recording decisions and their grounds
 (`ev decide`), binding a test or human re-check after the fact (`ev guard`), evaluating a
@@ -32,8 +31,7 @@ and its refusals (`ev verify`). `ev check --run` runs the bound check for you, r
 and runs its counter-test to prove the binding can actually flip — a check that cannot flip is
 reported `unproven`. The **authority tag** (`--authority user-ruled` / `agent-disposable`, surfaced
 by `ev brief` so a fresh agent reads a human's ruling before re-deciding) and seeding a decision from
-a commit (`ev decide --from-git`) are shipped too — the `0.1.0` slice is feature-complete; only the
-release cut and tag remain.
+a commit (`ev decide --from-git`) are shipped too.
 
 ## Install
 
@@ -132,8 +130,8 @@ ev reopen <id>
 ## The model
 
 - **Tick** — one decision in the chain. Its hashed payload is `{decision, observe,
-  grounds, parent_id}`; `id`, `status`, `held_since`, and `blame` are bookkeeping kept
-  outside the hash.
+  grounds, parent_id}`; `id`, `status`, `held_since`, `blame`, and `authority` are
+  bookkeeping kept outside the hash.
 - **Ground** — a reason a decision rests on. A ground is either **chosen** (a reason for
   the decision taken) or a **road-not-taken** (`rejected:<option>`, a reason an
   alternative was declined).

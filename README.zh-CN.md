@@ -3,7 +3,7 @@
 [English](README.md) | **中文**
 
 [![CI](https://github.com/wan9yu/evolving/actions/workflows/ci.yml/badge.svg)](https://github.com/wan9yu/evolving/actions/workflows/ci.yml)
-[![crates.io](https://img.shields.io/badge/crates.io-v0.0.1-orange)](https://crates.io/crates/evolving)
+[![crates.io](https://img.shields.io/crates/v/evolving.svg)](https://crates.io/crates/evolving)
 [![codecov](https://codecov.io/gh/wan9yu/evolving/branch/main/graph/badge.svg)](https://codecov.io/gh/wan9yu/evolving)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
@@ -11,9 +11,9 @@
 
 ## Status
 
-`0.0.1`——通往 **`0.1.0` honest-resurface slice** 路上的一个早期、诚实的切片。一个自包含的单一 Rust 二进制文件，无网络，无守护进程；存储位于本地的 `.evolving/` 目录中。`0.1.0` 切片在源码树中已 feature-complete；已发布的 crate 仍是 `0.0.1`，尚未打 tag。
+`0.1.0`——**honest-resurface slice**。一个自包含的单一 Rust 二进制文件，无网络，无守护进程；存储位于本地的 `.evolving/` 目录中：完整的 capture → bind → resurface 闭环，内容寻址、仅追加。
 
-**已交付：** 完整的 capture→resurface 闭环——记录决策及其根据（`ev decide`）、在事后绑定一个测试或人工复检（`ev guard`）、评估某个被绑定的检查并在它变红时让决策重新浮现（`ev check [--run] [--exit-on-red]`，扁平的裁定状态）、**存活性元守卫**（`ev check` 把某个从未在某声明平台运行过的检查标为 not-run，带事件驱动的新鲜度判定与按 runner 的 `--attest` 限定）、指出某个检查守护着哪个决策（`ev why`）、完整读取一个决策（`ev reopen` / `ev show`）、浏览账本（`ev list` / `ev log`），以及审计该链及其拒绝项（`ev verify`）。`ev check --run` 会替你运行被绑定的检查、记录一条 receipt，并运行其 counter-test 以证明该绑定确实能翻转——无法翻转的检查会被标为 `unproven`。**authority 标签**（`--authority user-ruled` / `agent-disposable`，由 `ev brief` 呈现，让 fresh agent 在重新决策前先读到人的裁定）以及从某个 commit 播种决策（`ev decide --from-git`）也都已交付——`0.1.0` 切片在源码树中已 feature-complete，只剩裁切并打 tag 发布这一步。
+**已交付：** 完整的 capture→resurface 闭环——记录决策及其根据（`ev decide`）、在事后绑定一个测试或人工复检（`ev guard`）、评估某个被绑定的检查并在它变红时让决策重新浮现（`ev check [--run] [--exit-on-red]`，扁平的裁定状态）、**存活性元守卫**（`ev check` 把某个从未在某声明平台运行过的检查标为 not-run，带事件驱动的新鲜度判定与按 runner 的 `--attest` 限定）、指出某个检查守护着哪个决策（`ev why`）、完整读取一个决策（`ev reopen` / `ev show`）、浏览账本（`ev list` / `ev log`），以及审计该链及其拒绝项（`ev verify`）。`ev check --run` 会替你运行被绑定的检查、记录一条 receipt，并运行其 counter-test 以证明该绑定确实能翻转——无法翻转的检查会被标为 `unproven`。**authority 标签**（`--authority user-ruled` / `agent-disposable`，由 `ev brief` 呈现，让 fresh agent 在重新决策前先读到人的裁定）以及从某个 commit 播种决策（`ev decide --from-git`）也都已交付。
 
 ## Install
 
@@ -98,7 +98,7 @@ ev reopen <id>
 
 ## The model
 
-- **Tick**——链中的一个决策。它被哈希的负载是 `{decision, observe, grounds, parent_id}`；`id`、`status`、`held_since` 与 `blame` 是保存在哈希之外的簿记信息。
+- **Tick**——链中的一个决策。它被哈希的负载是 `{decision, observe, grounds, parent_id}`；`id`、`status`、`held_since`、`blame` 与 `authority` 是保存在哈希之外的簿记信息。
 - **Ground**——一个决策所依据的理由。一条根据要么是**被选中的**（支持所采取决策的理由），要么是一条**未走的路**（`rejected:<option>`，即拒绝某个备选方案的理由）。
 - **Check**——随着时间推移、使一条被选中的根据保持诚实的东西。它要么是一个**Test**（一个测试选择器加上它的对照测试、使其保持存活的平台/触发器/表面，以及它上次通过时所在的 `verified_at_sha`），要么是一次人工的 **Person** 复检（对某人在何时/何地重新确认该根据的一个引用）。
 - **Identity**——`id = first 12 hex of SHA-256`，对 `{decision, observe, grounds, parent_id}` 的规范化 JSON 计算得出。

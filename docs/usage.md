@@ -40,10 +40,11 @@ a working call an agent may later revise.
 
 ## "Capture a decision that already lives in a commit"
 
-Seed the decision straight from a commit: its subject becomes the decision text, its author
-becomes the default `--blame`, and any `Refs #<n>` lines in the body are carried into the
-record as provenance. The **grounds are still yours to add** — they are never inferred from
-the diff:
+Seed the decision straight from a commit: its subject becomes the decision text. Blame defaults
+to a leading `<Role>:` subject prefix when present (the closed set Dev / QA / Product / Mac / User),
+else the commit author — and `--blame` overrides either. Provenance is carried into `observe`: the
+subject's own `#<n>` / `R<n>` tokens first, then any `Refs #<n>` lines in the body. The
+**grounds are still yours to add** — they are never inferred from the diff:
 
 ```sh
 ev decide --from-git <commit> \
@@ -98,7 +99,7 @@ Reading the flat verdict (each is a co-equal **fact**, never a rank or score):
 - **not-run** — the check has never run on a platform it declares; its liveness is unestablished.
 - **stale** — a triggering commit landed after the last run, the run is older than the
   staleness window, or the verified-at commit is behind the live origin.
-- **gray→red** — the last run was inconclusive (`gray`); treated as red, never silently dropped.
+- **gray->red** — the last run was inconclusive (`gray`); treated as red, never silently dropped.
 - **unproven** — `ev check --run` ran the counter-test and it did **not** flip (it agreed with the
   bound check); the check is **vacuous** and proves nothing until the counter-test is fixed.
 - **silently-unbound** — a binding that is not in the selected set, so it can never be counted

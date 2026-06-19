@@ -77,7 +77,7 @@ is a stream of trailing flags parsed **left-to-right** (see the grammar below).
 
 | Flag | Takes | Required | Effect |
 | --- | --- | --- | --- |
-| `--from-git` | a commit | no* | Seed the decision text (and default blame, and `Refs #<n>` provenance) from a commit instead of the positional argument. *Exactly one of `{positional decision, --from-git}` must be given.* |
+| `--from-git` | a commit | no* | Seed the decision text (and blame — the commit author, or a leading `Role:` subject prefix when present — and the subject's `#<n>` / `R<n>` plus body `Refs #<n>` provenance) from a commit instead of the positional argument. *Exactly one of `{positional decision, --from-git}` must be given.* |
 | `--authority` | `user-ruled` \| `agent-disposable` | no | A declared (non-hashed) authority tag, human-set, surfaced by `reopen` / `show` / `list` / `brief`. An out-of-vocabulary value is refused. |
 | `--observe` | a string | no | Sets the decision's `observe` field (the situation being observed). |
 | `--blame` | a name | no* | The author on the hook. *If omitted, falls back to `git config user.name`; one of the two must resolve to a non-empty name.* |
@@ -119,11 +119,12 @@ If a per-ground flag appears before any `--assume` / `--reject`, it is refused:
 argument — the thinking is already written in the commit, so it is not re-typed:
 
 - the **decision text** is the commit **subject** (`git show -s --format=%s <commit>`);
-- the default **blame** is the commit **author** (`%an`); an explicit `--blame` overrides it;
-- any `Refs #<n>` lines in the commit **body** are appended to `observe` as provenance.
+- the default **blame** is the commit **author** (`%an`) — *unless* the subject starts with a `Role:` prefix from the closed set {Dev, QA, Product, Mac, User} (case-insensitive), in which case the blame is that role; an explicit `--blame` overrides either;
+- provenance is appended to `observe`: any `#<n>` / `R<n>` tokens in the commit **subject**, then any `Refs #<n>` lines in the commit **body**.
 
-**Grounds are NEVER inferred from the commit.** The body is scanned only for `Refs #<n>`
-lines — never parsed for reasons. The chosen reasons and roads-not-taken stay human-authored:
+**Grounds are NEVER inferred from the commit.** The subject is scanned only for `#<n>` / `R<n>`
+provenance tokens and a leading `Role:` prefix; the body only for `Refs #<n>` lines — never parsed
+for reasons. The chosen reasons and roads-not-taken stay human-authored:
 add them by hand with `--assume` / `--reject` (and their bindings) exactly as for a positional
 decision. A `--from-git` decision with no `--assume` / `--reject` records just the subject and
 the provenance.
@@ -211,8 +212,9 @@ ev decide --from-git HEAD \
   --authority user-ruled \
   --assume "team still wants this posture" \
   --reject "the alternative: it would lock us in"
-# decision text = the commit subject; blame = the commit author (Refs #<n> body lines
-# are appended to observe); grounds stay hand-authored.
+# decision text = the commit subject; blame = a leading `Role:` subject prefix when present,
+# else the commit author; provenance into observe = the subject's `#<n>` / `R<n>` tokens then
+# the body `Refs #<n>` lines; grounds stay hand-authored.
 # → recorded <id> (2 ground(s))
 ```
 
@@ -257,7 +259,8 @@ ev guard "<selector>" <id> [<target>] \
 one, it is required — `more than one unbound ground — name the target (claim or index)`.
 A numeric target out of range → `ground index <i> out of range`; a claim that matches no
 ground → `no ground with claim "<t>"`; a claim that matches several →
-`ambiguous: multiple grounds with claim "<t>"`.
+`ambiguous: multiple grounds with claim "<t>"`. With **no** unbound ground and no `target`,
+it is refused — `no unbound ground to guard`.
 
 **The refusals it enforces:**
 
@@ -330,7 +333,7 @@ platform is attested (the cross-platform / audit default), so a platform with no
 **The flat verdict labels** (one per Test-bound ground; non-Test grounds never print):
 `green`, `red`, `gray->red`, `not-run`, `stale`, `unproven`, `silently-unbound`, `exempt`. Each is
 a fact; none outranks another (`unproven` = `ev check --run` ran the counter-test and it did not
-flip — a vacuous check). See [concepts.md](concepts.md) for the resurface precedence.
+flip — a vacuous check).
 
 **Exit code:** `0` normally; `1` only under `--exit-on-red` when any ground is not green
 (`n/a` and `exempt` do not count), or when there is no store / the store cannot be read.

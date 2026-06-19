@@ -39,6 +39,7 @@ pub fn run_check(
         commit,
         ran_at,
         result: result.to_string(),
+        falsifiable: None,
     })
 }
 

@@ -144,6 +144,7 @@ fn check_should_be_green_when_a_ship_image_receipt_attests_the_run() {
             commit: head.clone(),
             ran_at: "2099-01-01T00:00:00Z".into(),
             result: "green".into(),
+            falsifiable: None,
         },
     )
     .unwrap();
@@ -179,6 +180,7 @@ fn check_should_not_let_a_wrong_platform_receipt_satisfy_the_ship_image_platform
             commit: head.clone(),
             ran_at: "2099-01-01T00:00:00Z".into(),
             result: "green".into(),
+            falsifiable: None,
         },
     )
     .unwrap();
@@ -210,6 +212,7 @@ fn check_should_go_stale_when_a_triggering_change_lands_after_the_green_receipt(
             commit: head.clone(),
             ran_at: "2099-01-01T00:00:00Z".into(),
             result: "green".into(),
+            falsifiable: None,
         },
     )
     .unwrap();

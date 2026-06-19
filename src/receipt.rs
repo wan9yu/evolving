@@ -8,11 +8,12 @@ use std::io::Write;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Receipt {
-    pub test: String,     // == the bound check ref, byte-for-byte
-    pub platform: String, // one of the binding's liveness.platforms
-    pub commit: String,   // 40-hex sha
-    pub ran_at: String,   // RFC 3339 UTC
-    pub result: String,   // "green" | "red" | "gray"
+    pub test: String,              // == the bound check ref, byte-for-byte
+    pub platform: String,          // one of the binding's liveness.platforms
+    pub commit: String,            // 40-hex sha
+    pub ran_at: String,            // RFC 3339 UTC
+    pub result: String,            // "green" | "red" | "gray"
+    pub falsifiable: Option<bool>, // counter-test produced the opposite? set by --run; non-hashed
 }
 
 /// Stable, filesystem-safe key for a bound test's receipt log: first 12 hex of SHA-256(ref).
@@ -27,7 +28,14 @@ pub fn from_value(v: &Value) -> Result<Receipt, String> {
     let obj = v.as_object().ok_or("receipt is not an object")?;
     only_keys(
         obj,
-        &["test", "platform", "commit", "ran_at", "result"],
+        &[
+            "test",
+            "platform",
+            "commit",
+            "ran_at",
+            "result",
+            "falsifiable",
+        ],
         "receipt",
     )?;
     let result = req_str(obj, "result")?;
@@ -40,6 +48,7 @@ pub fn from_value(v: &Value) -> Result<Receipt, String> {
         commit: req_str(obj, "commit")?,
         ran_at: req_str(obj, "ran_at")?,
         result,
+        falsifiable: obj.get("falsifiable").and_then(|x| x.as_bool()),
     })
 }
 
@@ -50,6 +59,9 @@ fn to_line(r: &Receipt) -> String {
     m.insert("commit".into(), Value::String(r.commit.clone()));
     m.insert("ran_at".into(), Value::String(r.ran_at.clone()));
     m.insert("result".into(), Value::String(r.result.clone()));
+    if let Some(b) = r.falsifiable {
+        m.insert("falsifiable".into(), Value::Bool(b));
+    }
     serde_json::to_string(&Value::Object(m)).expect("serializable")
 }
 
@@ -118,7 +130,36 @@ mod tests {
             commit: "d308afac1b2c3d4e5f60718293a4b5c6d7e8f901".into(),
             ran_at: ran_at.into(),
             result: result.into(),
+            falsifiable: None,
         }
+    }
+
+    #[test]
+    fn from_value_should_round_trip_falsifiable_when_present() {
+        // given: a receipt line carrying falsifiable=false
+        let v = serde_json::json!({
+            "test": "pytest x", "platform": "linux-ci",
+            "commit": "d308afac1b2c3d4e5f60718293a4b5c6d7e8f901",
+            "ran_at": "2026-01-01T00:00:00Z", "result": "green", "falsifiable": false
+        });
+        // when: parsed
+        let r = from_value(&v).expect("valid");
+        // then: falsifiable is preserved
+        assert_eq!(r.falsifiable, Some(false));
+    }
+
+    #[test]
+    fn from_value_should_default_falsifiable_to_none_when_absent() {
+        // given: a receipt with no falsifiable field
+        let v = serde_json::json!({
+            "test": "pytest x", "platform": "linux-ci",
+            "commit": "d308afac1b2c3d4e5f60718293a4b5c6d7e8f901",
+            "ran_at": "2026-01-01T00:00:00Z", "result": "green"
+        });
+        // when: parsed
+        let r = from_value(&v).expect("valid");
+        // then: falsifiable is None (absent = not evaluated)
+        assert_eq!(r.falsifiable, None);
     }
 
     #[test]

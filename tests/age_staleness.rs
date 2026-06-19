@@ -74,6 +74,7 @@ fn check_should_flag_stale_and_gate_when_the_only_receipt_is_older_than_the_wind
             commit: "d308afac1b2c3d4e5f60718293a4b5c6d7e8f901".into(),
             ran_at: "2020-01-01T00:00:00Z".into(),
             result: "green".into(),
+            falsifiable: None,
         },
     )
     .unwrap();

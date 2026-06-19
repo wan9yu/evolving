@@ -65,6 +65,7 @@ fn green_receipt(repo: &std::path::Path) {
             commit: "d308afac1b2c3d4e5f60718293a4b5c6d7e8f901".into(),
             ran_at: "2026-01-01T00:00:00Z".into(),
             result: "green".into(),
+            falsifiable: None,
         },
     )
     .unwrap();

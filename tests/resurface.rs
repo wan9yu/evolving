@@ -68,6 +68,7 @@ fn rcpt(ran_at: &str, result: &str) -> Receipt {
         commit: "d308afac1b2c3d4e5f60718293a4b5c6d7e8f901".into(),
         ran_at: ran_at.into(),
         result: result.into(),
+        falsifiable: None,
     }
 }
 // Widen the staleness window so age-staleness never fires — isolates the green/red/gray axes

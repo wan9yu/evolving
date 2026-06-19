@@ -87,6 +87,7 @@ fn decide_and_green(repo: &std::path::Path) {
             commit: BOUND_SHA.into(),
             ran_at: "2099-01-01T00:00:00Z".into(), // far future so age-staleness never fires
             result: "green".into(),
+            falsifiable: None,
         },
     )
     .unwrap();

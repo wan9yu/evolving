@@ -179,6 +179,7 @@ mod tests {
             commit: "d308afac1b2c3d4e5f60718293a4b5c6d7e8f901".into(),
             ran_at: ran_at.into(),
             result: result.into(),
+            falsifiable: None,
         }
     }
     // A Ctx with age-staleness DISABLED (staleness_secs = i64::MAX), for the non-age tests.

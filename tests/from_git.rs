@@ -57,6 +57,42 @@ fn recorded_id(out: &std::process::Output) -> String {
         .to_string()
 }
 
+/// A fresh git repo whose single commit has the given subject (empty body) + an ev store.
+/// Returns (path, head_sha).
+fn git_repo_with_subject(subject: &str) -> (std::path::PathBuf, String) {
+    let p = repo_with_commit(subject, "");
+    let head = String::from_utf8_lossy(
+        &Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(&p)
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    (p, head)
+}
+
+/// `ev decide --from-git <commit> <extra args>`; returns the recorded tick id.
+fn decide_from_git(repo: &std::path::Path, commit: &str, extra: &[&str]) -> String {
+    let mut args = vec!["decide", "--from-git", commit];
+    args.extend_from_slice(extra);
+    let out = ev().args(&args).current_dir(repo).output().unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    recorded_id(&out)
+}
+
+/// The stored tick JSON for a recorded id.
+fn read_tick_json(repo: &std::path::Path, id: &str) -> serde_json::Value {
+    let raw = std::fs::read_to_string(repo.join(".evolving/ticks").join(id)).unwrap();
+    serde_json::from_str(&raw).unwrap()
+}
+
 #[test]
 fn decide_should_take_the_decision_from_the_commit_subject_when_from_git_is_used() {
     // given: a commit whose subject is the decision and whose body carries a Refs line
@@ -178,4 +214,17 @@ fn decide_should_fail_when_the_commit_cannot_be_read() {
 
     // then: it cannot read the commit and exits non-zero
     assert!(!out.status.success());
+}
+
+#[test]
+fn from_git_should_take_blame_from_a_role_prefix_when_the_subject_has_one() {
+    // given: a commit subject "Product: re-milestone #1194 R2415"
+    let (r, _head) = git_repo_with_subject("Product: re-milestone #1194 R2415");
+    // when: decide --from-git HEAD (no --blame)
+    let id = decide_from_git(&r, "HEAD", &["--assume", "x"]);
+    // then: blame is the role, and observe carries the #issue + round-id
+    let v = read_tick_json(&r, &id);
+    assert_eq!(v["blame"], "Product");
+    assert!(v["observe"].as_str().unwrap().contains("#1194"));
+    assert!(v["observe"].as_str().unwrap().contains("R2415"));
 }

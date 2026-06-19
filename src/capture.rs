@@ -101,6 +101,36 @@ struct Envelope {
     refs: Vec<String>,
 }
 
+/// The closed set of authoring roles a commit subject may declare, leading + `:`.
+const SUBJECT_ROLES: &[&str] = &["Dev", "QA", "Product", "Mac", "User"];
+
+/// The canonical role declared by a leading `<Role>:` prefix on the subject, if any
+/// (case-insensitive match against the closed vocabulary). The subject is otherwise untouched.
+fn subject_role(subject: &str) -> Option<&'static str> {
+    let head = subject.split_whitespace().next()?;
+    let word = head.strip_suffix(':')?;
+    SUBJECT_ROLES
+        .iter()
+        .find(|r| r.eq_ignore_ascii_case(word))
+        .copied()
+}
+
+/// Every `#<digits>` / `R<digits>` provenance token found in the subject, in order — the
+/// issue + round-id references a commit subject may carry (`re-milestone #1194 R2415`).
+fn subject_refs(subject: &str) -> Vec<String> {
+    subject
+        .split_whitespace()
+        .filter(|tok| {
+            let rest = tok
+                .strip_prefix('#')
+                .or_else(|| tok.strip_prefix('R'))
+                .or_else(|| tok.strip_prefix('r'));
+            matches!(rest, Some(d) if !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit()))
+        })
+        .map(|t| t.to_string())
+        .collect()
+}
+
 fn read_envelope(repo: &Path, commit: &str) -> Result<Envelope, String> {
     let subject = git_show(repo, "--format=%s", commit)?;
     let author = git_show(repo, "--format=%an", commit)?;
@@ -280,10 +310,17 @@ pub fn run(repo: &Path, decision: Option<&str>, args: &[String]) -> Result<Tick,
         (Some(d), None) => (d.to_string(), observe),
         (None, Some(commit)) => {
             let env = read_envelope(repo, commit)?;
+            // A leading `<Role>:` on the subject declares the author (unless --blame overrides);
+            // otherwise the default blame is the commit author. The subject is left untouched.
             if blame_override.is_none() {
-                blame_override = Some(env.author);
+                blame_override = Some(match subject_role(&env.subject) {
+                    Some(role) => role.to_string(),
+                    None => env.author,
+                });
             }
+            // Provenance from the subject's own #issue / R<round> tokens, plus body Refs lines.
             let observe = std::iter::once(observe)
+                .chain(subject_refs(&env.subject))
                 .chain(env.refs)
                 .filter(|s| !s.is_empty())
                 .collect::<Vec<_>>()

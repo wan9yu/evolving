@@ -228,6 +228,7 @@ pub fn run(repo: &Path, decision: Option<&str>, args: &[String]) -> Result<Tick,
     let mut sha_override: Option<String> = None;
     let mut authority: Option<String> = None;
     let mut jurisdiction: Option<String> = None;
+    let mut round_id: Option<String> = None;
     let mut from_git: Option<String> = None;
     let mut drafts: Vec<DraftGround> = Vec::new();
     let mut i = 0;
@@ -255,6 +256,14 @@ pub fn run(repo: &Path, decision: Option<&str>, args: &[String]) -> Result<Tick,
                 let v = need(args, i, &flag)?;
                 crate::tick::validate_jurisdiction(&v)?;
                 jurisdiction = Some(v);
+            }
+            "--round-id" => {
+                // a durable, non-hashed join/dedup key; non-empty-if-present, no other format constraint.
+                let v = need(args, i, &flag)?;
+                if v.is_empty() {
+                    return Err("--round-id needs a non-empty value".into());
+                }
+                round_id = Some(v);
             }
             "--reject" => {
                 let v = need(args, i, &flag)?;
@@ -371,6 +380,7 @@ pub fn run(repo: &Path, decision: Option<&str>, args: &[String]) -> Result<Tick,
         blame,
         authority,
         jurisdiction,
+        round_id,
     };
     t.id = compute_id(&t);
     store

@@ -218,6 +218,71 @@ fn decide_should_fail_when_the_authority_value_is_not_in_the_vocabulary() {
 }
 
 #[test]
+fn decide_should_record_the_round_id_when_one_is_declared() {
+    // given/when: a decision recorded with a durable round_id join/dedup key
+    let r = repo();
+    let out = run(
+        &r,
+        &[
+            "decide",
+            "freeze v1.8",
+            "--assume",
+            "team agreed",
+            "--revisit",
+            "Q3",
+            "--round-id",
+            "R2289",
+            "--blame",
+            "Wang Yu",
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let id = String::from_utf8_lossy(&out.stdout)
+        .split_whitespace()
+        .nth(1)
+        .unwrap()
+        .to_string();
+
+    // then: the on-disk tick carries round_id (and it is durable in the bookkeeping, not hashed)
+    let raw = std::fs::read_to_string(r.join(".evolving/ticks").join(&id)).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(v["round_id"], "R2289");
+    // and: list + reopen render the round_id so a fresh agent can join/dedup on it
+    let listed = run(&r, &["list"]);
+    assert!(String::from_utf8_lossy(&listed.stdout).contains("round_id=R2289"));
+    let re = run(&r, &["reopen", &id]);
+    assert!(String::from_utf8_lossy(&re.stdout).contains("round_id: R2289"));
+}
+
+#[test]
+fn decide_should_fail_when_the_round_id_is_empty() {
+    // given/when: a decision whose declared round_id is empty
+    let r = repo();
+    let out = run(
+        &r,
+        &[
+            "decide",
+            "x",
+            "--assume",
+            "y",
+            "--revisit",
+            "Q3",
+            "--round-id",
+            "",
+            "--blame",
+            "Wang Yu",
+        ],
+    );
+
+    // then: it is rejected (non-empty-if-present)
+    assert!(!out.status.success());
+}
+
+#[test]
 fn reopen_should_show_the_authority_tag_when_the_decision_is_user_ruled() {
     // given: a user-ruled decision
     let r = repo();

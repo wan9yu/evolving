@@ -15,6 +15,7 @@ fn book(parent: &str, observe: &str, decision: &str, grounds: Vec<Ground>) -> Ti
         blame: "Wang Yu".into(),
         authority: None,
         jurisdiction: None,
+        round_id: None,
     }
 }
 
@@ -45,6 +46,37 @@ fn compute_id_should_return_the_frozen_golden_id_when_given_the_genesis_tick() {
     let id = compute_id(&t);
 
     // then: it matches the frozen golden id
+    assert_eq!(id, "e2b337f53a1f");
+}
+
+#[test]
+fn compute_id_should_stay_frozen_when_round_id_is_set() {
+    // given: the genesis tick, but carrying a non-hashed round_id join/dedup key
+    let mut t = book(
+        "",
+        "evaluating retrieval backend",
+        "freeze the retrieval schema for v2",
+        vec![
+            Ground {
+                claim: "team still wants a frozen schema".into(),
+                supports: "chosen".into(),
+                check: Some(Check::Person {
+                    reference: "Q3 infra review".into(),
+                }),
+            },
+            Ground {
+                claim: "pgvector would lock our schema".into(),
+                supports: "rejected:pgvector".into(),
+                check: None,
+            },
+        ],
+    );
+    t.round_id = Some("R2289".into());
+
+    // when: its canonical id is computed
+    let id = compute_id(&t);
+
+    // then: it is unchanged from the genesis golden (round_id is not in the hashed payload)
     assert_eq!(id, "e2b337f53a1f");
 }
 

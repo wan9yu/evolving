@@ -61,6 +61,9 @@ pub fn show(repo: &Path, id: &str) -> ExitCode {
                 if let Some(j) = v.get("jurisdiction").and_then(|x| x.as_str()) {
                     println!("jurisdiction: {j}");
                 }
+                if let Some(r) = v.get("round_id").and_then(|x| x.as_str()) {
+                    println!("round_id: {r}");
+                }
             }
             ExitCode::SUCCESS
         }
@@ -387,7 +390,7 @@ pub fn list(repo: &Path) -> ExitCode {
         }
     };
     // One pre-rendered line per tick, keyed by id so the output is deterministic. The bookkeeping
-    // tags (authority, jurisdiction) are appended inline when present — same one-line shape as show.
+    // tags (authority, jurisdiction, round_id) are appended inline when present — same one-line shape as show.
     let mut rows: Vec<(String, String)> = files
         .iter()
         .map(|(name, raw)| {
@@ -399,6 +402,9 @@ pub fn list(repo: &Path) -> ExitCode {
                     }
                     if let Some(j) = &t.jurisdiction {
                         l.push_str(&format!("\tjurisdiction={j}"));
+                    }
+                    if let Some(r) = &t.round_id {
+                        l.push_str(&format!("\tround_id={r}"));
                     }
                     l
                 }
@@ -562,6 +568,9 @@ pub fn reopen(repo: &Path, id: &str) -> ExitCode {
     if let Some(j) = &tick.jurisdiction {
         println!("jurisdiction: {j}");
     }
+    if let Some(r) = &tick.round_id {
+        println!("round_id: {r}");
+    }
     for g in &tick.grounds {
         match &g.check {
             Some(Check::Test {
@@ -616,6 +625,7 @@ fn self_test_golden() -> ExitCode {
         blame: "Wang Yu".into(),
         authority: None,
         jurisdiction: None,
+        round_id: None,
     };
     let case1 = Tick {
         id: String::new(),
@@ -657,6 +667,7 @@ fn self_test_golden() -> ExitCode {
         blame: "Wang Yu".into(),
         authority: None,
         jurisdiction: None,
+        round_id: None,
     };
     // A harvested binding: case1's first ground with counter_test omitted (None). Pins that
     // omit-on-None keeps every harvested id byte-stable — moving it would mean the payload changed.

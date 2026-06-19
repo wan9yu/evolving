@@ -13,6 +13,7 @@ pub struct Tick {
     pub blame: String,                // bookkeeping
     pub authority: Option<String>,    // bookkeeping (declared, not hashed)
     pub jurisdiction: Option<String>, // bookkeeping (declared ∈ {A,B,C,D}, not hashed); C/D = detect-only
+    pub round_id: Option<String>,     // bookkeeping (declared join/dedup key, not hashed)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -58,6 +59,9 @@ pub fn full_value(t: &Tick) -> Value {
         }
         if let Some(j) = &t.jurisdiction {
             map.insert("jurisdiction".into(), Value::String(j.clone()));
+        }
+        if let Some(r) = &t.round_id {
+            map.insert("round_id".into(), Value::String(r.clone()));
         }
     }
     v
@@ -223,6 +227,7 @@ pub fn from_value(v: &Value) -> Result<Tick, String> {
             "blame",
             "authority",
             "jurisdiction",
+            "round_id",
         ],
         "tick",
     )?;
@@ -252,6 +257,17 @@ pub fn from_value(v: &Value) -> Result<Tick, String> {
             Some(j) => {
                 validate_jurisdiction(j)?; // out-of-vocab → Err
                 Some(j.to_string())
+            }
+        },
+        round_id: match obj.get("round_id") {
+            None => None,
+            Some(rv) => {
+                // non-empty-if-present; no other format constraint (a free-form join/dedup key).
+                let s = rv.as_str().ok_or("round_id present but not a string")?;
+                if s.is_empty() {
+                    return Err("round_id present but empty".into());
+                }
+                Some(s.to_string())
             }
         },
     })
@@ -420,6 +436,48 @@ mod tests {
 
         // then: jurisdiction is None (absent = no claim)
         assert_eq!(t.jurisdiction, None);
+    }
+
+    #[test]
+    fn from_value_should_round_trip_round_id_when_present() {
+        // given: a well-formed tick carrying a round_id join/dedup key
+        let mut v = genesis_full();
+        v.as_object_mut()
+            .unwrap()
+            .insert("round_id".into(), json!("R2289"));
+
+        // when: it is parsed
+        let t = from_value(&v).expect("valid");
+
+        // then: the round_id is preserved (durable, non-hashed)
+        assert_eq!(t.round_id.as_deref(), Some("R2289"));
+    }
+
+    #[test]
+    fn from_value_should_default_round_id_to_none_when_absent() {
+        // given: a tick with no round_id field (the existing genesis shape)
+        let v = genesis_full();
+
+        // when: it is parsed
+        let t = from_value(&v).expect("valid");
+
+        // then: round_id is None (absent = no claim)
+        assert_eq!(t.round_id, None);
+    }
+
+    #[test]
+    fn from_value_should_reject_an_empty_round_id_when_present() {
+        // given: a tick whose round_id is present but empty
+        let mut v = genesis_full();
+        v.as_object_mut()
+            .unwrap()
+            .insert("round_id".into(), json!(""));
+
+        // when: it is parsed
+        let result = from_value(&v);
+
+        // then: parsing fails (non-empty-if-present; no other format constraint)
+        assert!(result.is_err());
     }
 
     #[test]

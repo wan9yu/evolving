@@ -123,6 +123,7 @@ pub fn run(repo: &Path, a: GuardArgs) -> Result<Tick, String> {
         blame,
         authority: a.authority,
         jurisdiction: parent.jurisdiction.clone(), // a sibling tag of the decision; inherited by the child
+        round_id: parent.round_id.clone(), // the join/dedup key of the decision; inherited by the child
     };
     child.id = compute_id(&child);
     store

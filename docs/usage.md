@@ -58,11 +58,16 @@ ev decide --from-git <commit> \
 
 ## "What have we already decided / what's ruled?"
 
-Start with the rulings and the closed roads — a fast, no-network read:
+Start with the rulings and the closed roads — a fast, no-network read, newest first:
 
 ```sh
-ev brief        # the live, user-ruled decisions + the options each one rejected
+ev brief            # the live, user-ruled decisions + the options each one rejected
+ev brief --limit 5  # cap the count; --limit 0 shows all (default cap is brief_limit=10)
 ```
+
+`ev brief` orders **most-recent-first** and **caps** the output (default `brief_limit`=10
+from config; `--limit N` overrides; `--limit 0` shows all). When the cap drops decisions it
+prints a `… N more user-ruled decision(s) — \`ev list\` for all` footer, so nothing is hidden.
 
 See everything, not just the rulings, or pull one decision in full:
 

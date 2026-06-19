@@ -526,20 +526,30 @@ ev reopen 638c47b0c9dd
 
 ## `ev brief`
 
-**Synopsis:** the boot-read — print every **live** decision whose declared authority is
+**Synopsis:** the boot-read — print the **live** decisions whose declared authority is
 `user-ruled`, and the roads each of them rejected. A near-zero-cost, **0-network** read (the
 store only — no git, no receipts) for a fresh agent to load the decisions it must respect and
-the options it must not re-propose. Sorted by id (deterministic).
+the options it must not re-propose. Ordered **most-recent-first** and **capped**, with an
+honest remainder footer so nothing is silently hidden.
 
 ```
-ev brief
+ev brief [--limit N]
 ```
 
-**Flags:** none.
+**Flags:**
 
-**What it does:** reads every tick, keeps the **live**, `authority == "user-ruled"` ones, and
-for each prints the decision marked `[user-ruled]`, then one indented line per road-not-taken
-(each ground whose `supports` is `rejected:<option>`). Person re-checks and chosen grounds are
+| Flag | Value | Required | Meaning |
+| --- | --- | --- | --- |
+| `--limit` | non-negative integer | no | Cap the number of decisions shown. Overrides the config default `brief_limit` (which itself defaults to `10`). `--limit 0` shows **all** decisions (no cap, no footer). |
+
+**What it does:** reads every tick, keeps the **live**, `authority == "user-ruled"` ones,
+orders them **most-recent-first** (by `held_since`, tie-broken by id descending so output is
+deterministic), then caps to the effective limit. The effective limit is `--limit N` when
+given, else the config `brief_limit` (default `10`); a limit of `0` from either source means
+"show all". For each shown decision it prints the decision marked `[user-ruled]`, then one
+indented line per road-not-taken (each ground whose `supports` is `rejected:<option>`). When
+the cap drops decisions, a remainder footer is printed pointing at `ev list` (see below), so a
+capped brief never hides a ruling without saying so. Person re-checks and chosen grounds are
 not listed — `brief` is the *what was ruled and what was rejected* view, not the full reopen.
 A store with no user-ruled decisions says so. It never touches the network.
 
@@ -548,8 +558,11 @@ A store with no user-ruled decisions says so. It never touches the network.
 
 **Output (stdout / stderr):**
 
-- per user-ruled decision (stdout): `<decision>  [user-ruled]` (two spaces before the tag),
-  then one indented line per rejected road: `  rejected <option>: <claim>`.
+- per user-ruled decision (stdout, most-recent-first): `<decision>  [user-ruled]` (two spaces
+  before the tag), then one indented line per rejected road: `  rejected <option>: <claim>`.
+- remainder footer (stdout, only when the cap drops decisions): `… <N> more user-ruled
+  decision(s) — \`ev list\` for all` — where `<N>` is the number of user-ruled decisions beyond
+  the cap. Not printed when nothing is dropped (including `--limit 0`).
 - none (stdout): `no user-ruled decisions`
 - no store (stderr): `error: no .evolving/ store here — run \`ev init\` first`
 
@@ -559,6 +572,14 @@ A store with no user-ruled decisions says so. It never touches the network.
 ev brief
 # → restore-safety counter DB-backed; reject Redis  [user-ruled]
 # →   rejected Redis: a new infra dependency
+
+ev brief --limit 2
+# → <newest user-ruled decision>  [user-ruled]
+# →   rejected …
+# → <second-newest user-ruled decision>  [user-ruled]
+# → … 3 more user-ruled decision(s) — `ev list` for all
+
+ev brief --limit 0   # show every user-ruled decision, no cap, no footer
 ```
 
 ---

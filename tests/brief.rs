@@ -101,6 +101,77 @@ fn brief_should_accept_a_limit_flag_when_one_is_passed() {
 }
 
 #[test]
+fn brief_should_order_user_ruled_decisions_most_recent_first_when_multiple_exist() {
+    // given: two user-ruled decisions recorded in order — A first, then B (B is later)
+    let r = repo();
+    decide(&r, "decision A", &["--authority", "user-ruled"]);
+    decide(&r, "decision B", &["--authority", "user-ruled"]);
+
+    // when: ev brief runs
+    let out = ev().arg("brief").current_dir(&r).output().unwrap();
+
+    // then: B's text appears before A's (most-recent-first by held_since)
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let b = stdout.find("decision B").expect("B shown");
+    let a = stdout.find("decision A").expect("A shown");
+    assert!(b < a, "B should appear before A:\n{stdout}");
+}
+
+#[test]
+fn brief_should_cap_and_note_the_remainder_when_over_the_limit() {
+    // given: three user-ruled decisions
+    let r = repo();
+    decide(&r, "decision one", &["--authority", "user-ruled"]);
+    decide(&r, "decision two", &["--authority", "user-ruled"]);
+    decide(&r, "decision three", &["--authority", "user-ruled"]);
+
+    // when: ev brief runs with --limit 2
+    let out = ev()
+        .args(["brief", "--limit", "2"])
+        .current_dir(&r)
+        .output()
+        .unwrap();
+
+    // then: exactly two decisions show plus a remainder footer pointing at `ev list`
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let shown = ["decision one", "decision two", "decision three"]
+        .iter()
+        .filter(|d| stdout.contains(**d))
+        .count();
+    assert_eq!(shown, 2, "exactly two decisions shown:\n{stdout}");
+    assert!(stdout.contains("1 more"), "remainder count:\n{stdout}");
+    assert!(stdout.contains("ev list"), "points at ev list:\n{stdout}");
+}
+
+#[test]
+fn brief_should_show_all_when_limit_is_zero() {
+    // given: three user-ruled decisions
+    let r = repo();
+    decide(&r, "decision one", &["--authority", "user-ruled"]);
+    decide(&r, "decision two", &["--authority", "user-ruled"]);
+    decide(&r, "decision three", &["--authority", "user-ruled"]);
+
+    // when: ev brief runs with --limit 0
+    let out = ev()
+        .args(["brief", "--limit", "0"])
+        .current_dir(&r)
+        .output()
+        .unwrap();
+
+    // then: all three show and there is no remainder footer
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let shown = ["decision one", "decision two", "decision three"]
+        .iter()
+        .filter(|d| stdout.contains(**d))
+        .count();
+    assert_eq!(shown, 3, "all three shown:\n{stdout}");
+    assert!(!stdout.contains("more user-ruled"), "no footer:\n{stdout}");
+}
+
+#[test]
 fn brief_should_fail_when_there_is_no_store() {
     // given: a bare directory with no .evolving store
     let p = std::env::temp_dir().join(format!("ev-brief-nostore-{}", std::process::id()));

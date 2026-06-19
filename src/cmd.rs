@@ -390,9 +390,9 @@ pub fn list(repo: &Path) -> ExitCode {
 
 /// Boot-read: the live user-ruled decisions and the roads they rejected. A near-zero-cost,
 /// 0-network read (read_all only; no git, no receipts) for a fresh agent to load the
-/// decisions it must respect and the options it must not re-propose. Sorted by id.
-pub fn brief(repo: &Path, _limit: Option<usize>) -> ExitCode {
-    // TODO(task 4): apply the cap (param overrides config brief_limit; 0 = show all).
+/// decisions it must respect and the options it must not re-propose. Ordered most-recent-first
+/// (by held_since), capped to the effective limit, with an honest remainder footer.
+pub fn brief(repo: &Path, limit: Option<usize>) -> ExitCode {
     let store = Store::at(repo);
     if !store.exists() {
         eprintln!("error: no .evolving/ store here — run `ev init` first");
@@ -405,16 +405,23 @@ pub fn brief(repo: &Path, _limit: Option<usize>) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    // The flag overrides config; 0 (here or in config) means "show all".
+    let limit = limit.unwrap_or(crate::config::read(&store).brief_limit);
     // Keep only live, user-ruled decisions; carry the id so output is deterministic.
     let mut kept: Vec<(String, Tick)> = files
         .iter()
         .filter_map(|(name, raw)| crate::tick::from_value(raw).ok().map(|t| (name.clone(), t)))
         .filter(|(_, t)| t.status == "live" && t.authority.as_deref() == Some("user-ruled"))
         .collect();
-    kept.sort_by(|a, b| a.0.cmp(&b.0));
+    // Most-recent-first by held_since; tie-break by id descending so output is deterministic.
+    kept.sort_by(|a, b| b.1.held_since.cmp(&a.1.held_since).then(b.0.cmp(&a.0)));
     if kept.is_empty() {
         println!("no user-ruled decisions");
         return ExitCode::SUCCESS;
+    }
+    let total = kept.len();
+    if limit > 0 {
+        kept.truncate(limit);
     }
     for (_id, t) in &kept {
         println!("{}  [user-ruled]", t.decision);
@@ -423,6 +430,12 @@ pub fn brief(repo: &Path, _limit: Option<usize>) -> ExitCode {
                 println!("  rejected {option}: {}", g.claim);
             }
         }
+    }
+    if total > kept.len() {
+        println!(
+            "… {} more user-ruled decision(s) — `ev list` for all",
+            total - kept.len()
+        );
     }
     ExitCode::SUCCESS
 }

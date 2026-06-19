@@ -75,6 +75,35 @@ fn structured_rejected_roads(block: &str) -> Vec<Ground> {
     out
 }
 
+/// Build one MigrationRecord from a parsed (key, decision) header + its block body: observe carries the
+/// source_key as durable provenance, grounds are the structurally-declared rejected-roads only (never
+/// synthesized), blame is left for the backfill's `--blame` fallback. Shared by all three block extractors.
+fn flush_record(header: &Option<(String, String)>, body: &str, out: &mut Vec<MigrationRecord>) {
+    if let Some((key, decision)) = header {
+        out.push(MigrationRecord {
+            source_key: key.clone(),
+            decision: decision.clone(),
+            observe: key.clone(),
+            blame: None,
+            grounds: structured_rejected_roads(body),
+        });
+    }
+}
+
+/// The store-side durable key for a tick: its `round_id` if present, else the first round/`#<n>` token
+/// in the hashed `observe` — never the non-hashed events log. Shared by the idempotency index + reconcile,
+/// so the two never disagree on key precedence.
+fn store_key(raw: &serde_json::Value) -> Option<String> {
+    raw.get("round_id")
+        .and_then(|x| x.as_str())
+        .map(|s| s.to_string())
+        .or_else(|| {
+            raw.get("observe")
+                .and_then(|x| x.as_str())
+                .and_then(first_round_or_issue_token)
+        })
+}
+
 /// Extractor 1 — **gitlog / chat-room**: each `## R<N> …` header is one decision; the header text
 /// after the round token (and an optional `— ` em-dash separator) is the decision; any structurally
 /// declared rejected-road line in that record's body becomes a ground. The `R<N>`/`#<n>` token is the
@@ -83,20 +112,9 @@ pub fn extract_gitlog(text: &str) -> Vec<MigrationRecord> {
     let mut records = Vec::new();
     let mut header: Option<(String, String)> = None; // (source_key, decision)
     let mut body = String::new();
-    let flush = |header: &Option<(String, String)>, body: &str, out: &mut Vec<MigrationRecord>| {
-        if let Some((key, decision)) = header {
-            out.push(MigrationRecord {
-                source_key: key.clone(),
-                decision: decision.clone(),
-                observe: key.clone(),
-                blame: None,
-                grounds: structured_rejected_roads(body),
-            });
-        }
-    };
     for line in text.lines() {
         if let Some(rest) = line.strip_prefix("## ") {
-            flush(&header, &body, &mut records);
+            flush_record(&header, &body, &mut records);
             body.clear();
             let key = first_round_or_issue_token(rest);
             // The decision text is the header with the leading round token stripped + em-dash trimmed.
@@ -125,7 +143,7 @@ pub fn extract_gitlog(text: &str) -> Vec<MigrationRecord> {
             body.push('\n');
         }
     }
-    flush(&header, &body, &mut records);
+    flush_record(&header, &body, &mut records);
     records
 }
 
@@ -139,24 +157,13 @@ fn read_resolved_flag_blocks(text: &str) -> Vec<MigrationRecord> {
     let mut records = Vec::new();
     let mut header: Option<(String, String)> = None;
     let mut body = String::new();
-    let flush = |header: &Option<(String, String)>, body: &str, out: &mut Vec<MigrationRecord>| {
-        if let Some((key, decision)) = header {
-            out.push(MigrationRecord {
-                source_key: key.clone(),
-                decision: decision.clone(),
-                observe: key.clone(),
-                blame: None,
-                grounds: structured_rejected_roads(body),
-            });
-        }
-    };
     for line in text.lines() {
         let stripped = line
             .trim_start_matches(['#', ' '])
             .strip_prefix("RESOLVED")
             .or_else(|| line.trim_start_matches(['#', ' ']).strip_prefix("FLAG"));
         if let Some(rest) = stripped {
-            flush(&header, &body, &mut records);
+            flush_record(&header, &body, &mut records);
             body.clear();
             let rest = rest.trim();
             // `<key>: <decision>` — the key is the leading token before the first colon.
@@ -174,7 +181,7 @@ fn read_resolved_flag_blocks(text: &str) -> Vec<MigrationRecord> {
             body.push('\n');
         }
     }
-    flush(&header, &body, &mut records);
+    flush_record(&header, &body, &mut records);
     records
 }
 
@@ -196,17 +203,6 @@ pub fn extract_decisions_immutable(text: &str) -> Vec<MigrationRecord> {
     let mut records = Vec::new();
     let mut header: Option<(String, String)> = None;
     let mut body = String::new();
-    let flush = |header: &Option<(String, String)>, body: &str, out: &mut Vec<MigrationRecord>| {
-        if let Some((key, decision)) = header {
-            out.push(MigrationRecord {
-                source_key: key.clone(),
-                decision: decision.clone(),
-                observe: key.clone(),
-                blame: None,
-                grounds: structured_rejected_roads(body),
-            });
-        }
-    };
     for line in text.lines() {
         if let Some(rest) = line.strip_prefix("## ") {
             // A numbered section header: `## 3. <decision>` or `## §3 <decision>`.
@@ -217,7 +213,7 @@ pub fn extract_decisions_immutable(text: &str) -> Vec<MigrationRecord> {
                 .take_while(|c| c.is_ascii_digit())
                 .collect();
             if !digits.is_empty() {
-                flush(&header, &body, &mut records);
+                flush_record(&header, &body, &mut records);
                 body.clear();
                 let decision = rest
                     .trim_start_matches('§')
@@ -232,7 +228,7 @@ pub fn extract_decisions_immutable(text: &str) -> Vec<MigrationRecord> {
         body.push_str(line);
         body.push('\n');
     }
-    flush(&header, &body, &mut records);
+    flush_record(&header, &body, &mut records);
     records
 }
 
@@ -259,15 +255,7 @@ fn store_key_index(
         .map_err(|e| format!("reading store: {e}"))?;
     let mut idx = std::collections::HashMap::new();
     for (name, raw) in &files {
-        let key = raw
-            .get("round_id")
-            .and_then(|x| x.as_str())
-            .map(|s| s.to_string())
-            .or_else(|| {
-                raw.get("observe")
-                    .and_then(|x| x.as_str())
-                    .and_then(first_round_or_issue_token)
-            });
+        let key = store_key(raw);
         let parent = raw
             .get("parent_id")
             .and_then(|x| x.as_str())
@@ -344,23 +332,24 @@ pub fn backfill(
                 continue;
             }
         };
-        // The id this record WOULD take at the prospective parent (used to advance the chain).
-        let probe = Tick {
-            id: String::new(),
-            parent_id: prospective_parent.clone(),
-            observe: r.observe.clone(),
-            decision: r.decision.clone(),
-            grounds: r.grounds.clone(),
-            status: "live".into(),
-            held_since: String::new(),
-            blame: blame.clone(),
-            authority: None,
-            jurisdiction: None,
-            round_id: Some(r.source_key.clone()),
-        };
-        let id = compute_id(&probe);
         if dry_run {
-            prospective_parent = id;
+            // The id this record WOULD take at the prospective parent (no write). held_since is
+            // non-hashed, so this matches the id `append` computes on a real run — only the real
+            // path needs a write, so the probe lives here, not on the hot import path.
+            let probe = Tick {
+                id: String::new(),
+                parent_id: prospective_parent.clone(),
+                observe: r.observe.clone(),
+                decision: r.decision.clone(),
+                grounds: r.grounds.clone(),
+                status: "live".into(),
+                held_since: String::new(),
+                blame: blame.clone(),
+                authority: None,
+                jurisdiction: None,
+                round_id: Some(r.source_key.clone()),
+            };
+            prospective_parent = compute_id(&probe);
             summary.imported += 1;
             continue;
         }
@@ -414,15 +403,7 @@ pub fn reconcile(
     let mut store_keys: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut un_keyable = 0usize;
     for (_name, raw) in &files {
-        let key = raw
-            .get("round_id")
-            .and_then(|x| x.as_str())
-            .map(|s| s.to_string())
-            .or_else(|| {
-                raw.get("observe")
-                    .and_then(|x| x.as_str())
-                    .and_then(first_round_or_issue_token)
-            });
+        let key = store_key(raw);
         match key {
             Some(k) => {
                 store_keys.insert(k);

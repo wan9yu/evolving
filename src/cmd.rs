@@ -560,7 +560,7 @@ pub fn list(repo: &Path) -> ExitCode {
     };
     // One pre-rendered line per tick, keyed by id so the output is deterministic. The bookkeeping
     // tags (authority, jurisdiction, round_id) are appended inline when present — same one-line shape as show.
-    let mut rows: Vec<(String, String)> = files
+    let mut rows: Vec<String> = files
         .iter()
         .map(|(name, raw)| {
             let line = match crate::tick::from_value(raw) {
@@ -579,7 +579,7 @@ pub fn list(repo: &Path) -> ExitCode {
                 }
                 Err(_) => format!("{name}\t?\t\"<unparseable>\""),
             };
-            (name.clone(), line)
+            line
         })
         .collect();
     rows.sort();
@@ -587,7 +587,7 @@ pub fn list(repo: &Path) -> ExitCode {
         println!("no decisions yet");
         return ExitCode::SUCCESS;
     }
-    for (_id, line) in &rows {
+    for line in &rows {
         println!("{line}");
     }
     ExitCode::SUCCESS

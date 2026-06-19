@@ -15,6 +15,9 @@ the source tree), see the **Status** section of the [project README](../README.m
 - **[concepts.md](concepts.md)** — the model in depth: the Tick schema, Grounds, Checks,
   content-addressed identity and the frozen golden vectors, append-only immutability, the
   refusals `ev verify` enforces, and the honesty / trust boundary.
+- **[philosophy.md](philosophy.md)** — the design principles behind `ev`: the nine tenets
+  explaining why it makes the choices it does (facts not verdicts, detect not prevent, boot-path
+  or dark code).
 
 ## Usage
 

@@ -184,6 +184,8 @@ Usage docs live in [`docs/`](docs/):
 - [`docs/concepts.md`](docs/concepts.md) — the model in depth: the Tick schema, Grounds,
   Checks, content-addressed identity, append-only immutability, and the refusals
   `ev verify` enforces.
+- [`docs/philosophy.md`](docs/philosophy.md) — the design philosophy: the nine tenets behind
+  `ev`, and why it makes the choices it does.
 
 **Using `ev` from an AI agent?** [`skills/ev/SKILL.md`](skills/ev/SKILL.md) is a
 tool-agnostic agent skill — drop it into your agent's skills directory so it uses `ev`

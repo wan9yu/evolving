@@ -2,6 +2,7 @@ pub mod canonical;
 pub mod capture;
 pub mod cmd;
 pub mod config;
+pub mod events;
 pub mod guard;
 pub mod lint;
 pub mod liveness;

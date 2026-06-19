@@ -82,6 +82,7 @@ pub fn decide(repo: &Path, decision: Option<&str>, args: &[String]) -> ExitCode 
     };
     match crate::capture::run(repo, decision, &args) {
         Ok(t) => {
+            crate::events::append(&Store::at(repo), "decide", Some(&t.id), None);
             println!("recorded {} ({} ground(s))", t.id, t.grounds.len());
             ExitCode::SUCCESS
         }
@@ -95,6 +96,7 @@ pub fn decide(repo: &Path, decision: Option<&str>, args: &[String]) -> ExitCode 
 pub fn guard(repo: &Path, a: crate::guard::GuardArgs) -> ExitCode {
     match crate::guard::run(repo, a) {
         Ok(t) => {
+            crate::events::append(&Store::at(repo), "guard", Some(&t.id), None);
             println!("bound; wrote child {}", t.id);
             ExitCode::SUCCESS
         }
@@ -277,6 +279,7 @@ pub fn check(
                     v.label(),
                     g.claim
                 ));
+                crate::events::append(&store, "check", Some(&t.id), Some(v.label()));
             }
             verdicts.push((g, v));
         }
@@ -476,6 +479,7 @@ pub fn reopen(repo: &Path, id: &str) -> ExitCode {
     let live_origin = crate::staleness::resolve(repo, &store, &config.staleness_ref, true);
     let ctx = live_ctx(&store, config.staleness_days, live_origin, None);
 
+    crate::events::append(&store, "reopen", Some(id), None);
     println!("decision {}: {:?}", tick.id, tick.decision);
     if !tick.observe.is_empty() {
         println!("observe: {:?}", tick.observe);

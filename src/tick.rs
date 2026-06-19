@@ -27,9 +27,9 @@ pub enum Check {
         reference: String,
     }, // by=person, ref=note
     Test {
-        reference: String,       // by=test, ref=selector
-        verified_at_sha: String, // 40 lowercase hex
-        counter_test: String,
+        reference: String,            // by=test, ref=selector
+        verified_at_sha: String,      // 40 lowercase hex
+        counter_test: Option<String>, // None = harvested (falsifiability not yet proven)
         liveness: Liveness,
     },
 }
@@ -133,7 +133,18 @@ fn check_from_value(v: &Value) -> Result<Check, String> {
                     "verified_at_sha must be 40 lowercase hex: {verified_at_sha}"
                 ));
             }
-            let counter_test = req_str(obj, "counter_test")?;
+            // counter_test is optional: absent = a harvested binding. When present it MUST be a
+            // non-empty string (req_str accepts "", so guard non-emptiness explicitly here).
+            let counter_test = match obj.get("counter_test") {
+                None => None,
+                Some(cv) => {
+                    let s = cv.as_str().ok_or("counter_test present but not a string")?;
+                    if s.is_empty() {
+                        return Err("counter_test present but empty".into());
+                    }
+                    Some(s.to_string())
+                }
+            };
             let lv = obj
                 .get("liveness")
                 .and_then(|x| x.as_object())
@@ -321,6 +332,44 @@ mod tests {
 
         // then: parsing fails
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn from_value_should_reject_an_empty_counter_test_when_present() {
+        // given: a tick with a test check whose counter_test is present but empty
+        let mut v = genesis_full();
+        v["grounds"][0]["check"] = json!({
+            "by": "test", "ref": "r", "verified_at_sha": "d308afac1b2c3d4e5f60718293a4b5c6d7e8f901", "counter_test": "",
+            "liveness": { "platforms": ["p"], "triggered_by": ["t"], "surfaces": ["s"] }
+        });
+
+        // when: it is parsed through from_value
+        let result = from_value(&v);
+
+        // then: parsing fails (non-empty-if-present; req_str would have accepted "")
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn from_value_should_round_trip_a_harvested_test_check_when_counter_test_is_absent() {
+        // given: a tick with a test check that omits counter_test (a harvested binding)
+        let mut v = genesis_full();
+        v["grounds"][0]["check"] = json!({
+            "by": "test", "ref": "r", "verified_at_sha": "d308afac1b2c3d4e5f60718293a4b5c6d7e8f901",
+            "liveness": { "platforms": ["p"], "triggered_by": ["t"], "surfaces": ["s"] }
+        });
+
+        // when: it is parsed through from_value
+        let t = from_value(&v).expect("valid");
+
+        // then: the test check parses with counter_test None
+        assert!(matches!(
+            &t.grounds[0].check,
+            Some(Check::Test {
+                counter_test: None,
+                ..
+            })
+        ));
     }
 
     #[test]

@@ -207,14 +207,18 @@ pub fn check(
                             config.green_exit_code,
                         ) {
                             Ok(mut rc) => {
-                                // prove falsifiability: the counter-test must produce the OPPOSITE result
-                                if let Ok(ct) = crate::runner::run_check(
-                                    repo,
-                                    counter_test,
-                                    platform,
-                                    config.green_exit_code,
-                                ) {
-                                    rc.falsifiable = Some(rc.result != ct.result);
+                                // prove falsifiability: the counter-test must produce the OPPOSITE
+                                // result. A harvested binding (counter_test None) skips this step,
+                                // leaving falsifiable None — the existing default.
+                                if let Some(counter_test) = counter_test {
+                                    if let Ok(ct) = crate::runner::run_check(
+                                        repo,
+                                        counter_test,
+                                        platform,
+                                        config.green_exit_code,
+                                    ) {
+                                        rc.falsifiable = Some(rc.result != ct.result);
+                                    }
                                 }
                                 if let Err(e) = crate::receipt::append(&store, &rc) {
                                     eprintln!(
@@ -595,8 +599,9 @@ fn self_test_golden() -> ExitCode {
                 check: Some(Check::Test {
                     reference: "pytest tests/test_redis_absent.py".into(),
                     verified_at_sha: "d308afac1b2c3d4e5f60718293a4b5c6d7e8f901".into(),
-                    counter_test:
+                    counter_test: Some(
                         "pytest tests/test_redis_absent.py::test_redis_injection_flips_red".into(),
+                    ),
                     liveness: Liveness {
                         platforms: vec!["linux-ci".into()],
                         triggered_by: vec!["pyproject.toml".into()],
@@ -622,10 +627,17 @@ fn self_test_golden() -> ExitCode {
         blame: "Wang Yu".into(),
         authority: None,
     };
+    // A harvested binding: case1's first ground with counter_test omitted (None). Pins that
+    // omit-on-None keeps every harvested id byte-stable — moving it would mean the payload changed.
+    let mut harvested = case1.clone();
+    if let Some(Check::Test { counter_test, .. }) = &mut harvested.grounds[0].check {
+        *counter_test = None;
+    }
     let mut ok = true;
     for (name, t, want) in [
         ("genesis", &genesis, "e2b337f53a1f"),
         ("case1", &case1, "638c47b0c9dd"),
+        ("harvested", &harvested, "0cf784b51331"),
     ] {
         let got = compute_id(t);
         let pass = got == want;

@@ -22,17 +22,31 @@ fn check_value(c: &Check) -> Value {
             verified_at_sha,
             counter_test,
             liveness,
-        } => json!({
-            "by": "test",
-            "ref": reference,
-            "verified_at_sha": verified_at_sha,
-            "counter_test": counter_test,
-            "liveness": {
-                "platforms":    sorted_set(&liveness.platforms),
-                "triggered_by": sorted_set(&liveness.triggered_by),
-                "surfaces":     sorted_set(&liveness.surfaces),
+        } => {
+            // Built as a manual Map (not json!) so an absent counter_test OMITS the key entirely —
+            // mirroring the grounds[].check omit-on-None below. omit-on-None keeps both the
+            // Some-carrying goldens AND every harvested id stable; a "tidy to always-emit" would
+            // silently move every harvested id.
+            let mut o = Map::new();
+            o.insert("by".into(), Value::String("test".into()));
+            o.insert("ref".into(), Value::String(reference.clone()));
+            o.insert(
+                "verified_at_sha".into(),
+                Value::String(verified_at_sha.clone()),
+            );
+            if let Some(ct) = counter_test {
+                o.insert("counter_test".into(), Value::String(ct.clone()));
             }
-        }),
+            o.insert(
+                "liveness".into(),
+                json!({
+                    "platforms":    sorted_set(&liveness.platforms),
+                    "triggered_by": sorted_set(&liveness.triggered_by),
+                    "surfaces":     sorted_set(&liveness.surfaces),
+                }),
+            );
+            Value::Object(o)
+        }
     }
 }
 

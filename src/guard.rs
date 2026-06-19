@@ -101,7 +101,7 @@ pub fn run(repo: &Path, a: GuardArgs) -> Result<Tick, String> {
         check: Some(Check::Test {
             reference: a.selector,
             verified_at_sha,
-            counter_test: a.counter_test,
+            counter_test: Some(a.counter_test),
             liveness: Liveness {
                 platforms: a.platforms,
                 triggered_by: a.triggered_by,

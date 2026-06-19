@@ -101,7 +101,7 @@ mod tests {
                     check: Some(Check::Test {
                         reference: "pytest x".into(),
                         verified_at_sha: "d308afac1b2c3d4e5f60718293a4b5c6d7e8f901".into(),
-                        counter_test: "ct".into(),
+                        counter_test: Some("ct".into()),
                         liveness: Liveness {
                             platforms: vec!["linux-ci".into()],
                             triggered_by: vec!["f".into()],

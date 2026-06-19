@@ -188,7 +188,7 @@ fn build_ground(
             Some(Check::Test {
                 reference,
                 verified_at_sha,
-                counter_test,
+                counter_test: Some(counter_test),
                 liveness: Liveness {
                     platforms: d.platforms,
                     triggered_by: d.triggered_by,
@@ -575,7 +575,9 @@ mod tests {
                 verified_at_sha,
             }) => {
                 assert_eq!(reference, "pytest tests/test_redis_absent.py");
-                assert!(counter_test.contains("flips_red"));
+                assert!(counter_test
+                    .as_deref()
+                    .is_some_and(|c| c.contains("flips_red")));
                 assert_eq!(liveness.platforms, vec!["linux-ci".to_string()]);
                 assert_eq!(verified_at_sha.len(), 40);
             }

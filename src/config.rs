@@ -8,6 +8,7 @@ pub struct Config {
     pub staleness_days: u64,
     pub green_exit_code: i32,
     pub staleness_ref: String, // "live-origin" | "local-head" | "none"
+    pub brief_limit: usize,
 }
 
 impl Default for Config {
@@ -16,6 +17,7 @@ impl Default for Config {
             staleness_days: 7,
             green_exit_code: 0,
             staleness_ref: "live-origin".into(),
+            brief_limit: 10,
         }
     }
 }
@@ -48,6 +50,9 @@ pub fn read(store: &Store) -> Config {
         staleness_ref: value_of(&text, "staleness_ref")
             .map(|v| unquote(v).to_string())
             .unwrap_or(d.staleness_ref),
+        brief_limit: value_of(&text, "brief_limit")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(d.brief_limit),
     }
 }
 
@@ -88,6 +93,19 @@ mod tests {
         assert_eq!(c.staleness_days, 3);
         assert_eq!(c.green_exit_code, 1);
         assert_eq!(c.staleness_ref, "local-head");
+    }
+
+    #[test]
+    fn read_should_parse_brief_limit_when_present() {
+        // given: a config that sets brief_limit
+        let (_p, s) = store();
+        std::fs::write(s.config_path(), "brief_limit = 5\n").unwrap();
+
+        // when: the config is read
+        let c = read(&s);
+
+        // then: the typed field reflects the file
+        assert_eq!(c.brief_limit, 5);
     }
 
     #[test]

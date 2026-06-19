@@ -191,18 +191,29 @@ pub fn check(
             for g in &t.grounds {
                 if let Some(Check::Test {
                     reference,
+                    counter_test,
                     liveness,
                     ..
                 }) = &g.check
                 {
                     if liveness.platforms.iter().any(|p| p == platform) {
+                        // run the bound check
                         match crate::runner::run_check(
                             repo,
                             reference,
                             platform,
                             config.green_exit_code,
                         ) {
-                            Ok(rc) => {
+                            Ok(mut rc) => {
+                                // prove falsifiability: the counter-test must produce the OPPOSITE result
+                                if let Ok(ct) = crate::runner::run_check(
+                                    repo,
+                                    counter_test,
+                                    platform,
+                                    config.green_exit_code,
+                                ) {
+                                    rc.falsifiable = Some(rc.result != ct.result);
+                                }
                                 if let Err(e) = crate::receipt::append(&store, &rc) {
                                     eprintln!(
                                         "warning: could not write receipt for {reference:?}: {e}"

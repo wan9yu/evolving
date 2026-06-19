@@ -391,7 +391,8 @@ pub fn list(repo: &Path) -> ExitCode {
 /// Boot-read: the live user-ruled decisions and the roads they rejected. A near-zero-cost,
 /// 0-network read (read_all only; no git, no receipts) for a fresh agent to load the
 /// decisions it must respect and the options it must not re-propose. Sorted by id.
-pub fn brief(repo: &Path) -> ExitCode {
+pub fn brief(repo: &Path, _limit: Option<usize>) -> ExitCode {
+    // TODO(task 4): apply the cap (param overrides config brief_limit; 0 = show all).
     let store = Store::at(repo);
     if !store.exists() {
         eprintln!("error: no .evolving/ store here — run `ev init` first");

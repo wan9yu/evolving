@@ -82,6 +82,25 @@ fn brief_should_omit_a_decision_that_is_not_user_ruled_when_briefing() {
 }
 
 #[test]
+fn brief_should_accept_a_limit_flag_when_one_is_passed() {
+    // given: a user-ruled decision in the store
+    let r = repo();
+    decide(&r, "keep the slice locked", &["--authority", "user-ruled"]);
+
+    // when: ev brief runs with --limit
+    let out = ev()
+        .args(["brief", "--limit", "1"])
+        .current_dir(&r)
+        .output()
+        .unwrap();
+
+    // then: the flag is accepted (exits 0) and the decision still shows
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("keep the slice locked"));
+}
+
+#[test]
 fn brief_should_fail_when_there_is_no_store() {
     // given: a bare directory with no .evolving store
     let p = std::env::temp_dir().join(format!("ev-brief-nostore-{}", std::process::id()));

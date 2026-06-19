@@ -18,7 +18,11 @@ enum Cmd {
     /// Show the decision lineage from HEAD back to genesis.
     Log,
     /// Boot-read: the user-ruled decisions and the roads they rejected
-    Brief,
+    Brief {
+        /// Cap the number of decisions shown (overrides config brief_limit; 0 = show all).
+        #[arg(long)]
+        limit: Option<usize>,
+    },
     /// Audit the chain + refusals
     Verify {
         /// reproduce the frozen golden vectors and exit
@@ -93,7 +97,7 @@ fn main() -> std::process::ExitCode {
         Cmd::Show { id } => ev::cmd::show(&repo, &id),
         Cmd::List => ev::cmd::list(&repo),
         Cmd::Log => ev::cmd::log(&repo),
-        Cmd::Brief => ev::cmd::brief(&repo),
+        Cmd::Brief { limit } => ev::cmd::brief(&repo, limit),
         Cmd::Verify { self_test } => ev::cmd::verify_cmd(&repo, self_test),
         Cmd::Decide { decision, args } => ev::cmd::decide(&repo, decision.as_deref(), &args),
         Cmd::Guard {

@@ -6,6 +6,7 @@ pub mod events;
 pub mod guard;
 pub mod lint;
 pub mod liveness;
+pub mod migrate;
 pub mod receipt;
 pub mod runner;
 pub mod selected;

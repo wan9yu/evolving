@@ -361,6 +361,148 @@ pub fn check(
     ExitCode::SUCCESS
 }
 
+/// The parsed `ev migrate` invocation (built in main.rs from the clap subcommand).
+pub struct MigrateArgs {
+    pub sources: Vec<String>,
+    pub dry_run: bool,
+    pub reconcile: bool,
+    pub against: Option<String>,
+    pub blame: Option<String>,
+    pub bind_check: Option<String>,
+    pub platforms: Vec<String>,
+    pub triggered_by: Vec<String>,
+    pub surfaces: Vec<String>,
+    pub verified_at_sha: Option<String>,
+}
+
+/// Read a `<kind>:<path>` source spec, dispatch to the matching pure extractor, and return the
+/// extracted records. The kind names the substrate format; the path is read from disk here (the
+/// extractors themselves stay pure `&str -> Vec<MigrationRecord>`).
+fn extract_source(spec: &str) -> Result<Vec<crate::migrate::MigrationRecord>, String> {
+    let (kind, path) = spec
+        .split_once(':')
+        .ok_or_else(|| format!("--source expects <kind>:<path>, got {spec:?}"))?;
+    let text = std::fs::read_to_string(path).map_err(|e| format!("reading {path}: {e}"))?;
+    let recs = match kind {
+        "gitlog" => crate::migrate::extract_gitlog(&text),
+        "to-human" => crate::migrate::extract_to_human(&text),
+        "decisions-immutable" => crate::migrate::extract_decisions_immutable(&text),
+        "escalation" => crate::migrate::extract_escalation(&text),
+        other => {
+            return Err(format!(
+                "unknown source kind {other:?} (expected gitlog | to-human | decisions-immutable | escalation)"
+            ))
+        }
+    };
+    Ok(recs)
+}
+
+pub fn migrate(repo: &Path, a: MigrateArgs) -> ExitCode {
+    // --bind-check: harvest one existing test as a (counter-test-less) bound check and print it.
+    if let Some(selector) = &a.bind_check {
+        let sha = match crate::capture::resolve_sha(repo, &a.verified_at_sha) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("error: {e}");
+                return ExitCode::FAILURE;
+            }
+        };
+        match crate::migrate::bind_check(
+            selector.clone(),
+            sha,
+            a.platforms.clone(),
+            a.triggered_by.clone(),
+            a.surfaces.clone(),
+        ) {
+            Ok(Check::Test {
+                reference,
+                liveness,
+                ..
+            }) => {
+                println!(
+                    "harvested check (falsifiability not proven; no counter-test): {reference:?} on [{}] triggered-by [{}] surface [{}]",
+                    liveness.platforms.join(", "),
+                    liveness.triggered_by.join(", "),
+                    liveness.surfaces.join(", ")
+                );
+                return ExitCode::SUCCESS;
+            }
+            Ok(_) => unreachable!("bind_check yields a Test check"),
+            Err(e) => {
+                eprintln!("error: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+
+    // --reconcile --against <src>: join the source against the store and report the buckets.
+    if a.reconcile {
+        let against = match &a.against {
+            Some(s) => s,
+            None => {
+                eprintln!("error: --reconcile requires --against <kind>:<path>");
+                return ExitCode::FAILURE;
+            }
+        };
+        let recs = match extract_source(against) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("error: {e}");
+                return ExitCode::FAILURE;
+            }
+        };
+        match crate::migrate::reconcile(repo, &recs) {
+            Ok(rep) => {
+                println!(
+                    "reconcile: in-both {}, source-only {} (the capture gap), store-only {}, un-keyable {}",
+                    rep.in_both, rep.source_only, rep.store_only, rep.un_keyable
+                );
+                return ExitCode::SUCCESS;
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+
+    // The default action: backfill every --source into the ledger (idempotent).
+    if a.sources.is_empty() {
+        eprintln!("error: ev migrate needs at least one --source <kind>:<path> (or --reconcile / --bind-check)");
+        return ExitCode::FAILURE;
+    }
+    let mut records = Vec::new();
+    for spec in &a.sources {
+        match extract_source(spec) {
+            Ok(mut r) => records.append(&mut r),
+            Err(e) => {
+                eprintln!("error: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    match crate::migrate::backfill(repo, records, a.blame.as_deref(), a.dry_run) {
+        Ok(s) => {
+            if !a.dry_run {
+                crate::events::append(&Store::at(repo), "migrate", None, None);
+            }
+            println!(
+                "{}imported {}, skipped {}, re-linked {}, {} source-only gap(s)",
+                if a.dry_run { "(dry-run) " } else { "" },
+                s.imported,
+                s.skipped,
+                s.relinked,
+                s.source_only_gaps
+            );
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 pub fn why(repo: &Path, selector: &str) -> ExitCode {
     let store = Store::at(repo);
     if !store.exists() {

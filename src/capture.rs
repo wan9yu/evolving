@@ -198,6 +198,64 @@ pub fn harvested_test_check(
     })
 }
 
+/// An assembled, validated decision ready to be appended to the ledger — the single shape both
+/// `ev decide` (capture.rs) and `ev migrate` (migrate.rs) hand to `append`. It carries exactly the
+/// hashed payload (observe, decision, grounds) plus the bookkeeping fields; `append` owns the one
+/// compute_id / write_tick / R3-lint path so neither caller can fork the hashing.
+pub struct Decision {
+    pub observe: String,
+    pub decision: String,
+    pub grounds: Vec<Ground>,
+    pub blame: String,
+    pub authority: Option<String>,
+    pub jurisdiction: Option<String>,
+    pub round_id: Option<String>,
+}
+
+/// THE one place a decision becomes a tick: R3-lint the free text, read HEAD as the parent, stamp
+/// `held_since`, build the Tick, compute its content-addressed id, and write+advance HEAD. `ev decide`
+/// and `ev migrate` BOTH funnel through here so there is a single hashing path — a golden id can only
+/// move if this function moves (guarded by golden_vectors + the capture/migrate tests). The caller is
+/// responsible for having already resolved blame and validated the grounds.
+pub fn append(repo: &Path, d: Decision) -> Result<Tick, String> {
+    for field in std::iter::once(d.decision.clone())
+        .chain(std::iter::once(d.observe.clone()))
+        .chain(t_grounds_text(&d.grounds))
+    {
+        for verb in crate::lint::r3_self_evolve(&field) {
+            eprintln!("warning: \"{verb}\" should take a human subject, not the system (best-effort lint; a re-wording evades it)");
+        }
+    }
+    let store = Store::at(repo);
+    if !store.exists() {
+        return Err("no .evolving/ store here — run `ev init` first".into());
+    }
+    let parent_id = store
+        .read_head()
+        .map_err(|e| format!("reading HEAD: {e}"))?;
+    let held_since = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .map_err(|e| format!("timestamp: {e}"))?;
+    let mut t = Tick {
+        id: String::new(),
+        parent_id,
+        observe: d.observe,
+        decision: d.decision,
+        grounds: d.grounds,
+        status: "live".into(),
+        held_since,
+        blame: d.blame,
+        authority: d.authority,
+        jurisdiction: d.jurisdiction,
+        round_id: d.round_id,
+    };
+    t.id = compute_id(&t);
+    store
+        .write_tick(&t)
+        .map_err(|e| format!("writing tick: {e}"))?;
+    Ok(t)
+}
+
 fn build_ground(
     repo: &Path,
     d: DraftGround,
@@ -392,42 +450,20 @@ pub fn run(repo: &Path, decision: Option<&str>, args: &[String]) -> Result<Tick,
     for d in drafts {
         grounds.push(build_ground(repo, d, &sha_override)?);
     }
-    for field in std::iter::once(decision.to_string())
-        .chain(std::iter::once(observe.clone()))
-        .chain(t_grounds_text(&grounds))
-    {
-        for verb in crate::lint::r3_self_evolve(&field) {
-            eprintln!("warning: \"{verb}\" should take a human subject, not the system (best-effort lint; a re-wording evades it)");
-        }
-    }
-    let store = Store::at(repo);
-    if !store.exists() {
-        return Err("no .evolving/ store here — run `ev init` first".into());
-    }
-    let parent_id = store
-        .read_head()
-        .map_err(|e| format!("reading HEAD: {e}"))?;
-    let held_since = time::OffsetDateTime::now_utc()
-        .format(&time::format_description::well_known::Rfc3339)
-        .map_err(|e| format!("timestamp: {e}"))?;
-    let mut t = Tick {
-        id: String::new(),
-        parent_id,
-        observe,
-        decision: decision.to_string(),
-        grounds,
-        status: "live".into(),
-        held_since,
-        blame,
-        authority,
-        jurisdiction,
-        round_id,
-    };
-    t.id = compute_id(&t);
-    store
-        .write_tick(&t)
-        .map_err(|e| format!("writing tick: {e}"))?;
-    Ok(t)
+    // The single hashing path: decide hands its assembled Decision to the shared append, exactly as
+    // migrate does, so there is one compute_id / write_tick / R3-lint site (no per-caller fork).
+    append(
+        repo,
+        Decision {
+            observe,
+            decision: decision.to_string(),
+            grounds,
+            blame,
+            authority,
+            jurisdiction,
+            round_id,
+        },
+    )
 }
 
 #[cfg(test)]
@@ -783,6 +819,44 @@ mod tests {
 
         // then: it errors — no vacuous binding on the decide path
         assert!(e.is_err());
+    }
+
+    #[test]
+    fn append_should_compute_the_frozen_genesis_id_when_given_the_genesis_decision() {
+        // given: a store and the genesis decision assembled as a Decision (the SAME fields the
+        // golden vector freezes) — proving decide + migrate share one compute_id / write_tick path.
+        let r = repo();
+        let d = Decision {
+            observe: "evaluating retrieval backend".into(),
+            decision: "freeze the retrieval schema for v2".into(),
+            grounds: vec![
+                Ground {
+                    claim: "team still wants a frozen schema".into(),
+                    supports: "chosen".into(),
+                    check: Some(Check::Person {
+                        reference: "Q3 infra review".into(),
+                    }),
+                },
+                Ground {
+                    claim: "pgvector would lock our schema".into(),
+                    supports: "rejected:pgvector".into(),
+                    check: None,
+                },
+            ],
+            blame: "Wang Yu".into(),
+            authority: None,
+            jurisdiction: None,
+            round_id: None,
+        };
+
+        // when: it is appended onto the empty store (genesis: parent_id == "")
+        let t = append(&r, d).expect("ok");
+
+        // then: the content-addressed id matches the frozen genesis golden — the shared append
+        // hashes byte-identically to the legacy decide tail (no golden drift from the refactor).
+        assert_eq!(t.id, "e2b337f53a1f");
+        assert_eq!(t.parent_id, "");
+        assert_eq!(Store::at(&r).read_head().unwrap(), t.id);
     }
 
     #[test]

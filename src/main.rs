@@ -77,6 +77,42 @@ enum Cmd {
         #[arg(long, value_delimiter = ',')]
         attest: Vec<String>,
     },
+    /// Backfill an existing decision history into the ledger (multi-source, idempotent).
+    Migrate {
+        /// A source to import, as `<kind>:<path>` — kind ∈ {gitlog, to-human, decisions-immutable,
+        /// escalation}. Repeatable; sources are imported in deterministic source_key order.
+        #[arg(long = "source")]
+        sources: Vec<String>,
+        /// Parse + report what WOULD import without writing any tick.
+        #[arg(long)]
+        dry_run: bool,
+        /// Reconcile mode: join the --against source against the store and report the buckets
+        /// (in-both / source-only gap / store-only / un-keyable) instead of importing.
+        #[arg(long)]
+        reconcile: bool,
+        /// The source to reconcile against, as `<kind>:<path>` (with --reconcile).
+        #[arg(long)]
+        against: Option<String>,
+        /// Fallback author for any source record carrying no author (R5 stays intact — no fabrication).
+        #[arg(long)]
+        blame: Option<String>,
+        /// Harvest an existing test as a bound check on the named selector (counter_test None, full
+        /// liveness still required). Prints the harvested check shape; does not write a tick by itself.
+        #[arg(long)]
+        bind_check: Option<String>,
+        /// The platforms the --bind-check harvest declares (with --bind-check).
+        #[arg(long = "on-platform")]
+        platforms: Vec<String>,
+        /// The triggered-by paths the --bind-check harvest declares (with --bind-check).
+        #[arg(long = "triggered-by")]
+        triggered_by: Vec<String>,
+        /// The surfaces the --bind-check harvest declares (with --bind-check).
+        #[arg(long = "surface")]
+        surfaces: Vec<String>,
+        /// The 40-hex sha the --bind-check harvest was verified at (defaults to HEAD).
+        #[arg(long)]
+        verified_at_sha: Option<String>,
+    },
     /// Reverse lookup: name the decision + ground a test selector guards.
     Why {
         /// The bound test selector to look up.
@@ -133,6 +169,32 @@ fn main() -> std::process::ExitCode {
             offline,
             attest,
         } => ev::cmd::check(&repo, exit_on_red, run, &platform, offline, attest),
+        Cmd::Migrate {
+            sources,
+            dry_run,
+            reconcile,
+            against,
+            blame,
+            bind_check,
+            platforms,
+            triggered_by,
+            surfaces,
+            verified_at_sha,
+        } => ev::cmd::migrate(
+            &repo,
+            ev::cmd::MigrateArgs {
+                sources,
+                dry_run,
+                reconcile,
+                against,
+                blame,
+                bind_check,
+                platforms,
+                triggered_by,
+                surfaces,
+                verified_at_sha,
+            },
+        ),
         Cmd::Why { selector } => ev::cmd::why(&repo, &selector),
         Cmd::Reopen { id } => ev::cmd::reopen(&repo, &id),
     }

@@ -1,8 +1,8 @@
 use crate::canonical::compute_id;
 use crate::store::Store;
-use serde_json::{json, Value};
 use crate::tick::{Check, Ground, Liveness, Tick};
 use crate::verify::verify;
+use serde_json::{json, Value};
 use std::path::Path;
 use std::process::ExitCode;
 

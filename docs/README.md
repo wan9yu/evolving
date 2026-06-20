@@ -4,9 +4,8 @@
 rest on as an immutable, content-addressed *tick chain*, binds a test-check or a human
 re-check to each ground, and audits that chain against a fixed set of refusals.
 
-These docs cover the `ev` command surface: `init`, `decide`, `guard`, `check`, `why`,
-`reopen`, `show`, `brief`, `list`, `log`, `verify`. For release status (the published crate is behind
-the source tree), see the **Status** section of the [project README](../README.md).
+These docs cover the `ev` command surface: `init`, `decide`, `guard`, `migrate`, `check`,
+`why`, `reopen`, `show`, `brief`, `list`, `log`, `verify`.
 
 - **[usage.md](usage.md)** — a task-oriented guide: the common workflows ("I just made a
   decision", "what's already ruled?", "is any assumption broken?") with a short example each.

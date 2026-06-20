@@ -266,7 +266,7 @@ fn build_ground(
         return Err("ground claim is empty".into());
     }
     if d.supports.starts_with("rejected:") && (d.test_ref.is_some() || d.revisit.is_some()) {
-        return Err("a road-not-taken (rejected) ground cannot carry a check in 0.1.0 — reserved for a future rejection-rationale liveness feature".into());
+        return Err("a road-not-taken (rejected) ground cannot carry a check".into());
     }
     if d.revisit.is_some() && d.test_ref.is_some() {
         return Err("a ground cannot be both --revisit and --assume-test (R2)".into());

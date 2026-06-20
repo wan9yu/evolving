@@ -3,60 +3,30 @@
 **English** | [中文](README.zh-CN.md)
 
 [![CI](https://github.com/wan9yu/evolving/actions/workflows/ci.yml/badge.svg)](https://github.com/wan9yu/evolving/actions/workflows/ci.yml)
-[![crates.io](https://img.shields.io/crates/v/evolving.svg)](https://crates.io/crates/evolving)
 [![codecov](https://codecov.io/gh/wan9yu/evolving/branch/main/graph/badge.svg)](https://codecov.io/gh/wan9yu/evolving)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
-`ev` is **git for decisions**. It records human-authored decisions and the grounds they
-rest on as an immutable, content-addressed *tick chain*, binds either a test-check or a
-human re-check to each ground, and resurfaces a decision when a bound check goes red. It
-deals in **facts, not verdicts** — there are no scores, no ranks, no auto-judgements;
-just an honest record of what was decided, why, who is on the hook, and whether the check
-guarding each reason is still alive.
+> Git for decisions — the durable decision layer that resurfaces a decision the moment a bound check goes red.
 
-## Status
+## The problem
 
-`0.1.2` — the **migration release**, on top of the `0.1.0` honest-resurface slice. A single
-self-contained Rust binary, no network, no daemon; the store lives in a local `.evolving/`
-directory: the full capture → bind → resurface loop, content-addressed and append-only.
+A decision gets made — *we'll build our own retrieval; we'll keep the schema frozen; no Redis* — and the reasoning behind it is real and considered at the time. Then it scrolls out of view. The thread is archived, the ticket closes, the people rotate.
 
-**Shipped:** the full capture→resurface loop — recording decisions and their grounds
-(`ev decide`), binding a test or human re-check after the fact (`ev guard`), evaluating a
-bound check and resurfacing a decision when it goes red (`ev check [--run] [--exit-on-red]`,
-the flat verdict states), the **liveness meta-guard** (`ev check` flags a check that never
-ran on a declared platform as not-run, with event-driven freshness and per-runner `--attest`
-scoping), naming the decision a check guards (`ev why`), reading a decision in full
-(`ev reopen` / `ev show`), browsing the ledger (`ev list` / `ev log`), and auditing the chain
-and its refusals (`ev verify`). `ev check --run` runs the bound check for you, records a receipt,
-and runs its counter-test to prove the binding can actually flip — a check that cannot flip is
-reported `unproven`. The **authority tag** (`--authority user-ruled` / `agent-disposable`, surfaced
-by `ev brief` so a fresh agent reads a human's ruling before re-deciding) and seeding a decision from
-a commit (`ev decide --from-git`) are shipped too.
+Months later, an assumption that decision rested on quietly breaks: a dependency changes behavior, a constraint that made the call correct no longer holds, the test that proved the claim stops running. Nobody is reliably told. The decision is still in force, still shaping the codebase — but the ground beneath it has moved, and no one connected the two.
 
-**New in `0.1.1` — migration:** `ev migrate` backfills an existing decision history into the
-ledger from four source formats (`gitlog` / `to-human` / `decisions-immutable` / `escalation`),
-**idempotently** and keeping the chain — harvesting only the rulings and *structured*
-roads-not-taken (a prose reason is never NLP'd into a ground), never inventing an author (an
-un-attributed record is a surfaced gap, R5 intact). It **harvests existing tests** as bound
-checks (`--bind-check`, counter-test absent — `ev check` marks them `harvested — falsifiability
-not proven` until `ev guard` adds one), **reconciles** a source against the store (`--reconcile`,
-the capture-gap report), and carries a declared **`jurisdiction A|B|C|D`** tag — set with
-`ev decide --jurisdiction`, or applied across a backfill by `ev migrate --jurisdiction-map`
-(`C`/`D` are structurally **detect-only**, surfaced via the non-gating `memo` verdict and never
-able to gate) — plus a durable **`round_id`** join key. The on-disk schema is now **forward-compatible**: a
-newer writer's non-hashed bookkeeping field is tolerated (surfaced as a `verify` warning) while
-the hashed/identity payload stays strictly closed. The three golden vectors (`genesis`,
-`case1`, and the new `harvested`) are unmoved — `0.1.1` adds fields and a subcommand without
-disturbing a single existing id.
+`ev` is the layer that closes that gap. It records a human-authored decision *and the grounds it rests on* as an immutable, content-addressed chain, binds a falsifiable check to each ground, and **resurfaces the decision the moment that check goes red**. It deals in facts, not verdicts: no scores, no ranks, no auto-judgements — just an honest record of what was decided, why, who is on the hook, and whether the check guarding each reason is still alive.
 
-> **Honest limits.** Migration imports another team's rulings as jurisdiction `C` —
-> **detect-only, forever**: such a record is surfaced when it goes red but, by construction,
-> can never gate a build (it is watched, not owned). And the dependency-behavior-drift pattern
-> (see [docs/usage.md](docs/usage.md)) is a **fixture-regression-lock**: it fires when a
-> reviewed snapshot file changes in a *commit*, not on the silent runtime drift itself — it
-> locks the reviewed fixture against regression, which is narrower than catching every silent
-> drift. `0.1.1` does not retroactively teach a shipped `0.1.0` reader to tolerate the new
-> fields — that forward-compat is from `0.1.1` on (see [docs/concepts.md](docs/concepts.md)).
+A single self-contained Rust binary. No network, no daemon. The store is a local `.evolving/` directory — content-addressed and append-only.
+
+## What `ev` is — and is not
+
+The question `ev` gets most often is *isn't this just …?* It is not:
+
+- **An ADR.** An Architecture Decision Record captures *why* a decision was made — as prose, written once, then left to rot. Nobody re-reads it, and nothing tells you when the premise it rested on stops holding. `ev` records the *why* too, but binds it to a falsifiable check and **brings the decision back the moment that check goes red**. An ADR is a tombstone; an `ev` decision is alive.
+- **A comment on a test.** A note like *"this test guards the no-Redis decision"* is unstructured prose no one reads at decision time. When the test fails you get a red test — not *the no-Redis decision broke; here is the alternative that was rejected and who is on the hook* — and a comment can't tell you the guard itself quietly stopped running. `ev` makes the link structured and content-addressed, resurfaces the whole decision, and tracks whether the check is even still alive.
+- **git.** git versions the *code* — the *what*. It has no notion of a decision, the grounds it rests on, or whether a past call's assumption still holds; `git log` is findable but it never comes *to* you. `ev` borrows git's spine — immutable, content-addressed, append-only — and adds the one verb git lacks: **resurface a decision when the ground beneath it moves.**
+
+And it is not a task tracker, a CI system, or an environment monitor: it manages no work items, it does not own your test suite (it only reads whether a bound check passed), and it fires on git-recorded change — never on a UI click or a config drift that leaves no commit. `ev` detects and resurfaces; it does not prevent.
 
 ## Install
 
@@ -64,8 +34,7 @@ disturbing a single existing id.
 cargo install evolving
 ```
 
-This installs an `ev` binary on your `PATH` (the package is named `evolving`; the command
-is `ev`).
+This installs an `ev` binary on your `PATH`. The package is named `evolving`; the command is `ev`.
 
 Build from source:
 
@@ -78,14 +47,15 @@ cargo build --release
 
 ## Quickstart
 
+The core loop: **decide → bind a check → keep working → resurface on red.**
+
 Create the store:
 
 ```sh
 ev init
 ```
 
-Record a decision with a chosen ground (re-checked by a human at a named time) and a
-road-not-taken:
+Record a decision with a chosen ground (re-checked by a human at a named time) and a road-not-taken:
 
 ```sh
 ev decide "build our own retrieval; reject pgvector" \
@@ -96,9 +66,7 @@ ev decide "build our own retrieval; reject pgvector" \
   --blame "You"
 ```
 
-Record a decision whose chosen ground is guarded by a **test** rather than a human. A test
-binding must carry a counter-test (the test that should flip red if the claim breaks), at
-least one platform / trigger / surface for liveness, and the commit it was last verified at:
+Record a decision whose chosen ground is guarded by a **test** rather than a human. A test binding must carry a counter-test (the test that should flip red if the claim breaks), at least one platform / trigger / surface for liveness, and the commit it was last verified at:
 
 ```sh
 ev decide "restore-safety counter DB-backed; reject Redis" \
@@ -114,9 +82,7 @@ ev decide "restore-safety counter DB-backed; reject Redis" \
   --blame "You"
 ```
 
-Attach a test to an unbound ground of the current HEAD decision *after the fact* with
-`ev guard`. Because the check is part of the hashed payload, this writes a **new child**
-rather than mutating the existing tick:
+Bind a test to an unbound ground of the current HEAD decision *after the fact* with `ev guard`. Because the check is part of the hashed payload, this writes a **new child** rather than mutating the existing tick:
 
 ```sh
 ev guard "pytest tests/test_schema_frozen.py" <HEAD-id> "schema stays frozen" \
@@ -126,25 +92,18 @@ ev guard "pytest tests/test_schema_frozen.py" <HEAD-id> "schema stays frozen" \
   --surface schema-ddl
 ```
 
-`<HEAD-id>` is the id printed by the most recent `ev decide`/`ev guard`. The third
-positional argument names which ground to bind (by claim text or by index); it is required
-only when more than one ground is still unbound.
+`<HEAD-id>` is the id printed by the most recent `ev decide` / `ev guard`. The third positional argument names which ground to bind (by claim text or by index); it is required only when more than one ground is still unbound.
 
-Audit the chain and the refusals, then read a decision in full:
+Audit the chain and its refusals, then read a decision in full:
 
 ```sh
 ev verify
 ev show <id>
 ```
 
-`ev verify` confirms every id equals the hash of its payload, that lineage is
-forward-only, and that every tick validates against the closed schema and check shape.
+`ev verify` confirms every id equals the hash of its payload, that lineage is forward-only, and that every tick validates against the closed schema and check shape.
 
-Evaluate the bound checks and resurface any decision whose check has gone red. With a
-test-check bound to a runnable command, `ev check --run` runs it, records a receipt, and
-gates the exit code under `--exit-on-red`; `ev why` maps a check back to the decision it
-guards, and `ev reopen` shows the full decision object (frozen-vs-current, with the
-road-not-taken):
+Evaluate the bound checks and resurface any decision whose check has gone red. With a test-check bound to a runnable command, `ev check --run` runs it, records a receipt, and runs its counter-test to prove the binding can actually flip; `--exit-on-red` gates the exit code. `ev why` maps a check back to the decision it guards, and `ev reopen` shows the full decision object (frozen-vs-current, with the road-not-taken):
 
 ```sh
 ev check --run --platform linux-ci --exit-on-red
@@ -154,68 +113,53 @@ ev reopen <id>
 
 ## The model
 
-- **Tick** — one decision in the chain. Its hashed payload is `{decision, observe,
-  grounds, parent_id}`; `id`, `status`, `held_since`, `blame`, `authority`, `jurisdiction`,
-  and `round_id` are bookkeeping kept outside the hash.
-- **Ground** — a reason a decision rests on. A ground is either **chosen** (a reason for
-  the decision taken) or a **road-not-taken** (`rejected:<option>`, a reason an
-  alternative was declined).
-- **Check** — what keeps a chosen ground honest over time. Either a **Test** (a test
-  selector plus an optional counter-test, the platforms/triggers/surfaces that keep it live,
-  and the `verified_at_sha` it last passed at — a *harvested* binding from `ev migrate` carries
-  no counter-test and reads as falsifiability-not-proven) or a human **Person** re-check (a
-  reference to when/where a person re-affirms the ground).
-- **Identity** — `id = first 12 hex of SHA-256` over the canonical-JSON of `{decision,
-  observe, grounds, parent_id}`.
-- **Append-only** — the chain is never edited in place. A change is a **new child** whose
-  `parent_id` points at its predecessor.
+- **Tick** — one decision in the chain. Its **hashed payload** is `{decision, observe, grounds, parent_id}`; `id`, `status`, `held_since`, `blame`, `authority`, `jurisdiction`, and `round_id` are bookkeeping kept *outside* the hash, so they can change without forging a new identity.
+- **Ground** — a reason a decision rests on. A ground is either **chosen** (a reason *for* the decision taken) or a **road-not-taken** (`rejected:<option>`, a reason an alternative was declined).
+- **Check** — what keeps a chosen ground honest as the world changes. Either a **Test** (a test selector plus a counter-test, the platforms / triggers / surfaces that keep it live, and the `verified_at_sha` it last passed at) or a human **Person** re-check (a reference to when and where a person re-affirms the ground). A *harvested* Test binding may carry **no** counter-test; it is evaluated like any other but reads *falsifiability-not-proven* until one is added.
+- **Identity** — `id = first 12 hex of SHA-256` over the canonical JSON of `{decision, observe, grounds, parent_id}`. Any change to a hashed field produces a different `id`; editing a bookkeeping field leaves the `id` untouched.
+- **Append-only** — the chain is never edited in place. A change is a **new child** whose `parent_id` points at its predecessor. This is why `ev guard`, which adds a hashed check, writes a child rather than mutating its target.
 
-## The refusals it enforces (the red lines)
+## The refusals it enforces
 
-- **Closed schema.** A tick with any field outside the fixed schema is rejected.
-- **A human re-check stays human.** A ground re-checked by a person can never be
-  force-bound to a test.
-- **A rejected road carries no check.** A road-not-taken cannot take a check in `0.1.0`
-  (reserved for a future rejection-rationale liveness feature).
-- **The system is never the subject of self-evolve language.** Self-evolve / self-improve
-  verbs must take a human subject, not the system (best-effort lexical lint).
-- **Every mutating op names a human.** A decision or a guard must carry a `--blame` (or a
-  resolvable `git config user.name`).
-- **No auto-close.** Nothing closes, prunes, or stops a decision on its own; a human
-  authors every change.
+`ev` is defined as much by what it refuses as by what it does. `ev verify` audits the whole chain against these and reports *all* violations, not just the first:
 
-## Honesty / trust boundary
+- **Closed schema.** A tick with any field outside the fixed identity schema is rejected. The content-addressed id can never carry an unvalidated field.
+- **A human re-check stays human.** A ground re-checked by a person can never be force-bound to a test.
+- **A rejected road carries no check.** A road-not-taken cannot take a check.
+- **The system is never the subject of self-evolve language.** Self-evolve / self-improve verbs must take a human subject, not the system (best-effort lexical lint).
+- **Every mutating op names a human.** A decision or a guard must carry a `--blame` (or a resolvable `git config user.name`).
+- **No auto-close.** Nothing closes, prunes, or stops a decision on its own; a human authors every change.
 
-`ev` completes one specific picture: *does a human-vetted decision stay live, and is the
-check guarding it itself alive?* It does that by content-addressing the decision record and
-by demanding that every test binding name a counter-test and the surfaces that keep it
-live, so a check that has quietly died is visible.
+## Migrating an existing decision history
 
-It does **not** claim tamper-resistance of offline test outcomes — `ev` records that a
-test was bound and the commit it was verified at, but it cannot prove an offline test
-result was honest. That is a documented boundary, not a guarantee.
+`ev migrate` backfills an *existing* decision history into the ledger — by **harvesting** the rulings and structured roads-not-taken those records already hold, never by mining prose into a ground.
 
-`ev` fires on changes recorded in **git** — a bound check going red, or a commit touching a
-declared trigger. It does **not** detect **external-state drift**: a UI click, an org/config
-change, or an upstream-API behavior change that leaves no git commit will not trigger `ev`.
-`ev` is decision memory, not a replacement for an environment sentinel; a check that can only
-fail on external state should be run on a timer (a 0.1.x capability), not bound to `triggered_by`.
+- **Pluggable source formats.** A source is given as `<kind>:<path>`. Each kind is a pure, format-aware extractor (`gitlog`, `to-human`, `decisions-immutable`, `escalation`); they parse rulings and *structured* rejected-roads only. A block with no structured road imports with **zero grounds** — an honest capture, never a synthesized reason.
+- **Idempotent, chain-keeping.** A backfill computes the content-addressed id each record *would* take and skips any key already in the store, so running it twice writes nothing the second time. The chain is kept: a back-dated mid-chain insert is re-linked and reported, never rewritten.
+- **Test harvesting.** `--bind-check` adopts an existing test as a bound check. A harvested binding declares full liveness (you cannot half-harvest) and gates on a real red — but it carries no counter-test, so its falsifiability was never proven. `ev check` evaluates it like any other binding, annotates the row *falsifiability-not-proven*, and counts the debt; `ev guard` adds a counter-test to discharge it.
+- **Jurisdiction tagging.** An imported decision can carry a declared `jurisdiction` tag from `{A, B, C, D}` (set with `ev decide --jurisdiction`, or applied across a backfill by `ev migrate --jurisdiction-map`). `A` and `B` may gate; `C` and `D` are **structurally detect-only** — any not-green verdict on them is mapped to a non-gating `memo` fact (so `--exit-on-red` can never trip on them), and `ev verify` forbids a `C`/`D` tick from holding a runnable test check at all. Detect-only is a structural property of the record, not a convention a code path might forget.
+- **Reconciliation.** `--reconcile --against <kind>:<path>` joins a source against the store and reports the **capture gap** — a ruling the source holds that the ledger never captured — alongside the in-both, store-only, and un-keyable counts.
+- **No invented authors.** A source record with neither its own author nor a `--blame` fallback is *not* imported; it is surfaced as a gap. An author is never fabricated.
+
+The on-disk schema is **forward-compatible** by design: a newer writer's non-hashed bookkeeping field is tolerated (parsed through and surfaced as a `verify` warning), while the hashed / identity payload stays strictly closed.
+
+## The honesty boundary
+
+`ev` completes one specific picture — *does a human-vetted decision stay live, and is the check guarding it itself alive?* — and is honest about the edges of that picture:
+
+- **It does not claim tamper-resistance of offline test outcomes.** `ev` records that a test was bound and the commit it was verified at, but it cannot prove an offline test result was honest. That is a documented boundary, not a guarantee.
+- **It fires on changes recorded in git** — a bound check going red, or a commit touching a declared trigger. It does **not** detect external-state drift: a UI click, an org or config change, or an upstream-API behavior change that leaves no git commit will not trigger `ev`. A check that can only fail on external state belongs on a timer, not bound to a trigger.
+- **It detects; it does not prevent.** `ev` is decision memory that resurfaces a broken assumption, not an environment sentinel that stops one from happening.
 
 ## Documentation
 
 Usage docs live in [`docs/`](docs/):
 
-- [`docs/commands.md`](docs/commands.md) — the authoritative command reference: every flag,
-  exit code, the exact strings each command prints, and a worked example per command.
-- [`docs/concepts.md`](docs/concepts.md) — the model in depth: the Tick schema, Grounds,
-  Checks, content-addressed identity, append-only immutability, and the refusals
-  `ev verify` enforces.
-- [`docs/philosophy.md`](docs/philosophy.md) — the design philosophy: the nine tenets behind
-  `ev`, and why it makes the choices it does.
+- [`docs/commands.md`](docs/commands.md) — the authoritative command reference: every flag, exit code, the exact strings each command prints, and a worked example per command.
+- [`docs/concepts.md`](docs/concepts.md) — the model in depth: the Tick schema, Grounds, Checks, content-addressed identity, append-only immutability, jurisdiction, the forward-compatible schema, and the refusals `ev verify` enforces.
+- [`docs/philosophy.md`](docs/philosophy.md) — the design philosophy: the tenets behind `ev`, and why it makes the choices it does.
 
-**Using `ev` from an AI agent?** [`skills/ev/SKILL.md`](skills/ev/SKILL.md) is a
-tool-agnostic agent skill — drop it into your agent's skills directory so it uses `ev`
-correctly without reading the manual.
+**Using `ev` from an AI agent?** [`skills/ev/SKILL.md`](skills/ev/SKILL.md) is a tool-agnostic agent skill — drop it into your agent's skills directory so it uses `ev` correctly without reading the manual.
 
 ## License
 

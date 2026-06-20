@@ -146,7 +146,7 @@ Exactly **one** of `{positional decision, --from-git}` is allowed:
   `a ground cannot be both --revisit and --assume-test (R2)`.
 - **A rejected road carries no check.** Attaching `--revisit` or `--assume-test` to a
   `--reject` ground →
-  `a road-not-taken (rejected) ground cannot carry a check in 0.1.0 — reserved for a future rejection-rationale liveness feature`.
+  `a road-not-taken (rejected) ground cannot carry a check`.
 - **No vacuous test binding.** `--assume-test` without `--counter-test` →
   `a test binding requires --counter-test (no vacuous binding)`.
 - **A test binding needs full liveness.** A test binding missing a platform, trigger, or
@@ -276,7 +276,7 @@ it is refused — `no unbound ground to guard`.
 - **A human re-check stays human (R2).** A Person-checked ground cannot be force-bound to a
   test → `a human-rechecked ground cannot carry a test (R2 hard error)`.
 - **A rejected road carries no check.** →
-  `a road-not-taken (rejected) ground cannot carry a test in 0.1.0 — reserved for a future rejection-rationale liveness feature`.
+  `a road-not-taken (rejected) ground cannot carry a test`.
 - **Already bound.** A ground that already has a check → `ground already has a check`.
 - **No vacuous binding.** Empty `--counter-test` →
   `a test binding requires a counter-test (no vacuous binding)`.
@@ -866,15 +866,3 @@ ev log
 # → 638c47b0c9dd	live	"restore-safety counter DB-backed; reject Redis"
 # → e2b337f53a1f	live	"freeze the retrieval schema for v2"
 ```
-
----
-
-## Release status
-
-Every command above — including the `ev check` liveness evaluator with per-runner `--attest`
-scoping, the `--from-git` decision source, the declared `--authority` / `--jurisdiction` /
-`--round-id` tags, `ev brief`, the **`0.1.1` migration release** (`ev migrate` + the
-harvested-binding surfacing), and the **`0.1.2` jurisdiction-on-import** step (`ev migrate
---jurisdiction-map`, so a `C`/`D` import is structurally detect-only) — is present and documented
-in the source tree. For the gap between the source tree and the **published** crate, see the
-**Status** section of the [project README](../README.md).

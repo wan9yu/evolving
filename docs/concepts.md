@@ -3,7 +3,7 @@
 This is the model in depth — deeper than the project README. It describes the on-disk Tick
 schema, the parts of a decision (Ground, Check), content-addressed identity and the frozen
 golden vectors, append-only immutability, the refusals `ev verify` enforces, and the
-honesty / trust boundary. Everything here is accurate to the `0.1.2` code; nothing is
+honesty / trust boundary. Everything here is accurate to the code; nothing is
 overstated.
 
 For the commands that produce and read these records, see [commands.md](commands.md).
@@ -102,7 +102,7 @@ shapes, distinguished on disk by the `by` field:
   - `verified_at_sha` — the commit the test was last verified at; exactly 40 lowercase hex.
   - `counter_test` — **optional**: the test that should flip **red** if the claim breaks.
     When present it is a non-empty selector; when **absent** the key is **omitted entirely**
-    from the JSON (it never serializes as `null` or `""`). A `0.1.0`-style binding authored by
+    from the JSON (it never serializes as `null` or `""`). An authored binding from
     `ev decide` / `ev guard` always carries one (such a binding without it is refused as
     vacuous). A **harvested** binding (`ev migrate`) deliberately carries **none** — see
     *Harvested bindings* below.
@@ -130,7 +130,7 @@ What it adds is an honest **annotation**: a harvested row is tagged
 `(harvested — falsifiability not proven; …)`, and a trailing
 `harvested-unproven: N of M test bindings have no counter-test (run ev guard to add one)` line
 counts the debt. `ev guard` is the way out: add a `--counter-test` and the harvested binding
-becomes a proven, `0.1.0`-style one (a new child tick, since the check is hashed).
+becomes a proven, authored one (a new child tick, since the check is hashed).
 
 Because the canonical encoding **omits** `counter_test` on absence (rather than emitting it as
 `null`), a harvested id is just as byte-stable as a counter-test-carrying one — a third frozen
@@ -219,15 +219,15 @@ without bricking an older reader:
 There is an inert `schema_version` recorded in the store config; it is read **lazily**, only at
 this tolerate-vs-reject decision, and is not a parsed config field.
 
-### The honest `0.1.0` ↔ `0.1.1` limit
+### The forward-compatibility limit
 
-Forward-compat is forward only, and only from `0.1.1` on. A `0.1.0` reader predates the
-two-tier rule: its schema is closed for **all** top-level keys, so a tick that carries a
-`0.1.1` bookkeeping field (`jurisdiction`, `round_id`, or any future tolerated key) will be
-**rejected** by a `0.1.0` `ev verify`, not tolerated. That compatibility is **already lost** —
-there is no way to make a shipped `0.1.0` binary read these fields. `0.1.1` buys tolerance for
-*future* fields; it cannot retroactively teach `0.1.0` to ignore the fields `0.1.1` itself
-introduced. Stated plainly so no one assumes a guarantee that does not exist.
+Forward-compat is forward-only and cannot be retrofitted. A binary that predates a bookkeeping
+field has a schema closed for **all** top-level keys, so a tick that carries a newer field
+(`jurisdiction`, `round_id`, or any future tolerated key) is **rejected** by that older
+`ev verify`, not tolerated — there is no way to teach an already-shipped reader to ignore a
+field added after it. The two-tier rule buys tolerance for *future* fields going forward; it
+cannot reach backward to a reader that already shipped. Stated plainly so no one assumes a
+guarantee that does not exist.
 
 ## The refusals (R1–R6) as `ev verify` enforces them
 
@@ -280,5 +280,5 @@ going red are both detected from the commit history (`ev check` compares the lat
 commit against the declared `triggered_by` paths). **External-state drift** — a UI click, an
 org/config change, or an upstream-API behavior change that leaves **no git commit** — does
 **not** fire `ev`. `ev` is decision memory, not an environment sentinel; a check that can only
-fail on external state should be run on a timer (a 0.1.x capability), not bound to
+fail on external state should be run on a timer (not currently supported), not bound to
 `triggered_by`.

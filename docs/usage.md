@@ -276,7 +276,7 @@ A harvested binding is honest about its debt. `ev check` evaluates it exactly li
 (a passing harvested test reads `green`, a failing one `red`), but tags the row
 `(harvested — falsifiability not proven; …)` and prints a trailing
 `harvested-unproven: N of M test bindings have no counter-test (run ev guard to add one)`. The
-way out is `ev guard`: add a `--counter-test` and the binding becomes a proven `0.1.0`-style
+way out is `ev guard`: add a `--counter-test` and the binding becomes a proven, authored
 check.
 
 ### "Import another team's rulings to *watch*, but not to *fail on*"

@@ -75,7 +75,7 @@ pub fn run(repo: &Path, a: GuardArgs) -> Result<Tick, String> {
         return Err("a human-rechecked ground cannot carry a test (R2 hard error)".into());
     }
     if g.supports.starts_with("rejected:") {
-        return Err("a road-not-taken (rejected) ground cannot carry a test in 0.1.0 — reserved for a future rejection-rationale liveness feature".into());
+        return Err("a road-not-taken (rejected) ground cannot carry a test".into());
     }
     if g.check.is_some() {
         return Err("ground already has a check".into());

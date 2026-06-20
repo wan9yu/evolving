@@ -38,8 +38,8 @@ content-addressed. But immutability has a cost: records pushed into a cold, rare
 on the **hot** path (what `brief`/`list` surface every round); let the chain be the **cold** archive.
 And immutability is a property of the *chain*, not a ban on retraction: regretted or sensitive content
 (e.g. anything that shouldn't live forever in history) must become **tombstone-able** — id preserved,
-content retracted — or the ledger becomes a permanent liability. (0.1.0 does not yet implement
-tombstoning; this is a stated requirement for the chain, not a shipped capability.)
+content retracted — or the ledger becomes a permanent liability. (tombstoning is a stated
+requirement for the chain, not a shipped capability.)
 
 ## 5. State the honesty boundary — and cover the painful half
 Say plainly what ev does not do (it does not prevent the mistake, does not fire on external-state

@@ -944,13 +944,16 @@ ev reopen 638c47b0c9dd
 **Synopsis:** the boot-read — print the **live** decisions whose declared authority is
 `user-ruled`, and the roads each of them rejected. A near-zero-cost, **0-network** read (the
 store only — no git, no receipts) for a fresh agent to load the decisions it must respect and
-the options it must not re-propose. **Load-bearing rulings** — user-ruled decisions that
+the options it must not re-propose. Drawn **only from human-ratified rulings** — an
+`agent-proposed` decision is excluded, so a proposal an agent recorded never governs a fresh
+agent until a human vouches for it. **Load-bearing rulings** — user-ruled decisions that
 closed a road via `--reject` — are **pinned above the cap** so recency never buries them; the
 rest follow **most-recent-first**, **capped**, with an honest remainder footer so nothing is
-silently hidden (and a hidden closed-road ruling is counted, never silent).
+silently hidden (and a hidden closed-road ruling is counted, never silent). `--json` emits the
+same set as one machine-readable object an agent can parse.
 
 ```
-ev brief [--limit N]
+ev brief [--limit N] [--json]
 ```
 
 **Flags:**
@@ -958,12 +961,15 @@ ev brief [--limit N]
 | Flag | Value | Required | Meaning |
 | --- | --- | --- | --- |
 | `--limit` | non-negative integer | no | Cap the number of decisions shown. Overrides the config default `brief_limit` (which itself defaults to `10`). `--limit 0` shows **all** decisions (no cap, no footer). |
+| `--json` | flag | no | Emit the frozen `ev-brief` JSON contract (one object) instead of the human text — for an agent to parse. Honors `--limit`; the elision counts make any capped-off ruling visible. |
 
 **What it does:** reads every tick, collapses each **corrective lineage** to its current state
 (an [`ev correct`](#ev-correct) child supersedes the stale tick it re-tags — so a ruling whose
 `authority` was corrected to `user-ruled` surfaces, and one corrected away from it drops out),
-keeps the **live**, `authority == "user-ruled"` ones, then orders them so that **load-bearing
-rulings come first**. A ruling is *load-bearing* iff
+keeps the **live**, `authority == "user-ruled"`, **non-`agent-proposed`** ones (the provenance
+exclusion is the ratification line: a `provenance == "agent-proposed"` record never reaches the
+boot-read, in either output form, until a human re-authors it), then orders them so that
+**load-bearing rulings come first**. A ruling is *load-bearing* iff
 any of its grounds closes a road (its `supports` starts with `rejected:`) — those are the
 decisions a fresh agent must not re-walk, so they sort ahead of every non-load-bearing ruling
 **regardless of recency** and are pinned above the cap. Within each of those two groups the
@@ -993,6 +999,13 @@ full reopen. A store with no user-ruled decisions says so. It never touches the 
   rejected road); when `M` is `0` the clause is omitted entirely. Not printed when nothing is
   dropped (including `--limit 0`).
 - none (stdout): `no user-ruled decisions`
+- `--json` (stdout): one object, always valid JSON even when empty (never the `no user-ruled
+  decisions` text), on the frozen `ev-brief` contract:
+  `{"kind":"ev-brief", "decisions":[{"id", "decision", "load_bearing", "rejected_roads":[{"option",
+  "claim"}], "source_ref"?}], "shown", "total", "elided", "elided_load_bearing"}`. Each decision
+  carries its **citable `id`**; `source_ref` is present only when the producer supplied one; the
+  `elided` / `elided_load_bearing` counts make a capped-off ruling visible (re-pull with a higher
+  `--limit` rather than act on a partial view).
 - no store (stderr): `error: no .evolving/ store here — run \`ev init\` first`
 
 **Example:**
@@ -1009,6 +1022,9 @@ ev brief --limit 2
 # → … 3 more user-ruled decision(s), 1 with rejected roads — `ev list` for all
 
 ev brief --limit 0   # show every user-ruled decision, no cap, no footer
+
+ev brief --json
+# → {"kind":"ev-brief","decisions":[{"id":"…","decision":"restore-safety counter DB-backed; reject Redis","load_bearing":true,"rejected_roads":[{"option":"Redis","claim":"a new infra dependency"}],"source_ref":"R2289"}],"shown":1,"total":1,"elided":0,"elided_load_bearing":0}
 ```
 
 ---

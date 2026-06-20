@@ -22,6 +22,9 @@ enum Cmd {
         /// Cap the number of decisions shown (overrides config brief_limit; 0 = show all).
         #[arg(long)]
         limit: Option<usize>,
+        /// Emit the frozen `ev-brief` JSON contract instead of the human text (for an agent to parse).
+        #[arg(long)]
+        json: bool,
     },
     /// Audit the chain + refusals
     Verify {
@@ -150,7 +153,7 @@ fn main() -> std::process::ExitCode {
         Cmd::Show { id } => ev::cmd::show(&repo, &id),
         Cmd::List => ev::cmd::list(&repo),
         Cmd::Log => ev::cmd::log(&repo),
-        Cmd::Brief { limit } => ev::cmd::brief(&repo, limit),
+        Cmd::Brief { limit, json } => ev::cmd::brief(&repo, limit, json),
         Cmd::Verify { self_test } => ev::cmd::verify_cmd(&repo, self_test),
         Cmd::Decide { decision, args } => ev::cmd::decide(&repo, decision.as_deref(), &args),
         Cmd::Guard {

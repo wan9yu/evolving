@@ -1,5 +1,6 @@
 use crate::canonical::compute_id;
 use crate::store::Store;
+use serde_json::{json, Value};
 use crate::tick::{Check, Ground, Liveness, Tick};
 use crate::verify::verify;
 use std::path::Path;
@@ -792,7 +793,68 @@ fn load_bearing(t: &Tick) -> bool {
 /// (those that closed a road) sort FIRST — pinned above the cap regardless of recency — then
 /// by recency (held_since), then id. Capped to the effective limit, with a remainder footer
 /// that counts how many hidden rulings closed a road so the elision stays visible.
-pub fn brief(repo: &Path, limit: Option<usize>) -> ExitCode {
+/// The boot-read visibility gate, shared by the text and `--json` forms: a decision reaches `brief`
+/// only when it is live, user-ruled, and NOT agent-proposed. The provenance exclusion is the §五
+/// guarantee — an agent-proposed proposal never governs a fresh agent, even before the pending-lane
+/// machinery lands; until a named human vouches for it, it stays out of the boot-read entirely.
+fn brief_visible(t: &Tick) -> bool {
+    t.status == "live"
+        && t.authority.as_deref() == Some("user-ruled")
+        && t.provenance.as_deref() != Some("agent-proposed")
+}
+
+/// The boot-read as one line of the frozen `ev-brief` JSON contract a consumer (e.g. the agent-runner
+/// enricher) parses. Every entry is a live, user-ruled, non-agent-proposed ruling carrying its citable
+/// id; the counts make any elision visible so the consumer can re-pull with a higher limit rather than
+/// silently miss a pinned ruling.
+fn brief_json(kept: &[(String, Tick)], total: usize, dropped_lb: usize) -> String {
+    let decisions: Vec<Value> = kept
+        .iter()
+        .map(|(_, t)| {
+            let rejected_roads: Vec<Value> = t
+                .grounds
+                .iter()
+                .filter_map(|g| {
+                    g.supports
+                        .strip_prefix("rejected:")
+                        .map(|option| json!({ "option": option, "claim": g.claim }))
+                })
+                .collect();
+            let mut d = json!({
+                "id": t.id,
+                "decision": t.decision,
+                "load_bearing": load_bearing(t),
+                "rejected_roads": rejected_roads,
+            });
+            // source_ref is genuinely optional — present only when the producer supplied one.
+            if let (Some(sr), Some(obj)) = (&t.source_ref, d.as_object_mut()) {
+                obj.insert(
+                    "source_ref".into(),
+                    Value::String(crate::tick::source_ref_key(sr)),
+                );
+            }
+            d
+        })
+        .collect();
+    let payload = json!({
+        "kind": "ev-brief",
+        "decisions": decisions,
+        "shown": kept.len(),
+        "total": total,
+        "elided": total - kept.len(),
+        "elided_load_bearing": dropped_lb,
+    });
+    // A Value built by json! is infallible to serialize; .expect documents that invariant rather
+    // than masking a failure into an empty string — which would be a false-green: a consumer parsing
+    // the contract would read silence as a clean, empty boot-read. (Unlike the droppable events log,
+    // this is stdout a consumer parses, so it must never be silently blank.)
+    format!(
+        "{}\n",
+        serde_json::to_string(&payload).expect("ev-brief payload serializes")
+    )
+}
+
+pub fn brief(repo: &Path, limit: Option<usize>, json: bool) -> ExitCode {
     let store = Store::at(repo);
     if !store.exists() {
         eprintln!("error: no .evolving/ store here — run `ev init` first");
@@ -808,14 +870,14 @@ pub fn brief(repo: &Path, limit: Option<usize>) -> ExitCode {
     // The flag overrides config; 0 (here or in config) means "show all".
     let limit = limit.unwrap_or(crate::config::read(&store).brief_limit);
     // Collapse each corrective lineage to its current state BEFORE filtering, so an `ev correct` that
-    // (de)promotes authority is honored — then keep only live, user-ruled decisions.
+    // (de)promotes authority is honored — then keep only the live, user-ruled, non-agent-proposed ones.
     let all: Vec<(String, Tick)> = files
         .iter()
         .filter_map(|(name, raw)| crate::tick::from_value(raw).ok().map(|t| (name.clone(), t)))
         .collect();
     let mut kept: Vec<(String, Tick)> = current_decisions(all)
         .into_iter()
-        .filter(|(_, t)| t.status == "live" && t.authority.as_deref() == Some("user-ruled"))
+        .filter(|(_, t)| brief_visible(t))
         .collect();
     let lb = load_bearing;
     // Load-bearing first (true > false, so descending pins them), then most-recent-first by
@@ -826,16 +888,22 @@ pub fn brief(repo: &Path, limit: Option<usize>) -> ExitCode {
             .then(b.1.held_since.cmp(&a.1.held_since))
             .then(b.0.cmp(&a.0))
     });
-    if kept.is_empty() {
-        println!("no user-ruled decisions");
-        return ExitCode::SUCCESS;
-    }
     let total = kept.len();
     // 0 means "show all"; otherwise cap at the limit (never past the end).
     let n = if limit == 0 { total } else { limit.min(total) };
     // Count load-bearing rulings about to be elided, before we truncate the shown set.
     let dropped_lb = kept[n..].iter().filter(|(_, t)| lb(t)).count();
     kept.truncate(n);
+
+    // --json always emits one valid object (even when empty) — a parsing consumer never sees prose.
+    if json {
+        print!("{}", brief_json(&kept, total, dropped_lb));
+        return ExitCode::SUCCESS;
+    }
+    if kept.is_empty() {
+        println!("no user-ruled decisions");
+        return ExitCode::SUCCESS;
+    }
     for (_id, t) in &kept {
         println!("{}  [user-ruled]", t.decision);
         for g in &t.grounds {

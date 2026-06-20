@@ -16,35 +16,46 @@ Install: `cargo install evolving` (the command is `ev`). The store lives in `.ev
 
 An agent uses `ev` in one of two roles. Know which one you are in.
 
-### Reader role — an ephemeral / fresh-start agent
+### Participant role — an ephemeral / fresh-start agent
 
-At the **start of a session**, before proposing anything, load what a human has already
-ruled on:
+You are not a blank slate. At the **start of a session**, before proposing anything, load the
+judgment a human has already ruled on and let it govern what you propose:
 
 ```sh
-ev brief                       # 0-network, local read: the user-ruled decisions + the roads they rejected
+ev brief --json                # machine-readable boot-read for an agent to parse (recommended)
+ev brief                       # the same content as human text
 ev brief --limit 5             # cap the count (default brief_limit=10; --limit 0 shows all)
 ```
 
-`ev brief` prints only the **live, `user-ruled`** decisions and, under each, the options
-they explicitly rejected (`rejected <option>: <why>`). It does no git and no receipt I/O —
-it is a near-zero-cost boot read. **Load-bearing rulings** — user-ruled decisions that closed
-a road via `--reject` — are **pinned above the cap** so recency never buries a closed road you
-must not re-walk; the rest follow **most-recent-first**, and the output is **capped** (default
-`brief_limit`=10 from config; `--limit N` overrides; `--limit 0` shows all). When the cap
-drops decisions it prints a `… N more user-ruled decision(s) — \`ev list\` for all` footer
-(with a `, M with rejected roads` clause when any hidden ruling closed a road), so nothing is
-silently hidden — run `ev list` for the full inventory.
+`ev brief` surfaces only the **live, `user-ruled`** decisions and, under each, the options they
+explicitly rejected. It does no git and no receipt I/O — a near-zero-cost boot read drawn **only
+from human-ratified rulings** (an `agent-proposed` proposal never appears; it cannot govern you
+until a human vouches for it). **Load-bearing rulings** — user-ruled decisions that closed a road
+via `--reject` — are **pinned above the cap** so recency never buries a closed road you must not
+re-walk; the rest follow **most-recent-first**, and the output is **capped** (default
+`brief_limit`=10; `--limit N` overrides; `--limit 0` shows all), with a footer counting any hidden
+rulings (and how many closed a road) so nothing drops silently.
 
-**Respect what it prints:**
+**`ev brief --json` is the boot-read an agent should parse.** It emits one frozen object —
+`{kind:"ev-brief", decisions:[{id, decision, load_bearing, rejected_roads:[{option, claim}],
+source_ref?}], shown, total, elided, elided_load_bearing}`. Each decision carries a **citable
+`id`**, and the `elided` / `elided_load_bearing` counts make any capped-off ruling **visible**: if
+`elided` > 0, re-pull with `--limit 0` (or a higher cap) rather than act on a partial view.
+
+**Let it govern, and cite it:**
 
 - Do **not** re-open a settled user ruling, and do **not** re-propose a road it shows as
   rejected. A `user-ruled` decision is the human's call; you are reading it, not re-deciding it.
-- Need the detail behind one? `ev reopen <id>` shows the full decision object (grounds, each
-  ground's current verdict, the roads-not-taken). `ev list` inventories every decision (its
-  `authority=` tag is printed when set); `ev log` walks the lineage newest-first.
-- `ev reopen` only **presents** a decision. If a ruling genuinely needs to change, that is a
-  new `ev decide` a human authors — not an in-place edit.
+- When your work **proceeds on or near a settled ruling, cite its `id`** (e.g. "per ruling
+  `<id>` …") so your reasoning traces back to the governing decision. `ev show <id>` /
+  `ev reopen <id>` pull the full object (grounds, each ground's current verdict, the
+  roads-not-taken); `ev list` inventories every decision (its `authority=` tag printed when set);
+  `ev log` walks the lineage newest-first.
+- If a ruling genuinely needs to change, that is a **new `ev decide` a human authors** — never an
+  in-place edit, and never an agent quietly overriding it. You **surface the conflict** to the
+  human; you do not resolve it yourself.
+- If you run the gate and hit a **not-green** check, surface it — it is an invitation for a human
+  to re-decide, not a verdict you should silently act on.
 
 ### Curator role — a persistent / orchestrating agent
 

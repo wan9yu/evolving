@@ -251,6 +251,112 @@ fn brief_should_count_hidden_load_bearing_rulings_in_the_footer_when_they_exceed
 }
 
 #[test]
+fn brief_should_emit_a_structured_json_object_when_json_is_passed() {
+    // given: a user-ruled decision that closed a road, carrying an opaque producer source_ref
+    let r = repo();
+    decide(
+        &r,
+        "keep the slice locked",
+        &[
+            "--authority",
+            "user-ruled",
+            "--source-ref",
+            "R1",
+            "--reject",
+            "v1.9: re-milestoned without sign-off",
+        ],
+    );
+
+    // when: ev brief --json runs
+    let out = ev()
+        .args(["brief", "--json"])
+        .current_dir(&r)
+        .output()
+        .unwrap();
+
+    // then: stdout is ONE json object carrying the ruling — its id (citable), source_ref, the
+    // load-bearing flag, and the rejected road parsed into option + claim — plus the elision counts
+    assert!(out.status.success());
+    let v: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("brief --json must emit valid JSON");
+    assert_eq!(v["kind"], "ev-brief");
+    let d = &v["decisions"][0];
+    assert!(d["id"].is_string(), "each decision carries a citable id");
+    assert_eq!(d["decision"], "keep the slice locked");
+    assert_eq!(d["source_ref"], "R1");
+    assert_eq!(d["load_bearing"], true);
+    assert_eq!(d["rejected_roads"][0]["option"], "v1.9");
+    assert_eq!(
+        d["rejected_roads"][0]["claim"],
+        "re-milestoned without sign-off"
+    );
+    assert_eq!(v["shown"], 1);
+    assert_eq!(v["total"], 1);
+    assert_eq!(v["elided"], 0);
+    assert_eq!(v["elided_load_bearing"], 0);
+}
+
+#[test]
+fn brief_json_should_make_elision_visible_with_counts_when_over_the_limit() {
+    // given: three user-ruled decisions, each closing a road
+    let r = repo();
+    decide(
+        &r,
+        "closed road one",
+        &["--authority", "user-ruled", "--reject", "a: one"],
+    );
+    decide(
+        &r,
+        "closed road two",
+        &["--authority", "user-ruled", "--reject", "b: two"],
+    );
+    decide(
+        &r,
+        "closed road three",
+        &["--authority", "user-ruled", "--reject", "c: three"],
+    );
+
+    // when: ev brief --json runs with a cap of 1
+    let out = ev()
+        .args(["brief", "--json", "--limit", "1"])
+        .current_dir(&r)
+        .output()
+        .unwrap();
+
+    // then: exactly one decision is shown, and the counts make the elided two (both load-bearing)
+    // visible so a consumer can re-pull with a higher limit rather than silently miss them
+    assert!(out.status.success());
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["decisions"].as_array().unwrap().len(), 1);
+    assert_eq!(v["shown"], 1);
+    assert_eq!(v["total"], 3);
+    assert_eq!(v["elided"], 2);
+    assert_eq!(v["elided_load_bearing"], 2);
+}
+
+#[test]
+fn brief_json_should_emit_an_empty_object_when_there_are_no_user_ruled_decisions() {
+    // given: a store with only a plain (non-user-ruled) decision
+    let r = repo();
+    decide(&r, "a disposable decision", &[]);
+
+    // when: ev brief --json runs
+    let out = ev()
+        .args(["brief", "--json"])
+        .current_dir(&r)
+        .output()
+        .unwrap();
+
+    // then: a consumer parsing --json always gets valid JSON — never the human "no user-ruled" text
+    assert!(out.status.success());
+    let v: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("empty brief --json is still valid JSON");
+    assert_eq!(v["kind"], "ev-brief");
+    assert_eq!(v["decisions"].as_array().unwrap().len(), 0);
+    assert_eq!(v["total"], 0);
+}
+
+#[test]
 fn brief_should_not_mention_rejected_roads_in_the_footer_when_none_are_hidden() {
     // given: one rejected-road ruling plus three plain user-ruled decisions
     let r = repo();

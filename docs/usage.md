@@ -65,6 +65,7 @@ Start with the rulings and the closed roads — a fast, no-network read; load-be
 ```sh
 ev brief            # the live, user-ruled decisions + the options each one rejected
 ev brief --limit 5  # cap the count; --limit 0 shows all (default cap is brief_limit=10)
+ev brief --json     # the same set as one machine-readable object for an agent to parse
 ```
 
 `ev brief` pins **load-bearing rulings** — user-ruled decisions that closed a road via

@@ -490,6 +490,43 @@ fn migrate_canonical_should_stamp_authority_user_ruled_so_the_ruling_surfaces_in
     );
 }
 
+// An agent-PROPOSED ruling that even arrives marked user-ruled — the danger case §五 names: an agent's
+// invented ruling that could govern a fresh fleet before any human vouches for it.
+const AGENT_PROPOSED_USER_RULED: &str = "{\"kind\":\"ev-decision-intake\",\
+\"decision\":\"agent says rip out the rate limiter\",\
+\"grounds\":[{\"claim\":\"it looked unused to me\",\"supports\":\"chosen\"}],\
+\"blame\":\"agent-runner\",\"authority\":\"user-ruled\",\"provenance\":\"agent-proposed\",\"source_ref\":\"R-agent-1\"}\n";
+
+#[test]
+fn brief_should_exclude_an_agent_proposed_ruling_even_when_it_arrives_user_ruled() {
+    // given: an agent-proposed ruling ingested while marked user-ruled (the §五 belt-and-suspenders case)
+    let r = repo();
+    let src = write_source(&r, "canonical", "agent.jsonl", AGENT_PROPOSED_USER_RULED);
+    assert!(
+        run(&r, &["migrate", "--source", &src]).status.success(),
+        "the agent-proposed ruling ingests as a record"
+    );
+
+    // when: a fresh agent runs the boot-read in both forms
+    let text = run(&r, &["brief"]);
+    let json = run(&r, &["brief", "--json"]);
+
+    // then: it NEVER governs — neither the human text nor the machine JSON surfaces it. An
+    // agent-proposed proposal cannot reach a fresh agent before a named human vouches for it.
+    assert!(text.status.success() && json.status.success());
+    let t = String::from_utf8_lossy(&text.stdout);
+    assert!(
+        !t.contains("rip out the rate limiter"),
+        "agent-proposed must not surface in the text brief; was {t:?}"
+    );
+    let v: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+    assert_eq!(
+        v["decisions"].as_array().unwrap().len(),
+        0,
+        "agent-proposed must not surface in brief --json; was {v}"
+    );
+}
+
 #[test]
 fn migrate_canonical_should_report_a_source_only_gap_when_a_line_has_no_blame_and_no_fallback() {
     // given: a canonical line carrying NO blame, ingested WITHOUT a --blame fallback

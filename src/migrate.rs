@@ -215,12 +215,22 @@ pub fn canonical_records(text: &str) -> Result<Vec<MigrationRecord>, String> {
             }
         };
         // The dedup/sort key mirrors store_key's precedence: the source_ref's derived key, else the
-        // first round/`#issue` token in observe (so the canonical path and the store agree on keying).
+        // first round/`#issue` token in observe. A record that yields NEITHER has no durable identity,
+        // so re-imports could not be idempotent and distinct records would collide on the empty key —
+        // reject it at the door (mirroring the strict envelope), rather than silently keying it "".
         let source_key = source_ref
             .as_ref()
             .map(source_ref_key)
             .or_else(|| first_round_or_issue_token(&observe))
-            .unwrap_or_default();
+            .filter(|k| !k.is_empty());
+        let source_key = match source_key {
+            Some(k) => k,
+            None => {
+                return Err(format!(
+                    "canonical line {n}: a record needs a source_ref (or a round/#issue token in observe) for idempotent re-import"
+                ))
+            }
+        };
         out.push(MigrationRecord {
             source_key,
             decision,
@@ -374,6 +384,10 @@ pub struct BackfillSummary {
     pub skipped: usize,
     pub relinked: usize,
     pub source_only_gaps: usize,
+    /// A re-imported record whose RESOLVED non-hashed tags (authority/jurisdiction/provenance) differ
+    /// from the already-stored tick. Ticks are immutable, so the difference is reported, NEVER applied —
+    /// surfaced (not silently skipped) so a corrected ruling is never invisibly dropped.
+    pub discrepancies: usize,
 }
 
 /// Map the store's existing decisions to their durable source key → (id, parent_id). The key is the
@@ -426,7 +440,13 @@ pub fn backfill(
     if !store.exists() {
         return Err("no .evolving/ store here — run `ev init` first".into());
     }
-    let existing = store_key_index(&store)?;
+    // The running source_key index, seeded from the store and EXTENDED as each record is written, so a
+    // WITHIN-pass duplicate key (two records — e.g. a gitlog R555 and a to-human R555 across two
+    // --source files — sharing a key but absent from the store) routes into the skip/report arm instead
+    // of silently double-importing. `initial_keys` remembers the seed so a within-pass duplicate is not
+    // misreported as a back-dated relink.
+    let mut existing = store_key_index(&store)?;
+    let initial_keys: std::collections::HashSet<String> = existing.keys().cloned().collect();
     // The prospective parent threads through the loop so the chain stays coherent across this pass:
     // for a brand-new store it begins at the live HEAD; as records resolve it advances to each id.
     // For relink detection we compare a found record's STORED parent against where this sorted pass
@@ -449,30 +469,11 @@ pub fn backfill(
     };
     let mut summary = BackfillSummary::default();
     for r in records {
-        // Idempotency PRE-CHECK on the durable source_key (chain-position-independent).
-        if let Some((existing_id, existing_parent)) = existing.get(&r.source_key) {
-            // A back-dated mid-chain insert: present, but its stored parent differs from where this
-            // pass would now place it — the chain was re-linked around it. Reported, never rewritten.
-            if *existing_parent != prospective_parent {
-                summary.relinked += 1;
-            }
-            // Keep the chain coherent for any later records in this same pass.
-            prospective_parent = existing_id.clone();
-            summary.skipped += 1;
-            continue;
-        }
-        let blame = match r.blame.as_deref().or(blame_fallback) {
-            Some(b) if !b.trim().is_empty() => b.trim().to_string(),
-            _ => {
-                // R5 stays intact: no author, no fabrication. Surface the gap; never invent a human.
-                summary.source_only_gaps += 1;
-                continue;
-            }
-        };
-        // Per-record bookkeeping, applied identically on the probe and the real path (all non-hashed,
-        // so the probe id stays byte-identical to the append id). An inline jurisdiction on the record
-        // WINS over the `--jurisdiction-map`; the map fills only a record that declares none; a record
-        // that declares a DIFFERENT bucket than the map is a hard error (two sources of truth disagree).
+        // Resolve the declared non-hashed tags the SAME way the write path does, BEFORE the skip
+        // check — so the idempotency-skip arm can compare them against the stored tick, and a
+        // jurisdiction conflict is caught whether or not the record is new. Inline jurisdiction WINS
+        // over the `--jurisdiction-map`; the map fills only a record that declares none; a record
+        // declaring a DIFFERENT bucket than the map is a hard error (two sources of truth disagree).
         let jurisdiction = match (
             r.jurisdiction.as_deref(),
             jurisdiction_map.get(&r.source_key),
@@ -495,6 +496,53 @@ pub fn backfill(
             .provenance
             .clone()
             .or_else(|| Some("imported".to_string()));
+
+        // Idempotency PRE-CHECK on the durable source_key (chain-position-independent).
+        if let Some((existing_id, existing_parent)) = existing.get(&r.source_key) {
+            // A back-dated mid-chain insert: present in the INITIAL store, but its stored parent differs
+            // from where this pass would now place it — the chain was re-linked around it. Reported,
+            // never rewritten. Gated on `initial_keys` so a within-pass duplicate (added to `existing`
+            // this pass) is not misreported as a relink.
+            if initial_keys.contains(&r.source_key) && *existing_parent != prospective_parent {
+                summary.relinked += 1;
+            }
+            // A re-import NEVER rewrites a tick (immutability). But if the record's RESOLVED non-hashed
+            // tags differ from the stored tick, that is a real faithfulness difference — SURFACE it
+            // loudly, never drop it silently (a silent skip of a corrected authority is the false-green
+            // ev exists to refuse). The human resolves it with `ev correct`. Mirrors the re-linked
+            // report: detect a difference on a present record, report it, never rewrite.
+            if let Ok(Some(stored)) = store.read_tick(existing_id) {
+                let diffs: Vec<String> = [
+                    ("authority", &stored.authority, &authority),
+                    ("jurisdiction", &stored.jurisdiction, &jurisdiction),
+                    ("provenance", &stored.provenance, &provenance),
+                ]
+                .iter()
+                .filter(|(_, s, i)| s != i)
+                .map(|(label, s, i)| format!("{label} stored={s:?} incoming={i:?}"))
+                .collect();
+                if !diffs.is_empty() {
+                    summary.discrepancies += 1;
+                    eprintln!(
+                        "discrepancy: source {:?} (tick {existing_id}): {} — NOT applied (ticks are immutable; resolve with `ev correct {existing_id}`)",
+                        r.source_key,
+                        diffs.join("; ")
+                    );
+                }
+            }
+            // Keep the chain coherent for any later records in this same pass.
+            prospective_parent = existing_id.clone();
+            summary.skipped += 1;
+            continue;
+        }
+        let blame = match r.blame.as_deref().or(blame_fallback) {
+            Some(b) if !b.trim().is_empty() => b.trim().to_string(),
+            _ => {
+                // R5 stays intact: no author, no fabrication. Surface the gap; never invent a human.
+                summary.source_only_gaps += 1;
+                continue;
+            }
+        };
         // Ingest-boundary structural gates — the SAME refusals `ev verify` enforces at rest, applied at
         // the door so a malformed record never lands. A C/D (detect-only) decision may carry no runnable
         // Test check (one shared predicate with verify, so they cannot drift):
@@ -539,7 +587,13 @@ pub fn backfill(
                 source_ref: source_ref.clone(),
                 provenance: provenance.clone(),
             };
-            prospective_parent = compute_id(&probe);
+            let probe_id = compute_id(&probe);
+            // Extend the running index so a later same-key record this pass routes into the skip arm.
+            existing.insert(
+                r.source_key.clone(),
+                (probe_id.clone(), prospective_parent.clone()),
+            );
+            prospective_parent = probe_id;
             summary.imported += 1;
             continue;
         }
@@ -556,6 +610,10 @@ pub fn backfill(
                 provenance,
             },
         )?;
+        // Extend the running index so a later same-key record this pass routes into the skip arm
+        // (a within-pass duplicate is detected + reported, never silently double-imported). r.source_key
+        // (an owned field untouched by the partial move above) and prospective_parent move in directly.
+        existing.insert(r.source_key, (written.id.clone(), prospective_parent));
         prospective_parent = written.id;
         summary.imported += 1;
     }
@@ -744,9 +802,10 @@ this paragraph explains at length why redis was rejected, in prose
     // --- canonical intake reader (the trust boundary) ---
 
     fn canonical_line(extra: &str) -> String {
-        // a minimal valid ev-decision-intake line, with room to splice in extra/override fields
+        // a minimal valid ev-decision-intake line (carrying a source_ref so it has a durable dedup
+        // key), with room to splice in extra fields. Tests that OVERRIDE source_ref build inline.
         format!(
-            "{{\"kind\":\"ev-decision-intake\",\"decision\":\"no Redis\",\"grounds\":[]{extra}}}"
+            "{{\"kind\":\"ev-decision-intake\",\"decision\":\"no Redis\",\"grounds\":[],\"source_ref\":\"R1\"{extra}}}"
         )
     }
 
@@ -828,10 +887,11 @@ this paragraph explains at length why redis was rejected, in prose
     #[test]
     fn canonical_reader_should_take_source_ref_verbatim_without_resniffing_tokens() {
         // given: a line whose source_ref is an opaque key and whose observe carries a DIFFERENT token
-        let text = canonical_line(",\"observe\":\"see R2289\",\"source_ref\":\"ticket-42\"");
+        let text = "{\"kind\":\"ev-decision-intake\",\"decision\":\"no Redis\",\"grounds\":[],\
+\"observe\":\"see R2289\",\"source_ref\":\"ticket-42\"}";
 
         // when: the canonical reader parses it
-        let recs = canonical_records(&text).expect("valid");
+        let recs = canonical_records(text).expect("valid");
 
         // then: source_ref and the dedup key are the verbatim source_ref — never re-sniffed from observe
         assert_eq!(recs[0].source_ref, Some(serde_json::json!("ticket-42")));
@@ -841,10 +901,11 @@ this paragraph explains at length why redis was rejected, in prose
     #[test]
     fn canonical_reader_should_key_a_structured_source_ref_by_its_deterministic_json() {
         // given: a line whose source_ref is a STRUCTURED object (richer than a string)
-        let text = canonical_line(",\"source_ref\":{\"round\":\"R1\",\"sprint\":\"S7\"}");
+        let text = "{\"kind\":\"ev-decision-intake\",\"decision\":\"no Redis\",\"grounds\":[],\
+\"source_ref\":{\"round\":\"R1\",\"sprint\":\"S7\"}}";
 
         // when: the canonical reader parses it
-        let recs = canonical_records(&text).expect("valid");
+        let recs = canonical_records(text).expect("valid");
 
         // then: the object is carried opaquely and the dedup key is its deterministic (sorted) JSON
         assert_eq!(
@@ -864,6 +925,22 @@ this paragraph explains at length why redis was rejected, in prose
 
         // then: only the real record is read (blank/comment lines are skipped, not errors)
         assert_eq!(recs.len(), 1);
+    }
+
+    #[test]
+    fn canonical_reader_should_reject_a_record_with_no_source_ref_and_no_observe_token() {
+        // given: a canonical line with NO source_ref and an observe carrying NO round/#issue token
+        let text = "{\"kind\":\"ev-decision-intake\",\"decision\":\"x\",\"grounds\":[],\
+\"observe\":\"no token here\"}";
+
+        // when: the canonical reader parses it
+        let result = canonical_records(text);
+
+        // then: it is rejected — a record with no durable key cannot be re-imported idempotently
+        assert!(
+            result.is_err(),
+            "an un-keyable record must be refused at the door"
+        );
     }
 
     #[test]

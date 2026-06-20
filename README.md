@@ -36,6 +36,14 @@ cargo install evolving
 
 This installs an `ev` binary on your `PATH`. The package is named `evolving`; the command is `ev`.
 
+No Rust toolchain? Each release attaches **prebuilt static binaries** — download the one for your platform from the [latest release](https://github.com/wan9yu/evolving/releases/latest) and drop it on your `PATH`. The Linux builds are static (`musl`), so the `aarch64-unknown-linux-musl` binary runs on any ARM-Linux host regardless of its glibc:
+
+```sh
+curl -L <asset-url> | tar xz
+install ev ~/.local/bin/ev
+ev --version
+```
+
 Build from source:
 
 ```sh

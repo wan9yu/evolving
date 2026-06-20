@@ -117,6 +117,19 @@ enum Cmd {
         #[arg(long = "jurisdiction-map")]
         jurisdiction_map: Option<String>,
     },
+    /// Correct a stale non-hashed tag (authority/jurisdiction/provenance) by appending a child.
+    Correct {
+        /// The tick id whose tag to correct.
+        id: String,
+        #[arg(long)]
+        authority: Option<String>,
+        #[arg(long)]
+        jurisdiction: Option<String>,
+        #[arg(long)]
+        provenance: Option<String>,
+        #[arg(long)]
+        blame: Option<String>,
+    },
     /// Reverse lookup: name the decision + ground a test selector guards.
     Why {
         /// The bound test selector to look up.
@@ -199,6 +212,22 @@ fn main() -> std::process::ExitCode {
                 surfaces,
                 verified_at_sha,
                 jurisdiction_map,
+            },
+        ),
+        Cmd::Correct {
+            id,
+            authority,
+            jurisdiction,
+            provenance,
+            blame,
+        } => ev::cmd::correct(
+            &repo,
+            ev::correct::CorrectArgs {
+                id,
+                authority,
+                jurisdiction,
+                provenance,
+                blame,
             },
         ),
         Cmd::Why { selector } => ev::cmd::why(&repo, &selector),

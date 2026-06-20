@@ -186,6 +186,13 @@ its predecessor, and whose own `id` is the hash of its (new) payload. This is wh
 mutating the tick it targets. `HEAD` tracks the latest tick; `ev guard` can only amend the
 current `HEAD`.
 
+Even a **non-hashed** tag (`authority` / `jurisdiction` / `provenance`) is never rewritten in
+place. A stale tag is fixed with **`ev correct`** (see [commands.md](commands.md#ev-correct)),
+which appends a corrective **child** that copies the target's hashed payload verbatim and carries
+the corrected tag — consistent with the same append-only law. The stale tick stays as honest
+history; `ev brief` and `ev list` collapse the corrective lineage to its **current** state, so the
+corrected child surfaces while `ev log` still shows the full lineage.
+
 ## Jurisdiction — and the C/D *structurally ungateable* guarantee
 
 A decision may carry a declared **`jurisdiction`** tag from the closed vocabulary

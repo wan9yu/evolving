@@ -5,6 +5,47 @@ use crate::verify::verify;
 use std::path::Path;
 use std::process::ExitCode;
 
+/// Append a corrective child that fixes a stale non-hashed tag, then report the new child id.
+pub fn correct(repo: &Path, a: crate::correct::CorrectArgs) -> ExitCode {
+    match crate::correct::run(repo, a) {
+        Ok(t) => {
+            println!("corrected {} ({} ground(s))", t.id, t.grounds.len());
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// The identity of a DECISION (not a tick): its hashed payload minus `parent_id`. Ticks sharing this —
+/// in practice an `ev correct` child and the tick it re-tags (same decision/observe/grounds, a
+/// different chain position) — are treated as one decision and collapsed to the latest. (Content
+/// equality, not an explicit corrective link: two genuinely-independent decisions with byte-identical
+/// decision/observe/grounds would also collapse; an explicit `corrects:<id>` back-link is a future
+/// refinement.) Used to collapse a corrective lineage to its current state.
+fn decision_identity(t: &Tick) -> String {
+    let mut v = crate::canonical::hashed_value(t);
+    if let serde_json::Value::Object(m) = &mut v {
+        m.remove("parent_id");
+    }
+    v.to_string()
+}
+
+/// Collapse a corrective lineage to its CURRENT state: among ticks that are the same decision (same
+/// `decision_identity`), keep only the latest (by `held_since`, then id) — so an `ev correct` child
+/// supersedes the stale tick it re-tags. A decision that was never corrected is its own sole entry.
+fn current_decisions(mut ticks: Vec<(String, Tick)>) -> Vec<(String, Tick)> {
+    // latest-first, so the FIRST seen per decision identity is the current one
+    ticks.sort_by(|a, b| b.1.held_since.cmp(&a.1.held_since).then(b.0.cmp(&a.0)));
+    let mut seen = std::collections::HashSet::new();
+    ticks
+        .into_iter()
+        .filter(|(_, t)| seen.insert(decision_identity(t)))
+        .collect()
+}
+
 /// Render an opaque `source_ref` for human display: a bare string verbatim, an object as its
 /// deterministic compact JSON. ev only renders it — it never interprets the contents. Kept distinct
 /// from `tick::source_ref_key` (which derives the dedup/join key): they coincide today but are
@@ -553,12 +594,17 @@ pub fn migrate(repo: &Path, a: MigrateArgs) -> ExitCode {
                 crate::events::append(&Store::at(repo), "migrate", None, None);
             }
             println!(
-                "{}imported {}, skipped {}, re-linked {}, {} source-only gap(s)",
+                "{}imported {}, skipped {}, re-linked {}, {} source-only gap(s){}",
                 if a.dry_run { "(dry-run) " } else { "" },
                 s.imported,
                 s.skipped,
                 s.relinked,
-                s.source_only_gaps
+                s.source_only_gaps,
+                if s.discrepancies > 0 {
+                    format!(", {} discrepancy(ies) — see above", s.discrepancies)
+                } else {
+                    String::new()
+                }
             );
             ExitCode::SUCCESS
         }
@@ -626,28 +672,30 @@ pub fn list(repo: &Path) -> ExitCode {
     };
     // One pre-rendered line per tick, keyed by id so the output is deterministic. The bookkeeping
     // tags (authority, jurisdiction, source_ref) are appended inline when present — same one-line shape as show.
-    let mut rows: Vec<String> = files
-        .iter()
-        .map(|(name, raw)| {
-            let line = match crate::tick::from_value(raw) {
-                Ok(t) => {
-                    let mut l = format!("{name}\t{}\t{:?}", t.status, t.decision);
-                    if let Some(a) = &t.authority {
-                        l.push_str(&format!("\tauthority={a}"));
-                    }
-                    if let Some(j) = &t.jurisdiction {
-                        l.push_str(&format!("\tjurisdiction={j}"));
-                    }
-                    if let Some(r) = &t.source_ref {
-                        l.push_str(&format!("\tsource_ref={}", render_source_ref(r)));
-                    }
-                    l
-                }
-                Err(_) => format!("{name}\t?\t\"<unparseable>\""),
-            };
-            line
-        })
-        .collect();
+    // Collapse each corrective lineage to its current state (an `ev correct` child supersedes the
+    // stale tick it re-tags); unparseable ticks are always shown (verify flags them) since they have
+    // no decision identity to supersede.
+    let mut parsed: Vec<(String, Tick)> = Vec::new();
+    let mut rows: Vec<String> = Vec::new();
+    for (name, raw) in &files {
+        match crate::tick::from_value(raw) {
+            Ok(t) => parsed.push((name.clone(), t)),
+            Err(_) => rows.push(format!("{name}\t?\t\"<unparseable>\"")),
+        }
+    }
+    for (name, t) in current_decisions(parsed) {
+        let mut l = format!("{name}\t{}\t{:?}", t.status, t.decision);
+        if let Some(a) = &t.authority {
+            l.push_str(&format!("\tauthority={a}"));
+        }
+        if let Some(j) = &t.jurisdiction {
+            l.push_str(&format!("\tjurisdiction={j}"));
+        }
+        if let Some(r) = &t.source_ref {
+            l.push_str(&format!("\tsource_ref={}", render_source_ref(r)));
+        }
+        rows.push(l);
+    }
     rows.sort();
     if rows.is_empty() {
         println!("no decisions yet");
@@ -689,10 +737,14 @@ pub fn brief(repo: &Path, limit: Option<usize>) -> ExitCode {
     };
     // The flag overrides config; 0 (here or in config) means "show all".
     let limit = limit.unwrap_or(crate::config::read(&store).brief_limit);
-    // Keep only live, user-ruled decisions; carry the id so output is deterministic.
-    let mut kept: Vec<(String, Tick)> = files
+    // Collapse each corrective lineage to its current state BEFORE filtering, so an `ev correct` that
+    // (de)promotes authority is honored — then keep only live, user-ruled decisions.
+    let all: Vec<(String, Tick)> = files
         .iter()
         .filter_map(|(name, raw)| crate::tick::from_value(raw).ok().map(|t| (name.clone(), t)))
+        .collect();
+    let mut kept: Vec<(String, Tick)> = current_decisions(all)
+        .into_iter()
         .filter(|(_, t)| t.status == "live" && t.authority.as_deref() == Some("user-ruled"))
         .collect();
     let lb = load_bearing;

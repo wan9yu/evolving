@@ -1,8 +1,8 @@
 # `ev` command reference
 
 The authoritative reference for the `ev` command surface: the write side (`init`, `decide`,
-`guard`, `migrate`) and the read side (`check`, `show`, `verify`, `why`, `reopen`, `brief`,
-`list`, `log`). The package is named `evolving`; the command is `ev`.
+`guard`, `migrate`, `correct`) and the read side (`check`, `show`, `verify`, `why`, `reopen`,
+`brief`, `list`, `log`). The package is named `evolving`; the command is `ev`.
 
 Every command returns a process exit code: **`0`** on success, **`1`** (failure) otherwise.
 Throughout, errors are written to **stderr** as `error: <message>`; the per-command
@@ -15,6 +15,7 @@ see [concepts.md](concepts.md).
 - [`ev decide`](#ev-decide)
 - [`ev guard`](#ev-guard)
 - [`ev migrate`](#ev-migrate)
+- [`ev correct`](#ev-correct)
 - [`ev check`](#ev-check)
 - [`ev show`](#ev-show)
 - [`ev verify`](#ev-verify)
@@ -436,6 +437,34 @@ mid-chain insert that re-parents an existing tick is counted and reported as **r
 never rewritten. Every record — canonical or extractor-built — is appended through the **same**
 single hashing path as `ev decide` (one `compute_id`, one write, one R3 lint).
 
+### Tag discrepancies on re-import (resolved with `ev correct`)
+
+Idempotency is keyed on the durable `source_key`, **not** on the non-hashed tags. So when a
+re-imported record carries the same key as a stored tick but its **resolved** non-hashed tags
+(`authority` / `jurisdiction` / `provenance`) **differ** from what is already stored, `ev
+migrate` does **not** silently skip it. A tick is immutable, so the difference is never applied —
+but it is **surfaced loudly**, never dropped, because a silently-discarded corrected authority is
+exactly the false-green `ev` exists to refuse (e.g. a ruling first imported as an open item, later
+corrected upstream, would otherwise never reach `ev brief`).
+
+Per differing record, one line on **stderr**:
+
+```
+discrepancy: source <key> (tick <id>): authority stored=<a> incoming=<b> — NOT applied (ticks are immutable; resolve with `ev correct <id>`)
+```
+
+(the `<…>` clause lists every differing tag — `authority` / `jurisdiction` / `provenance` —
+each as `stored=<v> incoming=<v>`, `; `-joined), and the run's summary line gains a trailing
+`, N discrepancy(ies) — see above` count. This runs under `--dry-run` too (it compares against
+the stored tick without writing). The record is still **skipped** (counted in `skipped`), and the
+exit code stays `0` — a discrepancy is a *standing report*, not a failure.
+
+The remedy is **[`ev correct`](#ev-correct)**: it appends a corrective child carrying the
+corrected tag, so the right value surfaces while the stale tick stays as honest history. This
+means **`ev migrate` is no longer a clean "all-zeros = done" signal**: a non-zero discrepancy
+count is a *correction pending*, and re-running the import will report it again until you resolve
+it with `ev correct`.
+
 On this import path a record's **`provenance` defaults to `imported`** (history) when it
 declares none; an explicit value on a canonical record wins. Fresh authorship can never reach
 here: `ev decide` / `ev guard` always stamp `human-now`, so a forbidden op can never be
@@ -501,6 +530,11 @@ derivable key, counted separately). `--against` accepts the same kinds as `--sou
   the line, e.g. `canonical line <n>: field outside closed schema: <k>` or
   `canonical line <n>: not an ev-decision-intake record (kind=<v>)`; a malformed ground fails
   through the same read-path validator a stored tick uses.
+- **A canonical record needs a durable key.** A `canonical:` record that yields **no** dedup key
+  — **no** `source_ref` **and no** round/`#issue` token in `observe` — is rejected at the door:
+  `canonical line <n>: a record needs a source_ref (or a round/#issue token in observe) for idempotent re-import`.
+  Without a durable key, distinct records would collide on an empty key and re-import every run, so
+  the producer must emit a stable `source_ref` (see [migrating.md](migrating.md)).
 - **An ingest gate.** A `C` / `D` canonical record carrying a Test check →
   `source <key>: a <C|D> jurisdiction (detect-only) decision cannot carry a runnable test check`;
   a harvested check on a non-`imported` record →
@@ -520,7 +554,9 @@ derivable key, counted separately). `--against` accepts the same kinds as `--sou
 **Output (stdout / stderr):**
 
 - backfill (stdout): `<(dry-run) >imported N, skipped M, re-linked K, J source-only gap(s)`
-  (the `(dry-run) ` prefix only under `--dry-run`).
+  (the `(dry-run) ` prefix only under `--dry-run`); a trailing `, D discrepancy(ies) — see above`
+  is appended **only when** `D > 0` tag discrepancies were surfaced (see [above](#tag-discrepancies-on-re-import-resolved-with-ev-correct)).
+- per discrepancy (stderr, one line each): `discrepancy: source <key> (tick <id>): <tag stored=… incoming=…; …> — NOT applied (ticks are immutable; resolve with \`ev correct <id>\`)`.
 - reconcile (stdout): `reconcile: in-both N, source-only M (the capture gap), store-only K, un-keyable J`.
 - `--bind-check` (stdout):
   `harvested check (falsifiability not proven; no counter-test): "<selector>" on [<platforms>] triggered-by [<triggers>] surface [<surfaces>]`.
@@ -575,6 +611,85 @@ ev migrate --bind-check "pytest tests/test_redis_absent.py" \
   --on-platform linux-ci --triggered-by pyproject.toml --surface pyproject-deps
 # → harvested check (falsifiability not proven; no counter-test): "pytest tests/test_redis_absent.py" …
 ```
+
+---
+
+## `ev correct`
+
+**Synopsis:** fix a **stale non-hashed tag** (`authority` / `jurisdiction` / `provenance`) on an
+existing decision under `ev`'s append-only law. It does **not** rewrite the target tick: it
+appends a corrective **child** that copies the target's hashed payload (`decision` / `observe` /
+`grounds`) verbatim — so it is recognizably the same decision — and carries the corrected tag.
+`ev brief` / `ev list` then collapse the corrective lineage to its current state, so the corrected
+child surfaces and the stale parent stays as honest history (and `ev log` still shows the full
+lineage).
+
+```
+ev correct <id> [--authority <v>] [--jurisdiction <v>] [--provenance <v>] [--blame "<name>"]
+```
+
+**Positional argument:** the single `id` (required) is the tick whose tag to correct.
+
+**Flags:**
+
+| Flag | Takes | Required | Effect |
+| --- | --- | --- | --- |
+| `--authority` | `user-ruled` \| `agent-disposable` | at least one tag† | The corrected authority. Out-of-vocabulary is refused. |
+| `--jurisdiction` | `A` \| `B` \| `C` \| `D` | at least one tag† | The corrected jurisdiction. Out-of-vocabulary is refused. |
+| `--provenance` | `imported` \| `agent-proposed` \| `human-now` | at least one tag† | The corrected provenance. Out-of-vocabulary is refused. |
+| `--blame` | a name | no* | The author of the correction. *If omitted, falls back to `git config user.name`; one of the two must resolve to a non-empty name (R5). A correction is a human-authored act.* |
+
+†At least **one** of `--authority` / `--jurisdiction` / `--provenance` must be given.
+
+**What it does:** reads the target tick, resolves the corrected tags (an **override wins**; an
+**unspecified tag inherits** the target's), and appends a new child through the **same** hashing
+path as `ev decide` — a new `id` at HEAD whose `parent_id` is the prior HEAD. The hashed payload
+(`decision` / `observe` / `grounds`) and the `source_ref` are copied from the target verbatim; only
+the corrected non-hashed tags differ. The target is **never** rewritten — immutability intact.
+
+It is a **human-authored** act (blame required) and is **unreachable** from `ev migrate` /
+canonical intake, so an adapter can never launder a tag through it — the only way a tag changes is
+a named human appending a correction.
+
+**The refusals it enforces:**
+
+- **At least one tag.** No `--authority` / `--jurisdiction` / `--provenance` →
+  `ev correct needs at least one of --authority / --jurisdiction / --provenance`.
+- **No-op.** Every supplied tag already holds that value (nothing actually changes) →
+  `tick <id> already carries those tags — nothing to correct`.
+- **Unknown id.** An `id` not in the store → `no such tick: <id>`.
+- **Vocabulary.** An out-of-vocabulary `--authority` / `--jurisdiction` / `--provenance` is
+  refused with the same string `ev decide` uses (e.g. `authority must be user-ruled or
+  agent-disposable`).
+- **Detect-only structural lock.** Setting a `C` / `D` jurisdiction on a decision that carries a
+  runnable Test check → `cannot set jurisdiction <v> on a decision that carries a test check
+  (detect-only)`.
+- **No store.** → `no .evolving/ store here — run \`ev init\` first`.
+
+**Exit code:** `0` on success; `1` on any refusal above.
+
+**Output (stdout / stderr):**
+
+- success (stdout): `corrected <id> (<n> ground(s))` — `<id>` is the **new child** id.
+- failure (stderr): `error: <message>`.
+
+**Example** — a ruling imported with `authority` omitted (so it never reached `ev brief`), then
+corrected so it surfaces:
+
+```sh
+ev brief
+# → no user-ruled decisions          (the ruling was imported as an open item)
+
+ev correct 638c47b0c9dd --authority user-ruled --blame "You"
+# → corrected <new-child-id> (1 ground(s))
+
+ev brief
+# → <the ruling>  [user-ruled]       (the corrected child now surfaces; the stale parent stays in `ev log`)
+```
+
+A migrate **discrepancy** (a re-import whose resolved tags differ from the stored tick — see
+[`ev migrate`](#tag-discrepancies-on-re-import-resolved-with-ev-correct)) is resolved exactly this
+way.
 
 ---
 
@@ -844,8 +959,11 @@ ev brief [--limit N]
 | --- | --- | --- | --- |
 | `--limit` | non-negative integer | no | Cap the number of decisions shown. Overrides the config default `brief_limit` (which itself defaults to `10`). `--limit 0` shows **all** decisions (no cap, no footer). |
 
-**What it does:** reads every tick, keeps the **live**, `authority == "user-ruled"` ones,
-then orders them so that **load-bearing rulings come first**. A ruling is *load-bearing* iff
+**What it does:** reads every tick, collapses each **corrective lineage** to its current state
+(an [`ev correct`](#ev-correct) child supersedes the stale tick it re-tags — so a ruling whose
+`authority` was corrected to `user-ruled` surfaces, and one corrected away from it drops out),
+keeps the **live**, `authority == "user-ruled"` ones, then orders them so that **load-bearing
+rulings come first**. A ruling is *load-bearing* iff
 any of its grounds closes a road (its `supports` starts with `rejected:`) — those are the
 decisions a fresh agent must not re-walk, so they sort ahead of every non-load-bearing ruling
 **regardless of recency** and are pinned above the cap. Within each of those two groups the
@@ -907,9 +1025,12 @@ ev list
 **Flags:** none.
 
 **What it does:** reads every tick in the store, sorts by id, and prints one row per
-decision: its id, status, and decision text. A tick that fails to parse still lists its id
-with `?` for status and `<unparseable>` for the decision (so a corrupt file is never
-silently dropped — `ev verify` owns the schema error). An empty ledger says so.
+decision: its id, status, and decision text. A **corrective lineage** is collapsed to its
+**current** state — an [`ev correct`](#ev-correct) child supersedes the stale tick it re-tags, so
+only the latest tag of a decision is listed (the full lineage stays in `ev log`). A tick that
+fails to parse still lists its id with `?` for status and `<unparseable>` for the decision (so a
+corrupt file is never silently dropped — `ev verify` owns the schema error). An empty ledger says
+so.
 
 **Exit code:** `0` when the store exists (including when it is empty); `1` when there is no
 store.

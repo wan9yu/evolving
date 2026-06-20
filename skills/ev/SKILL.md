@@ -146,6 +146,21 @@ proven` and prints a `harvested-unproven: N of M …` debt line. **The way out i
 add a `--counter-test` and the binding becomes proven. Do not present a harvested green as a
 proven one.
 
+**Correct a stale non-hashed tag** (`authority` / `jurisdiction` / `provenance`) on an existing
+decision with `ev correct <id> [--authority <v>] [--jurisdiction <v>] [--provenance <v>] --blame
+"<name>"`. Under append-only immutability it never rewrites the target — it appends a corrective
+**child** that copies the target's hashed payload verbatim and carries the corrected tag (`ev
+brief` / `ev list` then surface the child; the stale parent stays in `ev log`). At least one tag is
+required; a no-op is refused (`nothing to correct`); an override wins, an unspecified tag inherits.
+This is the remedy when **`ev migrate` reports a discrepancy** — a re-import whose resolved tags
+differ from the stored tick is surfaced loudly (`… N discrepancy(ies) — see above`, never silently
+skipped) precisely so a corrected ruling is not invisibly dropped; resolve it with `ev correct`,
+not by editing a tick:
+
+```sh
+ev correct <id> --authority user-ruled --blame "<the human accountable>"   # a ruling imported as an open item now surfaces in `ev brief`
+```
+
 **Import a ruling to *watch*, not to *fail on*** — tag it `--jurisdiction C` (or `D`) on `ev decide`,
 or, for a **bulk import**, give `ev migrate` a `--jurisdiction-map` so the backfilled record lands
 `C`/`D` instead of untagged-and-gateable. A `C`/`D`-jurisdiction decision is **detect-only**: any

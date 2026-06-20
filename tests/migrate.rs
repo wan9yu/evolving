@@ -755,6 +755,130 @@ fn canonical_ingest_of_the_genesis_payload_with_non_hashed_extras_still_computes
     );
 }
 
+// The same decision, first imported with authority omitted, then corrected to user-ruled.
+const RULING_NO_AUTH: &str = "{\"kind\":\"ev-decision-intake\",\"decision\":\"#247/#1458 Insights scope\",\"grounds\":[],\"blame\":\"Mac\",\"source_ref\":\"#247/#1458\",\"provenance\":\"imported\"}\n";
+const RULING_USER_RULED: &str = "{\"kind\":\"ev-decision-intake\",\"decision\":\"#247/#1458 Insights scope\",\"grounds\":[],\"blame\":\"Mac\",\"authority\":\"user-ruled\",\"source_ref\":\"#247/#1458\",\"provenance\":\"imported\"}\n";
+
+fn single_tick_id(repo: &std::path::Path) -> String {
+    std::fs::read_dir(repo.join(".evolving/ticks"))
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().into_string().unwrap())
+        .find(|n| n.len() == 12)
+        .expect("exactly one tick")
+}
+
+#[test]
+fn migrate_should_report_a_discrepancy_when_a_re_import_corrects_a_tag_but_never_apply_it() {
+    // given: a store holding #247/#1458 imported with authority OMITTED (the gateway stale tick)
+    let r = repo();
+    let p1 = write_source(&r, "canonical", "p1.jsonl", RULING_NO_AUTH);
+    assert!(run(&r, &["migrate", "--source", &p1]).status.success());
+    let id = single_tick_id(&r);
+    let before = std::fs::read_to_string(r.join(".evolving/ticks").join(&id)).unwrap();
+
+    // when: the SAME decision is re-imported CORRECTED to authority=user-ruled
+    let p2 = write_source(&r, "canonical", "p2.jsonl", RULING_USER_RULED);
+    let out = run(&r, &["migrate", "--source", &p2]);
+
+    // then: the difference is SURFACED loudly (never the silent skip), and the stored tick is
+    // BYTE-UNCHANGED — migrate reports the discrepancy, it does not rewrite an immutable tick.
+    assert!(out.status.success());
+    let said = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        said.contains("discrepancy") && said.contains("authority"),
+        "the corrected authority must surface as a discrepancy; was {said:?}"
+    );
+    assert!(said.contains("imported 0") && said.contains("skipped 1"));
+    let after = std::fs::read_to_string(r.join(".evolving/ticks").join(&id)).unwrap();
+    assert_eq!(before, after, "migrate must never rewrite a tick in place");
+    assert_eq!(
+        tick_count(&r),
+        1,
+        "no new tick is written on a discrepancy-skip"
+    );
+}
+
+#[test]
+fn migrate_should_not_report_a_discrepancy_when_a_re_import_is_identical() {
+    // given: a store holding a record imported WITH authority=user-ruled
+    let r = repo();
+    let p1 = write_source(&r, "canonical", "p1.jsonl", RULING_USER_RULED);
+    assert!(run(&r, &["migrate", "--source", &p1]).status.success());
+
+    // when: the IDENTICAL record is re-imported (provenance defaults to imported on both passes)
+    let out = run(&r, &["migrate", "--source", &p1]);
+
+    // then: no discrepancy — the compare runs against the RESOLVED tags, so imported-vs-None never false-fires
+    let said = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !said.contains("discrepancy"),
+        "an identical re-import is clean; was {said:?}"
+    );
+}
+
+#[test]
+fn migrate_should_report_a_discrepancy_on_the_dry_run_path_too() {
+    // given: a stale authority-omitted tick
+    let r = repo();
+    let p1 = write_source(&r, "canonical", "p1.jsonl", RULING_NO_AUTH);
+    assert!(run(&r, &["migrate", "--source", &p1]).status.success());
+
+    // when: the corrected record is PREVIEWED with --dry-run
+    let p2 = write_source(&r, "canonical", "p2.jsonl", RULING_USER_RULED);
+    let out = run(&r, &["migrate", "--source", &p2, "--dry-run"]);
+
+    // then: dry-run is not blind — it surfaces the pending discrepancy before any commit
+    let said = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        said.contains("discrepancy"),
+        "dry-run must surface the pending discrepancy; was {said:?}"
+    );
+}
+
+#[test]
+fn migrate_should_not_silently_double_import_a_within_pass_duplicate_source_key() {
+    // given: TWO canonical records in ONE pass sharing source_key R555 but differing on authority
+    // (the gitlog-None vs to-human-user-ruled collision the audit flagged) — neither yet in the store
+    let r = repo();
+    let body = "{\"kind\":\"ev-decision-intake\",\"decision\":\"R555 ruling\",\"grounds\":[],\"blame\":\"Mac\",\"source_ref\":\"R555\"}\n\
+{\"kind\":\"ev-decision-intake\",\"decision\":\"R555 ruling\",\"grounds\":[],\"blame\":\"Mac\",\"authority\":\"user-ruled\",\"source_ref\":\"R555\"}\n";
+    let src = write_source(&r, "canonical", "dup.jsonl", body);
+
+    // when: migrate imports them
+    let out = run(&r, &["migrate", "--source", &src]);
+
+    // then: it does NOT silently write two ticks for one key — the second routes into the skip arm and
+    // the authority difference is surfaced as a discrepancy (one imported, one skipped+flagged)
+    assert!(out.status.success());
+    assert_eq!(
+        tick_count(&r),
+        1,
+        "a within-pass duplicate key must not double-import"
+    );
+    let said = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        said.contains("imported 1") && said.contains("skipped 1") && said.contains("discrepancy"),
+        "the within-pass collision must surface, not silently double-import; was {said:?}"
+    );
+}
+
 #[test]
 fn migrate_should_round_trip_clean_through_verify_when_records_are_imported() {
     // given: a store and a 2-record source imported with a fallback author

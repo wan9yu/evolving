@@ -163,6 +163,33 @@ ev migrate --reconcile --against canonical:decisions.jsonl
 # → reconcile: in-both 5, source-only 3 (the capture gap), store-only 1, un-keyable 0
 ```
 
+### Correcting an imported tag
+
+Idempotency keys on the durable `source_ref`, not on the tags. So when you re-import a record
+whose **resolved** non-hashed tags (`authority` / `jurisdiction` / `provenance`) **differ** from
+the already-stored tick — e.g. a ruling first imported as an open item (authority omitted) and
+later corrected upstream — `ev migrate` does not silently skip it. A tick is immutable, so the new
+value is never applied in place; instead the difference is **surfaced loudly** as a discrepancy
+(one `discrepancy: source <key> (tick <id>): … — NOT applied … resolve with \`ev correct <id>\``
+line on stderr, plus a `, N discrepancy(ies) — see above` count in the summary), and the record is
+still skipped. This means migrate is **no longer a clean "all-zeros = done" signal** — a standing
+discrepancy means a correction is pending.
+
+Resolve it with **`ev correct`**, which honors append-only immutability by appending a corrective
+**child** that copies the target's hashed payload verbatim and carries the corrected tag (the stale
+tick stays as honest history; `ev brief` / `ev list` then surface the corrected child):
+
+```sh
+ev migrate --source canonical:decisions.jsonl --blame "Wang Yu"
+# → imported 0, skipped 12, re-linked 0, 0 source-only gap(s), 1 discrepancy(ies) — see above
+# discrepancy: source "R1043" (tick 638c47b0c9dd): authority stored=None incoming=Some("user-ruled") — NOT applied (ticks are immutable; resolve with `ev correct 638c47b0c9dd`)
+
+ev correct 638c47b0c9dd --authority user-ruled --blame "Wang Yu"
+# → corrected <new-child-id> (2 ground(s))      # now `ev brief` shows the ruling
+```
+
+For the full `ev correct` reference, see [commands.md](commands.md#ev-correct).
+
 ### Harvesting a test you already have (`--bind-check`)
 
 `ev migrate --bind-check <selector>` adopts an existing test as a **harvested** check — a real
@@ -205,7 +232,13 @@ The rules of a good adapter:
   hashed identity.
 - **Set `authority` only on a real ruling**; omit it on an open item so the open item never
   surfaces in `ev brief` as if it were settled.
-- **Use a stable `source_ref`** (your own work-unit id) so re-imports dedup idempotently.
+- **Always emit a stable `source_ref`** (your own work-unit id — an issue ref, a round token, a
+  ticket) so re-imports stay idempotent. It is the durable dedup key: `ev` rejects a record that
+  yields **no** key at all (no `source_ref` **and** no round/`#issue` token in `observe`) at the
+  door — `canonical line <n>: a record needs a source_ref (or a round/#issue token in observe) for
+  idempotent re-import` — because without a key, distinct records would collide on the empty key
+  and re-import every run. A stable `source_ref` also lets a later re-import surface a tag
+  discrepancy (resolved with `ev correct`) instead of double-importing the decision.
 - **Never set `id` / `parent_id`** — those keys are not in the envelope; `ev` owns identity.
 
 **Same contract, two producers.** The exact JSONL a one-shot adapter emits is what a future live

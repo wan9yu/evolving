@@ -338,6 +338,9 @@ pub fn backfill(
                 continue;
             }
         };
+        // Apply the jurisdiction map at one per-record point, identically on both paths
+        // (jurisdiction is non-hashed, so the probe id stays byte-identical to the append id).
+        let jurisdiction = jurisdiction_map.get(&r.source_key).cloned();
         if dry_run {
             // The id this record WOULD take at the prospective parent (no write). held_since is
             // non-hashed, so this matches the id `append` computes on a real run — only the real
@@ -352,14 +355,13 @@ pub fn backfill(
                 held_since: String::new(),
                 blame: blame.clone(),
                 authority: None,
-                jurisdiction: jurisdiction_map.get(&r.source_key).cloned(),
+                jurisdiction: jurisdiction.clone(),
                 round_id: Some(r.source_key.clone()),
             };
             prospective_parent = compute_id(&probe);
             summary.imported += 1;
             continue;
         }
-        let jurisdiction = jurisdiction_map.get(&r.source_key).cloned();
         let written = crate::capture::append(
             repo,
             Decision {

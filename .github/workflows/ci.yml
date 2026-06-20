@@ -84,8 +84,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # aarch64 musl is cross-compiled from an x86_64 host via `cross` (its canonical path);
+          # building it on an ARM host makes `cross` mis-detect the host toolchain and fail.
           - target: aarch64-unknown-linux-musl
-            os: ubuntu-24.04-arm
+            os: ubuntu-24.04
           - target: x86_64-unknown-linux-musl
             os: ubuntu-24.04
           - target: aarch64-apple-darwin

@@ -92,6 +92,6 @@ pub fn run(repo: &Path, a: CorrectArgs) -> Result<Tick, String> {
             provenance,
         },
     )?;
-    crate::events::append(&store, "correct", Some(&child.id), None);
+    crate::events::append(&store, "correct", Some(&child), None, None);
     Ok(child)
 }

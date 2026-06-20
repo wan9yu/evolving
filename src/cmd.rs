@@ -139,7 +139,7 @@ pub fn decide(repo: &Path, decision: Option<&str>, args: &[String]) -> ExitCode 
     };
     match crate::capture::run(repo, decision, &args) {
         Ok(t) => {
-            crate::events::append(&Store::at(repo), "decide", Some(&t.id), None);
+            crate::events::append(&Store::at(repo), "decide", Some(&t), None, None);
             println!("recorded {} ({} ground(s))", t.id, t.grounds.len());
             ExitCode::SUCCESS
         }
@@ -153,7 +153,7 @@ pub fn decide(repo: &Path, decision: Option<&str>, args: &[String]) -> ExitCode 
 pub fn guard(repo: &Path, a: crate::guard::GuardArgs) -> ExitCode {
     match crate::guard::run(repo, a) {
         Ok(t) => {
-            crate::events::append(&Store::at(repo), "guard", Some(&t.id), None);
+            crate::events::append(&Store::at(repo), "guard", Some(&t), None, None);
             println!("bound; wrote child {}", t.id);
             ExitCode::SUCCESS
         }
@@ -203,6 +203,55 @@ pub fn verify_cmd(repo: &Path, self_test: bool) -> ExitCode {
 /// `receipts` is already scoped to one ref by `read_for`, so no filtering is needed.
 fn latest_ran_at(receipts: &[crate::receipt::Receipt]) -> Option<String> {
     receipts.iter().map(|r| r.ran_at.clone()).max()
+}
+
+/// Roll-up significance for the one-per-tick check event: the tick's single event carries its WORST
+/// test-bound verdict, so the de-quintupled count keeps the catch visible. Every GATING verdict (the
+/// ones outside the `any_not_green` exclusion — red, silently-unbound, stale, not-run, unproven)
+/// outranks a non-gating outcome (green/exempt/memo/n-a), so a co-occurring green can never erase a
+/// gating fact's label. Facts only — this orders for the per-tick roll-up, it is not a score on the
+/// decision. (A stale hidden behind a worse verdict is separately surfaced via the masked_stale field.)
+fn verdict_rank(v: &crate::verdict::Verdict) -> u8 {
+    use crate::verdict::Verdict;
+    match v {
+        Verdict::Red | Verdict::GrayRed => 6,
+        // a gating mask-bypass (a touched trigger that was not re-selected) — must outrank green
+        Verdict::SilentlyUnbound => 5,
+        Verdict::Stale { .. } => 4,
+        Verdict::NotRun { .. } => 3,
+        Verdict::Unproven => 2,
+        Verdict::Memo => 1,
+        Verdict::Green | Verdict::Exempt | Verdict::NotApplicable => 0,
+    }
+}
+
+/// Roll up a tick's test-bound verdicts to the one per-tick check event: `(worst_event_label,
+/// masked_stale)`. The worst verdict (by `verdict_rank`) is the event's verdict — a strict `>` keeps
+/// the FIRST top-rank ground, so a stale sub-kind follows verdict_for's own precedence (sha → count →
+/// age), not ground order. `masked_stale` is the first stale sub-kind present ONLY when a worse verdict
+/// (red / silently-unbound, rank > stale's 4) hides it — so a drifted/disabled staleness_ref masking a
+/// real red never silently drops. None when no test-bound ground (the tick emits no check event).
+fn roll_up_check(verdicts: &[&crate::verdict::Verdict]) -> Option<(String, Option<String>)> {
+    use crate::verdict::Verdict;
+    let mut worst: Option<(u8, &Verdict)> = None;
+    let mut stale: Option<&Verdict> = None;
+    for &v in verdicts {
+        let rank = verdict_rank(v);
+        if worst.map_or(true, |(r, _)| rank > r) {
+            worst = Some((rank, v));
+        }
+        if stale.is_none() && matches!(v, Verdict::Stale { .. }) {
+            stale = Some(v);
+        }
+    }
+    worst.map(|(rank, v)| {
+        let masked = if rank > 4 {
+            stale.map(|s| s.event_label())
+        } else {
+            None
+        };
+        (v.event_label(), masked)
+    })
 }
 
 /// The evaluation context for one `ev check` / `ev reopen` invocation: the staleness reference
@@ -359,7 +408,7 @@ pub fn check(
                     Verdict::NotRun { missing_platforms } => {
                         format!("missing: {}", missing_platforms.join(", "))
                     }
-                    Verdict::Stale { reason } => reason.clone(),
+                    Verdict::Stale { reason, .. } => reason.clone(),
                     _ => latest_ran_at(&receipts)
                         .map(|ts| format!("ran {ts}"))
                         .unwrap_or_else(|| "no receipt".into()),
@@ -370,16 +419,37 @@ pub fn check(
                 if harvested {
                     harvested_unproven += 1;
                     detail = format!("harvested — falsifiability not proven; {detail}");
-                    crate::events::append(&store, "harvested", Some(&t.id), Some(v.label()));
+                    crate::events::append(
+                        &store,
+                        "harvested",
+                        Some(&t),
+                        Some(&v.event_label()),
+                        None,
+                    );
                 }
                 rows.push(format!(
                     "{}\t{filename}\t{:?}\t({detail})",
                     v.label(),
                     g.claim
                 ));
-                crate::events::append(&store, "check", Some(&t.id), Some(v.label()));
             }
             verdicts.push((g, v));
+        }
+        // ONE check event per tick (the de-quintupled count): the worst test-bound verdict, plus a
+        // masked_stale companion when a worse verdict hides a stale ground (see `roll_up_check`).
+        let test_verdicts: Vec<&Verdict> = verdicts
+            .iter()
+            .filter(|(g, _)| matches!(g.check, Some(Check::Test { .. })))
+            .map(|(_, v)| v)
+            .collect();
+        if let Some((label, masked_stale)) = roll_up_check(&test_verdicts) {
+            crate::events::append(
+                &store,
+                "check",
+                Some(&t),
+                Some(&label),
+                masked_stale.as_deref(),
+            );
         }
         // The per-host verdict-cache read contract for this tick (a hook reads it without shelling check).
         let _ = crate::state::write_state(
@@ -591,7 +661,7 @@ pub fn migrate(repo: &Path, a: MigrateArgs) -> ExitCode {
     ) {
         Ok(s) => {
             if !a.dry_run {
-                crate::events::append(&Store::at(repo), "migrate", None, None);
+                crate::events::append(&Store::at(repo), "migrate", None, None, None);
             }
             println!(
                 "{}imported {}, skipped {}, re-linked {}, {} source-only gap(s){}",
@@ -844,7 +914,7 @@ pub fn reopen(repo: &Path, id: &str) -> ExitCode {
     let live_origin = crate::staleness::resolve(repo, &store, &config.staleness_ref, true);
     let ctx = live_ctx(&store, config.staleness_days, live_origin, None);
 
-    crate::events::append(&store, "reopen", Some(id), None);
+    crate::events::append(&store, "reopen", Some(&tick), None, None);
     println!("decision {}: {:?}", tick.id, tick.decision);
     if !tick.observe.is_empty() {
         println!("observe: {:?}", tick.observe);
@@ -982,5 +1052,78 @@ fn self_test_golden() -> ExitCode {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::roll_up_check;
+    use crate::verdict::{StaleKind, Verdict};
+
+    fn stale_sha() -> Verdict {
+        Verdict::Stale {
+            kind: StaleKind::Sha,
+            reason: String::new(),
+        }
+    }
+
+    #[test]
+    fn roll_up_check_should_emit_nothing_when_there_is_no_test_bound_ground() {
+        // given: a tick with no test-bound verdicts -> no check event
+        assert_eq!(roll_up_check(&[]), None);
+    }
+
+    #[test]
+    fn roll_up_check_should_carry_the_worst_verdict_red_over_green() {
+        // given: a green ground and a red ground -> the event carries red, the catch stays visible
+        let (g, r) = (Verdict::Green, Verdict::Red);
+        assert_eq!(roll_up_check(&[&g, &r]), Some(("red".to_string(), None)));
+    }
+
+    #[test]
+    fn roll_up_check_should_let_a_gating_silently_unbound_outrank_a_co_occurring_green() {
+        // given: a silently-unbound (gating mask-bypass) + a green ground -> su must win either order,
+        // so a co-occurring green never erases the gating fact from the log
+        let (su, g) = (Verdict::SilentlyUnbound, Verdict::Green);
+        assert_eq!(
+            roll_up_check(&[&su, &g]),
+            Some(("silently-unbound".to_string(), None))
+        );
+        assert_eq!(
+            roll_up_check(&[&g, &su]),
+            Some(("silently-unbound".to_string(), None))
+        );
+    }
+
+    #[test]
+    fn roll_up_check_should_carry_the_stale_sub_kind_when_stale_is_the_worst() {
+        // given: a sha-stale ground alongside a not-run -> the verdict IS the stale sub-kind (visible)
+        let (s, nr) = (
+            stale_sha(),
+            Verdict::NotRun {
+                missing_platforms: vec!["p".to_string()],
+            },
+        );
+        assert_eq!(
+            roll_up_check(&[&s, &nr]),
+            Some(("stale:sha".to_string(), None))
+        );
+    }
+
+    #[test]
+    fn roll_up_check_should_surface_a_stale_masked_behind_a_red() {
+        // given: a red ground hiding a sha-stale ground -> the event carries red AND the masked stale,
+        // so a drifted/disabled staleness_ref masking a real red never silently drops
+        let (r, s) = (Verdict::Red, stale_sha());
+        assert_eq!(
+            roll_up_check(&[&r, &s]),
+            Some(("red".to_string(), Some("stale:sha".to_string())))
+        );
+    }
+
+    #[test]
+    fn roll_up_check_should_emit_green_when_every_ground_is_green() {
+        let (a, b) = (Verdict::Green, Verdict::Green);
+        assert_eq!(roll_up_check(&[&a, &b]), Some(("green".to_string(), None)));
     }
 }

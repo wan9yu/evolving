@@ -1,33 +1,110 @@
 //! A local, append-only events log (results/events.jsonl) — the decision-data埋点 for
 //! metrics. Gitignored, 0-network, best-effort (a write failure never fails the command).
 use crate::store::Store;
+use crate::tick::{source_ref_key, Tick};
 use serde_json::{json, Value};
 use std::io::Write;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
-/// Append one event line: {ts, op, tick_id?, verdict?}.
-pub fn append(store: &Store, op: &str, tick_id: Option<&str>, verdict: Option<&str>) {
-    let ts = OffsetDateTime::now_utc()
-        .format(&Rfc3339)
-        .unwrap_or_default();
+/// Append one event line: `{ts, op, tick_id?, source_ref?, age?, verdict?, masked_stale?}`. When a
+/// deciding tick is given it contributes the join key (`source_ref`) and a coarse decision-AGE bucket
+/// — together the prior-decision discriminator the metrics framework needs: a check firing on an OLD
+/// decision is a prior-decision resurface; on a just-written one it is not. `masked_stale` carries a
+/// stale sub-kind that the (worse) per-tick verdict hides, so a staleness-mask never silently drops.
+pub fn append(
+    store: &Store,
+    op: &str,
+    tick: Option<&Tick>,
+    verdict: Option<&str>,
+    masked_stale: Option<&str>,
+) {
+    let now = OffsetDateTime::now_utc();
+    let ts = now.format(&Rfc3339).unwrap_or_default();
     let mut e = json!({ "ts": ts, "op": op });
     if let Some(o) = e.as_object_mut() {
-        if let Some(id) = tick_id {
-            o.insert("tick_id".into(), Value::String(id.into()));
+        if let Some(t) = tick {
+            o.insert("tick_id".into(), Value::String(t.id.clone()));
+            if let Some(sr) = &t.source_ref {
+                o.insert("source_ref".into(), Value::String(source_ref_key(sr)));
+            }
+            if let Some(age) = age_bucket(&t.held_since, now.unix_timestamp()) {
+                o.insert("age".into(), Value::String(age.into()));
+            }
         }
         if let Some(v) = verdict {
             o.insert("verdict".into(), Value::String(v.into()));
+        }
+        if let Some(m) = masked_stale {
+            o.insert("masked_stale".into(), Value::String(m.into()));
         }
     }
     let dir = store.root.join("results");
     if std::fs::create_dir_all(&dir).is_err() {
         return;
     }
+    // Best-effort: a write failure never fails the command (the log is a droppable, gitignored cache).
     if let Ok(mut f) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(dir.join("events.jsonl"))
     {
         let _ = writeln!(f, "{}", serde_json::to_string(&e).unwrap_or_default());
+    }
+}
+
+/// A coarse decision-age bucket from a tick's `held_since` (RFC3339) to `now_unix`: `fresh` (<1d) /
+/// `days` (<7d) / `weeks` (<30d) / `months` (<365d) / `year+` (>=365d). Coarse on purpose — the metric
+/// thresholds it into prior-decision vs just-written; it leaks no precision the tick does not carry.
+fn age_bucket(held_since: &str, now_unix: i64) -> Option<&'static str> {
+    let then = OffsetDateTime::parse(held_since, &Rfc3339).ok()?;
+    let days = (now_unix - then.unix_timestamp()) / 86_400;
+    Some(if days < 1 {
+        "fresh"
+    } else if days < 7 {
+        "days"
+    } else if days < 30 {
+        "weeks"
+    } else if days < 365 {
+        "months"
+    } else {
+        "year+"
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::age_bucket;
+    use time::{format_description::well_known::Rfc3339, OffsetDateTime};
+
+    const NOW: i64 = 1_750_000_000; // a fixed clock so the boundary arithmetic is deterministic
+
+    fn held(secs_ago: i64) -> String {
+        OffsetDateTime::from_unix_timestamp(NOW - secs_ago)
+            .unwrap()
+            .format(&Rfc3339)
+            .unwrap()
+    }
+
+    #[test]
+    fn age_bucket_should_label_each_threshold() {
+        let h = 3_600;
+        let d = 86_400;
+        // given/then: each side of every day-bucket boundary maps to the right coarse label
+        assert_eq!(age_bucket(&held(0), NOW), Some("fresh"));
+        assert_eq!(age_bucket(&held(23 * h), NOW), Some("fresh"));
+        assert_eq!(age_bucket(&held(25 * h), NOW), Some("days"));
+        assert_eq!(age_bucket(&held(6 * d), NOW), Some("days"));
+        assert_eq!(age_bucket(&held(8 * d), NOW), Some("weeks"));
+        assert_eq!(age_bucket(&held(29 * d), NOW), Some("weeks"));
+        assert_eq!(age_bucket(&held(31 * d), NOW), Some("months"));
+        assert_eq!(age_bucket(&held(364 * d), NOW), Some("months"));
+        assert_eq!(age_bucket(&held(366 * d), NOW), Some("year+"));
+    }
+
+    #[test]
+    fn age_bucket_should_be_none_when_held_since_is_unparseable() {
+        // given/then: a garbage or empty timestamp yields no bucket (a data fault, never a wrong label)
+        assert_eq!(age_bucket("not a timestamp", NOW), None);
+        assert_eq!(age_bucket("", NOW), None);
     }
 }

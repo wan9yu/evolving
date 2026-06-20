@@ -8,6 +8,27 @@ use crate::receipt::Receipt;
 use crate::selected::SelectedList;
 use crate::tick::{Check, Ground};
 
+/// WHY a check reads stale — three distinct, auditable sub-reasons the flat `stale` label collapses.
+/// Surfaced in the events log (never masked into one bucket) so a disabled/drifted staleness_ref that
+/// is masking a real red stays visible: `sha` (verified_at_sha behind the live origin), `count-window`
+/// (a triggering change landed after the last run), `age` (the deciding receipt is past the window).
+#[derive(Debug, Clone, PartialEq)]
+pub enum StaleKind {
+    Sha,
+    CountWindow,
+    Age,
+}
+
+impl StaleKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            StaleKind::Sha => "sha",
+            StaleKind::CountWindow => "count-window",
+            StaleKind::Age => "age",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Verdict {
     Green,
@@ -15,7 +36,7 @@ pub enum Verdict {
     GrayRed,
     Unproven,
     NotRun { missing_platforms: Vec<String> },
-    Stale { reason: String },
+    Stale { kind: StaleKind, reason: String },
     SilentlyUnbound,
     Exempt,        // this runner attests none of the binding's declared platforms (non-gating)
     Memo, // a C/D-jurisdiction (detect-only) not-green fact — surfaced but never gates (non-gating)
@@ -36,6 +57,16 @@ impl Verdict {
             Verdict::Exempt => "exempt",
             Verdict::Memo => "memo",
             Verdict::NotApplicable => "n/a",
+        }
+    }
+
+    /// The label written to the events log — identical to `label()` except a `stale` carries its
+    /// sub-kind (`stale:sha` / `stale:count-window` / `stale:age`), so the staleness-mask stays
+    /// auditable from the log. Display stays the flat `stale`; only the埋点 splits it.
+    pub fn event_label(&self) -> String {
+        match self {
+            Verdict::Stale { kind, .. } => format!("stale:{}", kind.as_str()),
+            other => other.label().to_string(),
         }
     }
 }
@@ -72,6 +103,7 @@ pub fn verdict_for(
     if let Some(origin) = ctx.live_origin_sha.as_deref() {
         if origin != verified_at_sha {
             return Verdict::Stale {
+                kind: StaleKind::Sha,
                 reason: "verified_at_sha behind live origin".into(),
             };
         }
@@ -114,6 +146,7 @@ pub fn verdict_for(
     // refactor moving the assumption out of triggered_by would otherwise stay green forever).
     if triggered_since {
         return Verdict::Stale {
+            kind: StaleKind::CountWindow,
             reason: "a triggering change landed after the last run".into(),
         };
     }
@@ -127,6 +160,7 @@ pub fn verdict_for(
     });
     if stale_by_age {
         return Verdict::Stale {
+            kind: StaleKind::Age,
             reason: "deciding receipt older than the staleness window".into(),
         };
     }
@@ -210,6 +244,77 @@ mod tests {
             staleness_secs: i64::MAX,
             attest: attest.map(|a| a.iter().map(|s| s.to_string()).collect()),
         }
+    }
+
+    #[test]
+    fn verdict_for_should_tag_a_sha_stale_kind_when_the_origin_moved() {
+        // given: a binding whose verified_at_sha is behind a different live origin
+        let g = test_ground(&["linux-ci"]);
+
+        // when: its verdict is computed against that origin
+        let v = verdict_for(
+            &g,
+            &[],
+            &ctx(Some("0000000000000000000000000000000000000000"), None),
+            false,
+        );
+
+        // then: it is stale with the SHA sub-kind, and the event label carries it
+        assert!(matches!(
+            v,
+            Verdict::Stale {
+                kind: StaleKind::Sha,
+                ..
+            }
+        ));
+        assert_eq!(v.event_label(), "stale:sha");
+    }
+
+    #[test]
+    fn verdict_for_should_tag_a_count_window_stale_kind_when_a_trigger_landed_after_the_run() {
+        // given: a green receipt, but a triggering change landed after it ran
+        let g = test_ground(&["linux-ci"]);
+        let receipts = vec![rcpt("linux-ci", "2026-01-01T00:00:00Z", "green")];
+
+        // when: its verdict is computed with triggered_since = true
+        let v = verdict_for(&g, &receipts, &ctx(None, None), true);
+
+        // then: it is stale with the count-window sub-kind
+        assert!(matches!(
+            v,
+            Verdict::Stale {
+                kind: StaleKind::CountWindow,
+                ..
+            }
+        ));
+        assert_eq!(v.event_label(), "stale:count-window");
+    }
+
+    #[test]
+    fn verdict_for_should_tag_an_age_stale_kind_when_the_receipt_is_past_the_window() {
+        // given: a deciding receipt far older than a tight staleness window
+        let g = test_ground(&["linux-ci"]);
+        let receipts = vec![rcpt("linux-ci", "2026-01-01T00:00:00Z", "green")];
+        let c = Ctx {
+            live_origin_sha: None,
+            selected: None,
+            now_unix: 9_000_000_000, // far after 2026-01-01
+            staleness_secs: 1,
+            attest: None,
+        };
+
+        // when: its verdict is computed against that clock
+        let v = verdict_for(&g, &receipts, &c, false);
+
+        // then: it is stale with the age sub-kind
+        assert!(matches!(
+            v,
+            Verdict::Stale {
+                kind: StaleKind::Age,
+                ..
+            }
+        ));
+        assert_eq!(v.event_label(), "stale:age");
     }
 
     #[test]

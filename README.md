@@ -111,38 +111,6 @@ ev why "pytest tests/test_schema_frozen.py"
 ev reopen <id>
 ```
 
-## The model
-
-- **Tick** — one decision in the chain. Its **hashed payload** is `{decision, observe, grounds, parent_id}`; `id`, `status`, `held_since`, `blame`, `authority`, `jurisdiction`, and `round_id` are bookkeeping kept *outside* the hash, so they can change without forging a new identity.
-- **Ground** — a reason a decision rests on. A ground is either **chosen** (a reason *for* the decision taken) or a **road-not-taken** (`rejected:<option>`, a reason an alternative was declined).
-- **Check** — what keeps a chosen ground honest as the world changes. Either a **Test** (a test selector plus a counter-test, the platforms / triggers / surfaces that keep it live, and the `verified_at_sha` it last passed at) or a human **Person** re-check (a reference to when and where a person re-affirms the ground). A *harvested* Test binding may carry **no** counter-test; it is evaluated like any other but reads *falsifiability-not-proven* until one is added.
-- **Identity** — `id = first 12 hex of SHA-256` over the canonical JSON of `{decision, observe, grounds, parent_id}`. Any change to a hashed field produces a different `id`; editing a bookkeeping field leaves the `id` untouched.
-- **Append-only** — the chain is never edited in place. A change is a **new child** whose `parent_id` points at its predecessor. This is why `ev guard`, which adds a hashed check, writes a child rather than mutating its target.
-
-## The refusals it enforces
-
-`ev` is defined as much by what it refuses as by what it does. `ev verify` audits the whole chain against these and reports *all* violations, not just the first:
-
-- **Closed schema.** A tick with any field outside the fixed identity schema is rejected. The content-addressed id can never carry an unvalidated field.
-- **A human re-check stays human.** A ground re-checked by a person can never be force-bound to a test.
-- **A rejected road carries no check.** A road-not-taken cannot take a check.
-- **The system is never the subject of self-evolve language.** Self-evolve / self-improve verbs must take a human subject, not the system (best-effort lexical lint).
-- **Every mutating op names a human.** A decision or a guard must carry a `--blame` (or a resolvable `git config user.name`).
-- **No auto-close.** Nothing closes, prunes, or stops a decision on its own; a human authors every change.
-
-## Migrating an existing decision history
-
-`ev migrate` backfills an *existing* decision history into the ledger — by **harvesting** the rulings and structured roads-not-taken those records already hold, never by mining prose into a ground.
-
-- **Pluggable source formats.** A source is given as `<kind>:<path>`. Each kind is a pure, format-aware extractor (`gitlog`, `to-human`, `decisions-immutable`, `escalation`); they parse rulings and *structured* rejected-roads only. A block with no structured road imports with **zero grounds** — an honest capture, never a synthesized reason.
-- **Idempotent, chain-keeping.** A backfill computes the content-addressed id each record *would* take and skips any key already in the store, so running it twice writes nothing the second time. The chain is kept: a back-dated mid-chain insert is re-linked and reported, never rewritten.
-- **Test harvesting.** `--bind-check` adopts an existing test as a bound check. A harvested binding declares full liveness (you cannot half-harvest) and gates on a real red — but it carries no counter-test, so its falsifiability was never proven. `ev check` evaluates it like any other binding, annotates the row *falsifiability-not-proven*, and counts the debt; `ev guard` adds a counter-test to discharge it.
-- **Jurisdiction tagging.** An imported decision can carry a declared `jurisdiction` tag from `{A, B, C, D}` (set with `ev decide --jurisdiction`, or applied across a backfill by `ev migrate --jurisdiction-map`). `A` and `B` may gate; `C` and `D` are **structurally detect-only** — any not-green verdict on them is mapped to a non-gating `memo` fact (so `--exit-on-red` can never trip on them), and `ev verify` forbids a `C`/`D` tick from holding a runnable test check at all. Detect-only is a structural property of the record, not a convention a code path might forget.
-- **Reconciliation.** `--reconcile --against <kind>:<path>` joins a source against the store and reports the **capture gap** — a ruling the source holds that the ledger never captured — alongside the in-both, store-only, and un-keyable counts.
-- **No invented authors.** A source record with neither its own author nor a `--blame` fallback is *not* imported; it is surfaced as a gap. An author is never fabricated.
-
-The on-disk schema is **forward-compatible** by design: a newer writer's non-hashed bookkeeping field is tolerated (parsed through and surfaced as a `verify` warning), while the hashed / identity payload stays strictly closed.
-
 ## The honesty boundary
 
 `ev` completes one specific picture — *does a human-vetted decision stay live, and is the check guarding it itself alive?* — and is honest about the edges of that picture:
@@ -155,8 +123,9 @@ The on-disk schema is **forward-compatible** by design: a newer writer's non-has
 
 Usage docs live in [`docs/`](docs/):
 
+- [`docs/concepts.md`](docs/concepts.md) — the model in depth: the Tick schema, Grounds, Checks, content-addressed identity, append-only immutability, jurisdiction, provenance, the forward-compatible schema, and the refusals `ev verify` enforces.
 - [`docs/commands.md`](docs/commands.md) — the authoritative command reference: every flag, exit code, the exact strings each command prints, and a worked example per command.
-- [`docs/concepts.md`](docs/concepts.md) — the model in depth: the Tick schema, Grounds, Checks, content-addressed identity, append-only immutability, jurisdiction, the forward-compatible schema, and the refusals `ev verify` enforces.
+- [`docs/migrating.md`](docs/migrating.md) — bringing an existing decision history into `ev`: the canonical decision-intake format, writing a small adapter that emits it, and the built-in convenience extractors.
 - [`docs/philosophy.md`](docs/philosophy.md) — the design philosophy: the tenets behind `ev`, and why it makes the choices it does.
 
 **Using `ev` from an AI agent?** [`skills/ev/SKILL.md`](skills/ev/SKILL.md) is a tool-agnostic agent skill — drop it into your agent's skills directory so it uses `ev` correctly without reading the manual.

@@ -15,7 +15,8 @@ fn book(parent: &str, observe: &str, decision: &str, grounds: Vec<Ground>) -> Ti
         blame: "Wang Yu".into(),
         authority: None,
         jurisdiction: None,
-        round_id: None,
+        source_ref: None,
+        provenance: None,
     }
 }
 
@@ -50,8 +51,8 @@ fn compute_id_should_return_the_frozen_golden_id_when_given_the_genesis_tick() {
 }
 
 #[test]
-fn compute_id_should_stay_frozen_when_round_id_is_set() {
-    // given: the genesis tick, but carrying a non-hashed round_id join/dedup key
+fn compute_id_should_stay_frozen_when_source_ref_is_set() {
+    // given: the genesis tick, but carrying a non-hashed, opaque source_ref
     let mut t = book(
         "",
         "evaluating retrieval backend",
@@ -71,12 +72,12 @@ fn compute_id_should_stay_frozen_when_round_id_is_set() {
             },
         ],
     );
-    t.round_id = Some("R2289".into());
+    t.source_ref = Some(serde_json::Value::String("R2289".into()));
 
     // when: its canonical id is computed
     let id = compute_id(&t);
 
-    // then: it is unchanged from the genesis golden (round_id is not in the hashed payload)
+    // then: it is unchanged from the genesis golden (source_ref is not in the hashed payload)
     assert_eq!(id, "e2b337f53a1f");
 }
 

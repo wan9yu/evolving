@@ -123,7 +123,10 @@ pub fn run(repo: &Path, a: GuardArgs) -> Result<Tick, String> {
         blame,
         authority: a.authority,
         jurisdiction: parent.jurisdiction.clone(), // a sibling tag of the decision; inherited by the child
-        round_id: parent.round_id.clone(), // the join/dedup key of the decision; inherited by the child
+        source_ref: parent.source_ref.clone(), // the opaque source identity of the decision; inherited by the child
+        // NOT inherited: provenance is a property of the authorship ACT, not the decision. A guard is a
+        // fresh human act, hard-stamped human-now (the absent default) — the launder defense.
+        provenance: None,
     };
     child.id = compute_id(&child);
     store

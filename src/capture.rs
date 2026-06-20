@@ -209,7 +209,8 @@ pub struct Decision {
     pub blame: String,
     pub authority: Option<String>,
     pub jurisdiction: Option<String>,
-    pub round_id: Option<String>,
+    pub source_ref: Option<serde_json::Value>,
+    pub provenance: Option<String>,
 }
 
 /// THE one place a decision becomes a tick: R3-lint the free text, read HEAD as the parent, stamp
@@ -247,7 +248,8 @@ pub fn append(repo: &Path, d: Decision) -> Result<Tick, String> {
         blame: d.blame,
         authority: d.authority,
         jurisdiction: d.jurisdiction,
-        round_id: d.round_id,
+        source_ref: d.source_ref,
+        provenance: d.provenance,
     };
     t.id = compute_id(&t);
     store
@@ -332,7 +334,7 @@ pub fn run(repo: &Path, decision: Option<&str>, args: &[String]) -> Result<Tick,
     let mut sha_override: Option<String> = None;
     let mut authority: Option<String> = None;
     let mut jurisdiction: Option<String> = None;
-    let mut round_id: Option<String> = None;
+    let mut source_ref: Option<serde_json::Value> = None;
     let mut from_git: Option<String> = None;
     let mut drafts: Vec<DraftGround> = Vec::new();
     let mut i = 0;
@@ -361,13 +363,14 @@ pub fn run(repo: &Path, decision: Option<&str>, args: &[String]) -> Result<Tick,
                 crate::tick::validate_jurisdiction(&v)?;
                 jurisdiction = Some(v);
             }
-            "--round-id" => {
-                // a durable, non-hashed join/dedup key; non-empty-if-present, no other format constraint.
+            "--source-ref" => {
+                // a durable, non-hashed, opaque source identity ev never interprets. On the interactive
+                // path it is a plain string; the canonical intake additionally accepts a structured object.
                 let v = need(args, i, &flag)?;
                 if v.is_empty() {
-                    return Err("--round-id needs a non-empty value".into());
+                    return Err("--source-ref needs a non-empty value".into());
                 }
-                round_id = Some(v);
+                source_ref = Some(serde_json::Value::String(v));
             }
             "--reject" => {
                 let v = need(args, i, &flag)?;
@@ -466,7 +469,10 @@ pub fn run(repo: &Path, decision: Option<&str>, args: &[String]) -> Result<Tick,
             blame,
             authority,
             jurisdiction,
-            round_id,
+            source_ref,
+            // Fresh authorship is hard-stamped human-now (the absent default); decide takes no
+            // provenance from the caller, so an importer can never launder a forbidden op as imported.
+            provenance: None,
         },
     )
 }
@@ -884,7 +890,8 @@ mod tests {
             blame: "Wang Yu".into(),
             authority: None,
             jurisdiction: None,
-            round_id: None,
+            source_ref: None,
+            provenance: None,
         };
 
         // when: it is appended onto the empty store (genesis: parent_id == "")

@@ -33,15 +33,23 @@ forging a new identity:
 - `jurisdiction` — an optional declared tag (`A` | `B` | `C` | `D`), excluded from the hash;
   written only when set. `A`/`B` may gate; `C`/`D` are **detect-only** — structurally
   ungateable (see *Jurisdiction* below). Surfaced by `show`/`list`/`reopen`.
-- `round_id` — an optional declared join/dedup key (e.g. `R2289`, `#555`, `§3`), excluded
-  from the hash; written only when set. A structured, durable substitute for fishing a round
-  token out of `observe` — used by `ev migrate` to dedup and reconcile a backfill. Surfaced
-  by `show`/`list`/`reopen`.
+- `source_ref` — an **opaque, producer-supplied source identity** ev never interprets: a
+  non-empty string (e.g. `R2289`, `#555`, an issue ref) **or** a non-empty structured object
+  (JSON). Excluded from the hash; written only when set. ev derives exactly **one** thing from
+  it — a stable dedup/reconcile key (the string verbatim, or the deterministic sorted-compact
+  JSON of an object) — and compares only that key, never the contents. Used by `ev migrate` to
+  dedup and reconcile a backfill. Surfaced by `show`/`list`/`reopen`. (On the `ev decide` /
+  `ev guard` path it is set with `--source-ref` as a plain string; the canonical intake
+  additionally accepts a structured object — see [commands.md](commands.md).)
+- `provenance` — an optional declared tag from the closed vocabulary
+  `{imported, agent-proposed, human-now}`, excluded from the hash; written only when set,
+  **absent ⇒ `human-now`**. It records **how** the decision entered the ledger (see
+  *Provenance* below). Vocab-validated; an out-of-vocabulary value is refused.
 
 On disk a tick is stored as pretty JSON containing the hashed payload keys **plus** the
 bookkeeping keys at top level (`id`, `status`, `held_since`, `blame`, and — when set —
-`authority`, `jurisdiction`, `round_id`). `ev show` prints that file as-is. The genesis tick
-on disk looks like:
+`authority`, `jurisdiction`, `source_ref`, `provenance`). `ev show` prints that file as-is.
+The genesis tick on disk looks like:
 
 ```json
 {
@@ -67,11 +75,19 @@ This is the frozen `genesis` golden vector, so its `id` is genuinely `e2b337f53a
 same id pinned in the *Identity* table below). The `held_since` is shown as a placeholder; the
 real one is an RFC3339 time stamped at write time.
 
-Because `blame`, `status`, `held_since`, `authority`, `jurisdiction`, and `round_id` sit
-outside the hash, blanking `blame` on disk does **not** change the `id` — which is exactly
-why `ev verify` checks `blame` separately (R5). Equally, tagging a `jurisdiction` or a
-`round_id` on a decision leaves its `id` untouched: these are declared bookkeeping, never
-part of the decision's identity.
+Because `blame`, `status`, `held_since`, `authority`, `jurisdiction`, `source_ref`, and
+`provenance` sit outside the hash, blanking `blame` on disk does **not** change the `id` —
+which is exactly why `ev verify` checks `blame` separately (R5). Equally, tagging a
+`jurisdiction`, a `source_ref`, or a `provenance` on a decision leaves its `id` untouched:
+these are declared bookkeeping, never part of the decision's identity.
+
+### `source_ref` is the adopter's concept, carried opaquely
+
+A field is first-class in `ev` only if `ev`'s own behavior **branches on its meaning**.
+`ev` never branches on `source_ref`'s contents — it derives one dedup key and compares only
+that — so `source_ref` is **not** an `ev` concept. It is the adopter's concept (a "round", a
+ticket, a sprint, a work-unit) carried through opaquely. `ev` has no notion of "rounds":
+whatever the source calls its unit of work, `ev` only ever sees an identity to dedup on.
 
 ## Ground
 
@@ -199,6 +215,37 @@ cannot even store a gating check at rest. This is what lets a repo import anothe
 history — rulings it wants to *watch* but has no authority to *fail on* — as jurisdiction `C`,
 honestly: surfaced forever, gating never.
 
+## Provenance — how a decision entered the ledger
+
+A decision may carry a declared **`provenance`** tag from the closed vocabulary
+`{imported, agent-proposed, human-now}` (out-of-vocabulary is refused). It is bookkeeping —
+not hashed — and it records *how* the tick entered the ledger, **absent ⇒ `human-now`**:
+
+- **`human-now`** — a human ruling captured now (the absent default).
+- **`agent-proposed`** — a machine-drafted decision awaiting a human (the human-pending lane).
+- **`imported`** — faithfully-transcribed *history*, recorded now but authored at some past
+  time by the source it was migrated from.
+
+**The stamping discipline (the launder defense).** `provenance` is stamped **only** at the
+migrate / canonical-intake boundary. `ev decide` and `ev guard` **always author `human-now`
+unconditionally** — there is no `--provenance` flag, and the fresh-authorship path never reads
+a caller-supplied value. This is what makes the field sound: an importer can **never** launder
+a forbidden op by claiming `provenance=imported` on a freshly authored decision, because the
+fresh path can never write `imported`. `ev migrate` stamps `imported` by default (history); an
+explicit value on a canonical record wins (a live runner may emit `agent-proposed` /
+`human-now`).
+
+**The R5 provenance partition.** Only **one** refusal arm is partitioned by provenance: the R5
+**lexical forbidden-op lint** (`auto-close` / `auto-prune` / `self-stop` / `auto-inherit`).
+For a `provenance=imported` tick — faithfully transcribed text a human once wrote — an op-word
+hit is downgraded to a **non-gating `warning:`** (it is recorded, not authored now), surfaced
+by `ev verify` so it stays visible with a named human still on the hook. For `agent-proposed`
+and `human-now` the op-arm stays a **hard violation** (a live agent draft must not smuggle
+op-language; fresh authorship is held to the line). **Every other refusal stays hard for all
+provenance, including `imported`:** empty-blame (R5), the R3 self-evolve lint, the
+no-fabricated-author rule, and the `C`/`D`-no-test lock never soften. Exactly one arm softens,
+for exactly one provenance.
+
 ## Forward-compat — the two-tier schema
 
 `ev`'s on-disk schema is **closed** for everything that defines identity, and **tolerant** for
@@ -212,9 +259,10 @@ without bricking an older reader:
   content-addressed id can never carry an unvalidated field.
 - **Tier 2 — unknown top-level non-hashed keys are TOLERATED.** A truly-unknown top-level key
   (one outside both the identity set and the known-non-hashed allow-list `{authority,
-  jurisdiction, round_id}`) is **parsed through**, not rejected, so a tick written by a future
-  `ev` still loads. `ev verify` surfaces it as a **`warning:`** (not a violation), naming the
-  key, so a *typo'd* field name stays visible rather than silently swallowed.
+  jurisdiction, source_ref, provenance}`) is **parsed through**, not rejected, so a tick
+  written by a future `ev` still loads. `ev verify` surfaces it as a **`warning:`** (not a
+  violation), naming the key, so a *typo'd* field name stays visible rather than silently
+  swallowed.
 
 There is an inert `schema_version` recorded in the store config; it is read **lazily**, only at
 this tolerate-vs-reject decision, and is not a parsed config field.
@@ -223,9 +271,10 @@ this tolerate-vs-reject decision, and is not a parsed config field.
 
 Forward-compat is forward-only and cannot be retrofitted. A binary that predates a bookkeeping
 field has a schema closed for **all** top-level keys, so a tick that carries a newer field
-(`jurisdiction`, `round_id`, or any future tolerated key) is **rejected** by that older
-`ev verify`, not tolerated — there is no way to teach an already-shipped reader to ignore a
-field added after it. The two-tier rule buys tolerance for *future* fields going forward; it
+(`jurisdiction`, `source_ref`, `provenance`, or any future tolerated key) is **rejected** by
+that older `ev verify`, not tolerated — there is no way to teach an already-shipped reader to
+ignore a field added after it. The two-tier rule buys tolerance for *future* fields going
+forward; it
 cannot reach backward to a reader that already shipped. Stated plainly so no one assumes a
 guarantee that does not exist.
 
@@ -253,8 +302,13 @@ first). The refusals:
   to an existing tick (`parent_id … does not resolve (R6)`), and the parent chain must be
   acyclic (`parent chain has a cycle (R6)`).
 - **R5 — every mutating op names a human.** A tick with empty `blame` is a violation
-  (`empty blame (R5)`). A best-effort lexical lint also flags forbidden machine-initiated
-  op language (e.g. `auto-close`, `auto-prune`, `self-stop`, `auto-inherit`).
+  (`empty blame (R5)`) — for **all** provenance, including `imported`. A best-effort lexical
+  lint also flags forbidden machine-initiated op language (`auto-close`, `auto-prune`,
+  `self-stop`, `auto-inherit`). **This op-arm is the one refusal partitioned by `provenance`**
+  (see *Provenance* above): for a `provenance=imported` tick it is downgraded to a non-gating
+  `warning:` (faithfully-transcribed history, recorded not authored now); for `agent-proposed`
+  and `human-now` it stays a hard violation. Every other R5 arm (empty-blame, no-fabricated-
+  author) stays hard for all provenance.
 - **R3 — the system is never the subject of self-evolve language.** A best-effort lexical
   lint flags self-evolve / self-improve verbs (e.g. `self-evolve`, `self-improve`,
   `self-grade`) in the free-text fields, where the subject should be a human, not the
@@ -274,6 +328,14 @@ It does **not** claim tamper-resistance of offline test outcomes. `ev` records t
 was bound and the commit it was verified at, but it cannot prove an offline test result was
 honest. That is a documented boundary, not a guarantee — the same framing as the project
 [README](../README.md).
+
+`ev` validates that grounds are well-**formed**, never that they are **faithful** to the
+adopter's source. When a decision is brought in through the canonical intake (see
+[migrating.md](migrating.md)), `ev` re-runs its own read-path validators on every ground and
+check — but a producer-owned adapter that *mis-parses* its source and emits structurally valid
+but wrong grounds is a **producer bug `ev` cannot catch**. The honest-capture law protects
+against `ev` *synthesizing* grounds; it cannot protect against an edge adapter *fabricating*
+them. This is stated plainly rather than overclaimed.
 
 `ev`'s triggers are **git-recorded**: a binding's `triggered_by` paths and a bound check
 going red are both detected from the commit history (`ev check` compares the latest receipt's

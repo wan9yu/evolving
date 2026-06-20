@@ -218,8 +218,8 @@ fn decide_should_fail_when_the_authority_value_is_not_in_the_vocabulary() {
 }
 
 #[test]
-fn decide_should_record_the_round_id_when_one_is_declared() {
-    // given/when: a decision recorded with a durable round_id join/dedup key
+fn decide_should_record_the_source_ref_when_one_is_declared() {
+    // given/when: a decision recorded with a durable, opaque source_ref join/dedup key
     let r = repo();
     let out = run(
         &r,
@@ -230,7 +230,7 @@ fn decide_should_record_the_round_id_when_one_is_declared() {
             "team agreed",
             "--revisit",
             "Q3",
-            "--round-id",
+            "--source-ref",
             "R2289",
             "--blame",
             "Wang Yu",
@@ -247,20 +247,20 @@ fn decide_should_record_the_round_id_when_one_is_declared() {
         .unwrap()
         .to_string();
 
-    // then: the on-disk tick carries round_id (and it is durable in the bookkeeping, not hashed)
+    // then: the on-disk tick carries source_ref (durable in the bookkeeping, not hashed)
     let raw = std::fs::read_to_string(r.join(".evolving/ticks").join(&id)).unwrap();
     let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
-    assert_eq!(v["round_id"], "R2289");
-    // and: list + reopen render the round_id so a fresh agent can join/dedup on it
+    assert_eq!(v["source_ref"], "R2289");
+    // and: list + reopen render the source_ref so a fresh agent can join/dedup on it
     let listed = run(&r, &["list"]);
-    assert!(String::from_utf8_lossy(&listed.stdout).contains("round_id=R2289"));
+    assert!(String::from_utf8_lossy(&listed.stdout).contains("source_ref=R2289"));
     let re = run(&r, &["reopen", &id]);
-    assert!(String::from_utf8_lossy(&re.stdout).contains("round_id: R2289"));
+    assert!(String::from_utf8_lossy(&re.stdout).contains("source_ref: R2289"));
 }
 
 #[test]
-fn decide_should_fail_when_the_round_id_is_empty() {
-    // given/when: a decision whose declared round_id is empty
+fn decide_should_fail_when_the_source_ref_is_empty() {
+    // given/when: a decision whose declared source_ref is empty
     let r = repo();
     let out = run(
         &r,
@@ -271,7 +271,7 @@ fn decide_should_fail_when_the_round_id_is_empty() {
             "y",
             "--revisit",
             "Q3",
-            "--round-id",
+            "--source-ref",
             "",
             "--blame",
             "Wang Yu",
@@ -280,6 +280,44 @@ fn decide_should_fail_when_the_round_id_is_empty() {
 
     // then: it is rejected (non-empty-if-present)
     assert!(!out.status.success());
+}
+
+#[test]
+fn decide_should_leave_provenance_absent_so_fresh_authorship_is_human_now() {
+    // given/when: a plain fresh decision (there is no --provenance flag to set on decide at all)
+    let r = repo();
+    let out = run(
+        &r,
+        &[
+            "decide",
+            "freeze v1.8",
+            "--assume",
+            "team agreed",
+            "--revisit",
+            "Q3",
+            "--blame",
+            "Wang Yu",
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let id = String::from_utf8_lossy(&out.stdout)
+        .split_whitespace()
+        .nth(1)
+        .unwrap()
+        .to_string();
+
+    // then: the on-disk tick carries NO provenance key — absent = human-now. The launder defense:
+    // decide cannot stamp `imported`, so a forbidden op can never be laundered through fresh authorship.
+    let raw = std::fs::read_to_string(r.join(".evolving/ticks").join(&id)).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert!(
+        v.get("provenance").is_none(),
+        "fresh authorship must not carry provenance; tick was {v}"
+    );
 }
 
 #[test]

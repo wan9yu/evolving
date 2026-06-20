@@ -12,8 +12,13 @@ These docs cover the `ev` command surface: `init`, `decide`, `guard`, `migrate`,
 - **[commands.md](commands.md)** — the authoritative command reference: every flag, exit
   code, the exact strings each command prints, and a worked example per command.
 - **[concepts.md](concepts.md)** — the model in depth: the Tick schema, Grounds, Checks,
-  content-addressed identity and the frozen golden vectors, append-only immutability, the
-  refusals `ev verify` enforces, and the honesty / trust boundary.
+  content-addressed identity and the frozen golden vectors, append-only immutability,
+  jurisdiction, provenance, the forward-compatible schema, and the refusals `ev verify`
+  enforces.
+- **[migrating.md](migrating.md)** — bringing an existing decision history into `ev`: the
+  Canonical Decision Intake Contract (`ev migrate --source canonical:<path.jsonl>`) as the
+  primary intake, writing a small adapter that emits it, and the built-in convenience extractors
+  (`gitlog` / `to-human` / `decisions-immutable` / `escalation`).
 - **[philosophy.md](philosophy.md)** — the design principles behind `ev`: the nine tenets
   explaining why it makes the choices it does (facts not verdicts, detect not prevent, boot-path
   or dark code).

@@ -98,16 +98,28 @@ ev guard "<test selector>" <HEAD-id> "<ground claim>" \
   --counter-test "<selector>" --on-platform linux-ci --triggered-by schema.sql --surface ddl
 ```
 
-**Backfill an existing decision history** with `ev migrate` — don't re-type a ledger you
-already have written down. Each `--source <kind>:<path>` (kind ∈ `gitlog` / `to-human` /
-`decisions-immutable` / `escalation`) is harvested for its **rulings** and **structured**
+**Ingest an existing decision history** with `ev migrate` — don't re-type a ledger you
+already have written down. The **primary intake** is the **Canonical Decision Intake Contract**
+(`--source canonical:<path.jsonl>`): one JSON object per line on the closed envelope
+`{kind:"ev-decision-intake", decision, observe?, grounds, blame?, authority?, jurisdiction?,
+source_ref?, provenance?}`. An adopter with a bespoke format writes a small adapter (any
+language) that parses *their* format and emits canonical JSONL — `ev` never sees the bespoke
+markdown — and `ev` re-validates every line through its own read-path validators on the way in
+(`ev` owns `id` / `parent_id`; the producer never supplies identity). The same JSONL a one-shot
+adapter emits is what a future live runner emits natively — same contract, two producers. On
+this path `provenance` defaults to `imported`. Four built-in convenience extractors handle
+simple substrates: `--source <kind>:<path>` with kind ∈ `gitlog` / `to-human` /
+`decisions-immutable` / `escalation`, each harvesting **rulings** and **structured**
 roads-not-taken (`rejected: <opt>: <why>`) only — a prose reason is **never** NLP'd into a
-ground (a block with no structured road imports as an honest zero-grounds capture). It is
-**idempotent** (a re-run writes nothing), **keeps the chain** (a back-dated insert is reported
-*re-linked*, never rewritten), and **never invents an author** (a record with no author and no
-`--blame` fallback is a source-only gap, R5 intact):
+ground (a block with no structured road imports as an honest zero-grounds capture). A migrate is
+**idempotent** (a re-run writes nothing; records dedup on the key derived from `source_ref`),
+**keeps the chain** (a back-dated insert is reported *re-linked*, never rewritten), and **never
+invents an author** (a record with no author and no `--blame` fallback is a source-only gap, R5
+intact). `ev` validates grounds are well-*formed*, never that an adapter parsed its source
+*faithfully* — a mis-parse is a producer bug `ev` cannot catch:
 
 ```sh
+ev migrate --source canonical:decisions.jsonl --blame "<fallback author>"   # primary, format-neutral intake
 ev migrate --source gitlog:chat-room.md --source decisions-immutable:DECISIONS.md --blame "<fallback author>"
 # → imported N, skipped M, re-linked K, J source-only gap(s)
 ev migrate --reconcile --against to-human:to-human.md   # find the capture gap (source-only rulings)
@@ -139,8 +151,8 @@ or, for a **bulk import**, give `ev migrate` a `--jurisdiction-map` so the backf
 `C`/`D` instead of untagged-and-gateable. A `C`/`D`-jurisdiction decision is **detect-only**: any
 not-green verdict on it becomes the non-gating `memo` label (it can never trip `--exit-on-red`), and
 `ev verify` refuses to let it carry a runnable test check at all. Use it for another team's rulings
-you must surface but have no authority to gate on. (`--jurisdiction A`/`B` gate normally; `--round-id
-<key>` sets a durable join/dedup key.)
+you must surface but have no authority to gate on. (`--jurisdiction A`/`B` gate normally;
+`--source-ref <key>` sets a durable, opaque source identity `ev` dedups on but never interprets.)
 
 **Run the resurface / liveness gate** and surface anything not-green to the human:
 

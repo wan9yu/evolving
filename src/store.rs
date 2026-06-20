@@ -144,7 +144,8 @@ mod tests {
             blame: "Wang Yu".into(),
             authority: None,
             jurisdiction: None,
-            round_id: None,
+            source_ref: None,
+            provenance: None,
         }
     }
 

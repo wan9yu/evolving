@@ -31,6 +31,14 @@ pub struct MigrationRecord {
     pub observe: String,
     pub blame: Option<String>,
     pub grounds: Vec<Ground>,
+    // The bookkeeping tags a producer may declare. The four built-in extractors leave them at the
+    // legacy defaults (authority None, jurisdiction None — so the `--jurisdiction-map` fills it —,
+    // source_ref = the source_key token, provenance None); the canonical reader populates them from the
+    // wire record so an imported ruling lands with its true authority / jurisdiction / provenance.
+    pub authority: Option<String>,
+    pub jurisdiction: Option<String>,
+    pub source_ref: Option<serde_json::Value>,
+    pub provenance: Option<String>,
 }
 
 /// A `#<n>` / `R<n>` provenance token (issue or round id), leading-char + all-digits. Mirrors the
@@ -87,22 +95,145 @@ fn flush_record(header: &Option<(String, String)>, body: &str, out: &mut Vec<Mig
             observe: key.clone(),
             blame: None,
             grounds: structured_rejected_roads(body),
+            // Legacy defaults: no inline authority/provenance, source_ref = the source_key token, and
+            // jurisdiction left None so the `--jurisdiction-map` remains the sole tagger on this path.
+            authority: None,
+            jurisdiction: None,
+            source_ref: Some(serde_json::Value::String(key.clone())),
+            provenance: None,
         });
     }
 }
 
-/// The store-side durable key for a tick: its `round_id` if present, else the first round/`#<n>` token
-/// in the hashed `observe` — never the non-hashed events log. Shared by the idempotency index + reconcile,
-/// so the two never disagree on key precedence.
+/// The store-side durable key for a tick: the dedup key derived from its opaque `source_ref` if
+/// present (a string verbatim, or an object's deterministic JSON — see `source_ref_key`), else the
+/// first round/`#<n>` token in the hashed `observe` — never the non-hashed events log. Shared by the
+/// idempotency index + reconcile, so the two never disagree on key precedence.
 fn store_key(raw: &serde_json::Value) -> Option<String> {
-    raw.get("round_id")
-        .and_then(|x| x.as_str())
-        .map(|s| s.to_string())
+    raw.get("source_ref")
+        .map(crate::tick::source_ref_key)
         .or_else(|| {
             raw.get("observe")
                 .and_then(|x| x.as_str())
                 .and_then(first_round_or_issue_token)
         })
+}
+
+/// The closed key set of a Canonical Decision Intake line. The wire envelope is STRICT — unlike a
+/// stored tick (which tolerates an unknown non-hashed key as forward-compat), an external producer's
+/// line with an unknown key is a hard failure, so a mis-piped file cannot smuggle a field past ingest.
+const CANONICAL_KEYS: &[&str] = &[
+    "kind",
+    "decision",
+    "observe",
+    "grounds",
+    "blame",
+    "authority",
+    "jurisdiction",
+    "source_ref",
+    "provenance",
+];
+
+/// Parse a **Canonical Decision Intake** stream (JSONL) into `MigrationRecord`s — the format-neutral
+/// intake both an adopter's legacy adapter and a future live runner emit. This IS the trust boundary:
+/// the producer supplies STRUCTURE, and ev RE-VALIDATES it here through the very read-path validators
+/// (`ground_from_value`, the vocab checks) that guard an on-disk tick — never a parallel serde decode
+/// that could trust an unchecked `Ground`. Per line: skip blank / `#`-comment lines; require the fixed
+/// `kind` discriminator and reject any unknown envelope key loudly; require a non-empty `decision` and
+/// a `grounds` array (which may be empty — the honest zero-grounds capture); validate every declared
+/// tag against its closed vocabulary. The durable dedup/sort key mirrors `store_key`: the opaque
+/// `source_ref`'s derived key, else the first round/`#issue` token in `observe`.
+pub fn canonical_records(text: &str) -> Result<Vec<MigrationRecord>, String> {
+    use crate::capture::validate_authority;
+    use crate::tick::{
+        ground_from_value, only_keys, req_str, source_ref_key, validate_jurisdiction,
+        validate_provenance, validate_source_ref,
+    };
+    let mut out = Vec::new();
+    for (i, raw_line) in text.lines().enumerate() {
+        let n = i + 1;
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let v: serde_json::Value =
+            serde_json::from_str(line).map_err(|e| format!("canonical line {n}: not JSON: {e}"))?;
+        let obj = v
+            .as_object()
+            .ok_or_else(|| format!("canonical line {n}: not a JSON object"))?;
+        only_keys(obj, CANONICAL_KEYS, &format!("canonical line {n}"))?;
+        match obj.get("kind").and_then(|x| x.as_str()) {
+            Some("ev-decision-intake") => {}
+            other => {
+                return Err(format!(
+                    "canonical line {n}: not an ev-decision-intake record (kind={other:?})"
+                ))
+            }
+        }
+        let decision = req_str(obj, "decision").map_err(|e| format!("canonical line {n}: {e}"))?;
+        if decision.trim().is_empty() {
+            return Err(format!("canonical line {n}: decision is empty"));
+        }
+        let observe = obj
+            .get("observe")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string();
+        let grounds_v = obj
+            .get("grounds")
+            .and_then(|x| x.as_array())
+            .ok_or_else(|| format!("canonical line {n}: grounds missing/not array"))?;
+        let mut grounds = Vec::new();
+        for gv in grounds_v {
+            grounds.push(ground_from_value(gv).map_err(|e| format!("canonical line {n}: {e}"))?);
+        }
+        let blame = obj
+            .get("blame")
+            .and_then(|x| x.as_str())
+            .map(str::to_string);
+        // One validated optional string tag: absent → None; present → vocab-checked, with the line
+        // number threaded into the error. (source_ref is a raw Value, so it stays its own arm below.)
+        let opt_tag = |key: &str,
+                       validate: fn(&str) -> Result<(), String>|
+         -> Result<Option<String>, String> {
+            match obj.get(key).and_then(|x| x.as_str()) {
+                None => Ok(None),
+                Some(v) => {
+                    validate(v).map_err(|e| format!("canonical line {n}: {e}"))?;
+                    Ok(Some(v.to_string()))
+                }
+            }
+        };
+        let authority = opt_tag("authority", validate_authority)?;
+        let jurisdiction = opt_tag("jurisdiction", validate_jurisdiction)?;
+        let provenance = opt_tag("provenance", validate_provenance)?;
+        let source_ref = match obj.get("source_ref") {
+            None => None,
+            Some(rv) => {
+                validate_source_ref(rv).map_err(|e| format!("canonical line {n}: {e}"))?;
+                Some(rv.clone())
+            }
+        };
+        // The dedup/sort key mirrors store_key's precedence: the source_ref's derived key, else the
+        // first round/`#issue` token in observe (so the canonical path and the store agree on keying).
+        let source_key = source_ref
+            .as_ref()
+            .map(source_ref_key)
+            .or_else(|| first_round_or_issue_token(&observe))
+            .unwrap_or_default();
+        out.push(MigrationRecord {
+            source_key,
+            decision,
+            observe,
+            blame,
+            grounds,
+            authority,
+            jurisdiction,
+            source_ref,
+            provenance,
+        });
+    }
+    Ok(out)
 }
 
 /// Extractor 1 — **gitlog / chat-room**: each `## R<N> …` header is one decision; the header text
@@ -245,9 +376,9 @@ pub struct BackfillSummary {
     pub source_only_gaps: usize,
 }
 
-/// Map the store's existing decisions to their durable source key → (id, parent_id). The key is read
-/// from the HASHED payload: `round_id` if present, else the first round/#N token in `observe` — never
-/// from the non-hashed events log. This is the idempotency + re-link index for a backfill pass.
+/// Map the store's existing decisions to their durable source key → (id, parent_id). The key is the
+/// derived dedup key of the non-hashed `source_ref` if present, else the first round/#N token in the
+/// hashed `observe` — never the non-hashed events log. The idempotency + re-link index for a backfill.
 fn store_key_index(
     store: &Store,
 ) -> Result<std::collections::HashMap<String, (String, String)>, String> {
@@ -271,7 +402,7 @@ fn store_key_index(
 
 /// Run the idempotent backfill of `records` into the store at `repo`. Deterministic order: records
 /// are sorted by `source_key` first so a re-run replays the same chain. Idempotency is keyed on the
-/// durable `source_key` (carried into the hashed `observe` + the non-hashed `round_id`): a record
+/// durable `source_key` (the non-hashed `source_ref`'s derived key, or a token in the hashed `observe`): a record
 /// whose key is already in the store is SKIPPED — chain-position-independent, so a re-run over a
 /// now-non-empty store writes nothing. The chain is kept by threading the PROSPECTIVE parent (the
 /// id we just wrote/found) instead of re-reading the live HEAD each step, so the lineage stays
@@ -338,9 +469,58 @@ pub fn backfill(
                 continue;
             }
         };
-        // Apply the jurisdiction map at one per-record point, identically on both paths
-        // (jurisdiction is non-hashed, so the probe id stays byte-identical to the append id).
-        let jurisdiction = jurisdiction_map.get(&r.source_key).cloned();
+        // Per-record bookkeeping, applied identically on the probe and the real path (all non-hashed,
+        // so the probe id stays byte-identical to the append id). An inline jurisdiction on the record
+        // WINS over the `--jurisdiction-map`; the map fills only a record that declares none; a record
+        // that declares a DIFFERENT bucket than the map is a hard error (two sources of truth disagree).
+        let jurisdiction = match (
+            r.jurisdiction.as_deref(),
+            jurisdiction_map.get(&r.source_key),
+        ) {
+            (Some(inline), Some(mapped)) if inline != mapped => {
+                return Err(format!(
+                    "source {:?}: inline jurisdiction {inline:?} conflicts with the --jurisdiction-map entry {mapped:?}",
+                    r.source_key
+                ));
+            }
+            (Some(inline), _) => Some(inline.to_string()),
+            (None, mapped) => mapped.cloned(),
+        };
+        let authority = r.authority.clone();
+        let source_ref = r.source_ref.clone();
+        // The migrate verb backfills HISTORY: a record with no declared provenance is stamped
+        // `imported`. An explicit value (a live runner emitting `agent-proposed` / `human-now`) wins.
+        // `ev decide` / `ev guard` never reach here, so fresh authorship is never stamped imported.
+        let provenance = r
+            .provenance
+            .clone()
+            .or_else(|| Some("imported".to_string()));
+        // Ingest-boundary structural gates — the SAME refusals `ev verify` enforces at rest, applied at
+        // the door so a malformed record never lands. A C/D (detect-only) decision may carry no runnable
+        // Test check (one shared predicate with verify, so they cannot drift):
+        if crate::tick::detect_only_carries_test(jurisdiction.as_deref(), &r.grounds) {
+            return Err(format!(
+                "source {:?}: a {} jurisdiction (detect-only) decision cannot carry a runnable test check",
+                r.source_key,
+                jurisdiction.as_deref().unwrap_or("")
+            ));
+        }
+        // And a harvested check (a Test with no counter-test) is allowed ONLY for imported history — a
+        // fresh `agent-proposed` binding must prove falsifiability with a counter-test, exactly as decide.
+        for g in &r.grounds {
+            if let Some(crate::tick::Check::Test {
+                counter_test: None, ..
+            }) = &g.check
+            {
+                if provenance.as_deref() != Some("imported") {
+                    return Err(format!(
+                        "source {:?}: a harvested test check (no counter-test) is allowed only for imported history, not {}",
+                        r.source_key,
+                        provenance.as_deref().unwrap_or("human-now")
+                    ));
+                }
+            }
+        }
         if dry_run {
             // The id this record WOULD take at the prospective parent (no write). held_since is
             // non-hashed, so this matches the id `append` computes on a real run — only the real
@@ -354,9 +534,10 @@ pub fn backfill(
                 status: "live".into(),
                 held_since: String::new(),
                 blame: blame.clone(),
-                authority: None,
+                authority: authority.clone(),
                 jurisdiction: jurisdiction.clone(),
-                round_id: Some(r.source_key.clone()),
+                source_ref: source_ref.clone(),
+                provenance: provenance.clone(),
             };
             prospective_parent = compute_id(&probe);
             summary.imported += 1;
@@ -369,9 +550,10 @@ pub fn backfill(
                 decision: r.decision,
                 grounds: r.grounds,
                 blame,
-                authority: None,
+                authority,
                 jurisdiction,
-                round_id: Some(r.source_key),
+                source_ref,
+                provenance,
             },
         )?;
         prospective_parent = written.id;
@@ -383,8 +565,8 @@ pub fn backfill(
 /// A reconcile bucket count: how many source rulings are IN BOTH the source and the store, how many
 /// are SOURCE-ONLY (the capture gap — a ruling the source has that the ledger never captured), how
 /// many are STORE-ONLY (in the ledger, absent from this source), and how many store ticks could not
-/// be keyed at all (no round token in their hashed observe). Keys come from the HASHED `observe` /
-/// `round_id`, never from events.jsonl, so they are durable.
+/// be keyed at all (no round token in their hashed observe). Keys come from the non-hashed `source_ref`
+/// or the hashed `observe`, never from events.jsonl, so they are durable.
 #[derive(Debug, Default, PartialEq)]
 pub struct ReconcileReport {
     pub in_both: usize,
@@ -394,8 +576,8 @@ pub struct ReconcileReport {
 }
 
 /// Reconcile a source's extracted records against the store. The store-side key is read from each
-/// tick's HASHED payload — its `round_id` if present, else the first round/#N token in `observe` —
-/// so the join is durable (NOT dependent on the non-hashed events log). A source key with no store
+/// the derived key of its non-hashed `source_ref` if present, else the first round/#N token in the
+/// hashed `observe` — so the join is durable (NOT dependent on the events log). A source key with no store
 /// match is a SOURCE-ONLY gap (the capture gap to surface); a store key with no source match is
 /// STORE-ONLY; a store tick with no derivable key is counted separately as un-keyable.
 pub fn reconcile(
@@ -557,5 +739,142 @@ this paragraph explains at length why redis was rejected, in prose
             recs[0].grounds.is_empty(),
             "a prose reason must NEVER become a ground (no synthesis)"
         );
+    }
+
+    // --- canonical intake reader (the trust boundary) ---
+
+    fn canonical_line(extra: &str) -> String {
+        // a minimal valid ev-decision-intake line, with room to splice in extra/override fields
+        format!(
+            "{{\"kind\":\"ev-decision-intake\",\"decision\":\"no Redis\",\"grounds\":[]{extra}}}"
+        )
+    }
+
+    #[test]
+    fn canonical_reader_should_parse_a_full_ruling_record_when_given_a_valid_line() {
+        // given: a full ev-decision-intake ruling carrying every declared tag
+        let text = "{\"kind\":\"ev-decision-intake\",\"decision\":\"rate-limit at the edge\",\
+\"observe\":\"round R1043\",\"grounds\":[{\"claim\":\"edge sees every request\",\"supports\":\"chosen\"},\
+{\"claim\":\"app tier double-counts\",\"supports\":\"rejected:app-tier\"}],\"blame\":\"Wang Yu\",\
+\"authority\":\"user-ruled\",\"jurisdiction\":\"C\",\"source_ref\":\"R1043\",\"provenance\":\"imported\"}";
+
+        // when: the canonical reader parses it
+        let recs = canonical_records(text).expect("valid record");
+
+        // then: every field maps onto the record, grounds re-parsed through the read-path validator
+        assert_eq!(recs.len(), 1);
+        let r = &recs[0];
+        assert_eq!(r.decision, "rate-limit at the edge");
+        assert_eq!(r.grounds.len(), 2);
+        assert_eq!(r.grounds[1].supports, "rejected:app-tier");
+        assert_eq!(r.blame.as_deref(), Some("Wang Yu"));
+        assert_eq!(r.authority.as_deref(), Some("user-ruled"));
+        assert_eq!(r.jurisdiction.as_deref(), Some("C"));
+        assert_eq!(r.source_ref, Some(serde_json::json!("R1043")));
+        assert_eq!(r.source_key, "R1043");
+        assert_eq!(r.provenance.as_deref(), Some("imported"));
+    }
+
+    #[test]
+    fn canonical_reader_should_reject_a_line_whose_kind_is_not_ev_decision_intake() {
+        // given: a JSON line with the wrong envelope kind (a mis-piped non-intake file)
+        let text = "{\"kind\":\"something-else\",\"decision\":\"x\",\"grounds\":[]}";
+
+        // when: the canonical reader parses it
+        let result = canonical_records(text);
+
+        // then: it loud-fails (the wire envelope is strict, not forward-compat-tolerant)
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn canonical_reader_should_reject_an_unknown_envelope_key() {
+        // given: an otherwise-valid line carrying a key outside the closed envelope set
+        let text = canonical_line(",\"emoji\":\"✅\"");
+
+        // when: the canonical reader parses it
+        let result = canonical_records(&text);
+
+        // then: the unknown key is rejected at the door (no format bleeds into core)
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn canonical_reader_should_reject_a_malformed_ground_via_ground_from_value() {
+        // given: a line whose ground has an invalid supports (not chosen / rejected:<opt>)
+        let text = "{\"kind\":\"ev-decision-intake\",\"decision\":\"x\",\
+\"grounds\":[{\"claim\":\"c\",\"supports\":\"maybe\"}]}";
+
+        // when: the canonical reader parses it
+        let result = canonical_records(text);
+
+        // then: it fails through the SAME read-path validator a stored tick uses (the trust boundary)
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn canonical_reader_should_import_zero_grounds_when_grounds_is_empty() {
+        // given: a valid line with an empty grounds array (the honest zero-grounds capture, e.g. a FLAG)
+        let text = canonical_line("");
+
+        // when: the canonical reader parses it
+        let recs = canonical_records(&text).expect("zero-grounds is first-class");
+
+        // then: the record imports with no grounds (never synthesized)
+        assert_eq!(recs.len(), 1);
+        assert!(recs[0].grounds.is_empty());
+    }
+
+    #[test]
+    fn canonical_reader_should_take_source_ref_verbatim_without_resniffing_tokens() {
+        // given: a line whose source_ref is an opaque key and whose observe carries a DIFFERENT token
+        let text = canonical_line(",\"observe\":\"see R2289\",\"source_ref\":\"ticket-42\"");
+
+        // when: the canonical reader parses it
+        let recs = canonical_records(&text).expect("valid");
+
+        // then: source_ref and the dedup key are the verbatim source_ref — never re-sniffed from observe
+        assert_eq!(recs[0].source_ref, Some(serde_json::json!("ticket-42")));
+        assert_eq!(recs[0].source_key, "ticket-42");
+    }
+
+    #[test]
+    fn canonical_reader_should_key_a_structured_source_ref_by_its_deterministic_json() {
+        // given: a line whose source_ref is a STRUCTURED object (richer than a string)
+        let text = canonical_line(",\"source_ref\":{\"round\":\"R1\",\"sprint\":\"S7\"}");
+
+        // when: the canonical reader parses it
+        let recs = canonical_records(&text).expect("valid");
+
+        // then: the object is carried opaquely and the dedup key is its deterministic (sorted) JSON
+        assert_eq!(
+            recs[0].source_ref,
+            Some(serde_json::json!({"round": "R1", "sprint": "S7"}))
+        );
+        assert_eq!(recs[0].source_key, "{\"round\":\"R1\",\"sprint\":\"S7\"}");
+    }
+
+    #[test]
+    fn canonical_reader_should_skip_blank_and_comment_lines() {
+        // given: a stream padded with a blank line and a #-comment around one record
+        let text = format!("\n# a comment\n{}\n\n", canonical_line(""));
+
+        // when: the canonical reader parses it
+        let recs = canonical_records(&text).expect("valid");
+
+        // then: only the real record is read (blank/comment lines are skipped, not errors)
+        assert_eq!(recs.len(), 1);
+    }
+
+    #[test]
+    fn canonical_reader_should_reject_an_out_of_vocab_provenance() {
+        // given: a line whose provenance is outside the closed vocabulary
+        let text = canonical_line(",\"provenance\":\"self-asserted\"");
+
+        // when: the canonical reader parses it
+        let result = canonical_records(&text);
+
+        // then: it fails (provenance is vocab-validated at the boundary, like jurisdiction/authority)
+        assert!(result.is_err());
     }
 }

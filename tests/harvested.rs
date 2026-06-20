@@ -90,7 +90,8 @@ fn write_harvested(repo: &std::path::Path, reference: &str, sha: &str) -> String
         blame: "Wang Yu".into(),
         authority: None,
         jurisdiction: None,
-        round_id: None,
+        source_ref: None,
+        provenance: None,
     };
     t.id = ev::canonical::compute_id(&t);
     store.write_tick(&t).unwrap();

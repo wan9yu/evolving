@@ -81,7 +81,7 @@ is a stream of trailing flags parsed **left-to-right** (see the grammar below).
 | `--from-git` | a commit | no* | Seed the decision text (and blame — the commit author, or a leading `Role:` subject prefix when present — and the subject's `#<n>` / `R<n>` plus body `Refs #<n>` provenance) from a commit instead of the positional argument. *Exactly one of `{positional decision, --from-git}` must be given.* |
 | `--authority` | `user-ruled` \| `agent-disposable` | no | A declared (non-hashed) authority tag, human-set, surfaced by `reopen` / `show` / `list` / `brief`. An out-of-vocabulary value is refused. |
 | `--jurisdiction` | `A` \| `B` \| `C` \| `D` | no | A declared (non-hashed) jurisdiction tag. `A`/`B` may gate; `C`/`D` are **detect-only** — structurally ungateable (see [concepts.md](concepts.md)). Surfaced by `show` / `list` / `reopen`. An out-of-vocabulary value is refused. |
-| `--round-id` | a key | no | A declared (non-hashed) join/dedup key (e.g. `R2289`, `#555`). Durable; used by `ev migrate` to dedup + reconcile a backfill. Surfaced by `show` / `list` / `reopen`. Non-empty if given. |
+| `--source-ref` | a key | no | A declared (non-hashed), **opaque source identity** ev never interprets — a non-empty string (e.g. `R2289`, `#555`, an issue ref) carried verbatim. ev derives only a dedup/reconcile key from it; used by `ev migrate` to dedup + reconcile a backfill. Surfaced by `show` / `list` / `reopen`. Non-empty if given. (The canonical intake also accepts a structured object — see [`ev migrate`](#ev-migrate); on this interactive path it is a plain string.) |
 | `--observe` | a string | no | Sets the decision's `observe` field (the situation being observed). |
 | `--blame` | a name | no* | The author on the hook. *If omitted, falls back to `git config user.name`; one of the two must resolve to a non-empty name.* |
 | `--verified-at-sha` | 40 lowercase hex | no | The commit a **test** binding was last verified at. If omitted, defaults to `git rev-parse HEAD`. Only used by test bindings. |
@@ -111,7 +111,7 @@ The trailing flags are walked in order and bound to **the most recently opened g
    resolved from `--verified-at-sha` or `git rev-parse HEAD`) make the ground's check a
    **Test**.
 5. `--observe`, `--blame`, `--verified-at-sha`, `--authority`, `--jurisdiction`, and
-   `--round-id` are decision-level, not per-ground.
+   `--source-ref` are decision-level, not per-ground.
 
 If a per-ground flag appears before any `--assume` / `--reject`, it is refused:
 `<flag> has no preceding --assume/--reject ground`. A missing value is refused with
@@ -164,7 +164,7 @@ Exactly **one** of `{positional decision, --from-git}` is allowed:
   `user-ruled` or `agent-disposable` → `authority must be user-ruled or agent-disposable`.
 - **A declared jurisdiction must be in vocabulary.** A `--jurisdiction` value outside
   `{A, B, C, D}` → `jurisdiction must be one of A, B, C, D (got <v>)`.
-- **A round-id must be non-empty.** An empty `--round-id` → `--round-id needs a non-empty value`.
+- **A source-ref must be non-empty.** An empty `--source-ref` → `--source-ref needs a non-empty value`.
 - **Exactly one decision source.** Positional decision *and* `--from-git` →
   `decide: decision given twice (positional and --from-git)`; neither →
   `decide: needs a decision (positional) or --from-git`; an unresolvable commit →
@@ -311,12 +311,19 @@ ev guard "pytest tests/test_schema_frozen.py" <HEAD-id> "schema stays frozen" \
 
 ## `ev migrate`
 
-**Synopsis:** backfill an *existing* decision history into the ledger from one or more source
-documents — idempotently, by HARVESTING the rulings and structured roads-not-taken those
-sources already record. Also reconciles a source against the store (the capture-gap report),
-and harvests an existing test as a check shape (`--bind-check`).
+**Synopsis:** ingest an *existing* decision history into the ledger from one or more sources —
+idempotently. The **primary, format-neutral intake** is the **Canonical Decision Intake
+Contract** (`--source canonical:<path.jsonl>`): a producer-owned adapter (or a live runner)
+emits one canonical JSON line per decision, and `ev` re-validates every line through its own
+read-path validators on the way in. Four built-in extractors (`gitlog`, `to-human`,
+`decisions-immutable`, `escalation`) are a **peripheral convenience** for simple substrates,
+HARVESTING the rulings and structured roads-not-taken those sources already record. `ev migrate`
+also reconciles a source against the store (the capture-gap report), and harvests an existing
+test as a check shape (`--bind-check`). For the format, the trust boundary, and writing an
+adapter, see [migrating.md](migrating.md).
 
 ```
+ev migrate --source canonical:<path.jsonl> [--source …] [--jurisdiction-map <path>] [--dry-run] [--blame <fallback>]
 ev migrate --source <kind>:<path> [--source …] [--jurisdiction-map <path>] [--dry-run] [--blame <fallback>]
 ev migrate --reconcile --against <kind>:<path>
 ev migrate --bind-check <selector> --on-platform <p> --triggered-by <t> --surface <s> [--verified-at-sha <40-hex>]
@@ -326,7 +333,7 @@ ev migrate --bind-check <selector> --on-platform <p> --triggered-by <t> --surfac
 
 | Flag | Takes | Required | Effect |
 | --- | --- | --- | --- |
-| `--source` | `<kind>:<path>` | for a backfill | A source to import. `<kind>` ∈ `{gitlog, to-human, decisions-immutable, escalation}`; `<path>` is read from disk. Repeatable; sources import in deterministic `source_key` order. |
+| `--source` | `<kind>:<path>` | for a backfill | A source to import. `<kind>` ∈ `{canonical, gitlog, to-human, decisions-immutable, escalation}` — `canonical` is the primary intake (JSONL); the other four are convenience extractors. `<path>` is read from disk. Repeatable; sources import in deterministic `source_key` order. |
 | `--jurisdiction-map` | a `<path>` | no | A `source_key → A/B/C/D` bucket map (see below). It is **how an imported decision gets its jurisdiction**: a record whose `source_key` is in the map carries that bucket; a record **absent** from the map imports **untagged**. Purely additive — omitting it imports every record untagged. |
 | `--dry-run` | — | no | Parse + report what **would** import; write no tick. |
 | `--blame` | a name | no | Fallback author for any source record carrying none. **R5 stays intact** — a record with neither its own author nor this fallback is *not* imported; it is reported as a source-only gap (an author is never invented). |
@@ -336,11 +343,73 @@ ev migrate --bind-check <selector> --on-platform <p> --triggered-by <t> --surfac
 | `--on-platform` / `--triggered-by` / `--surface` | a value (repeatable) | with `--bind-check` (≥1 each) | The liveness the harvested check declares. A harvest with an empty set is refused (no half-harvest). |
 | `--verified-at-sha` | 40 lowercase hex | no | The sha the `--bind-check` harvest was verified at; defaults to `git rev-parse HEAD`. |
 
-### The four extractors (rulings + structured roads only — never NLP'd)
+### `canonical:` — the Canonical Decision Intake Contract (the primary intake)
 
-Each `<kind>` is a pure, format-aware extractor turning a source's text into records. They
-parse **rulings and *structured* rejected-roads only** — a road becomes a ground iff the
-source declares it with an explicit `rejected: <option>: <why>` (or `reject …`) token. A
+`--source canonical:<path.jsonl>` reads the **Canonical Decision Intake Contract**: one JSON
+object per line (JSONL); blank lines and `#`-comment lines are skipped. Each line is independent
+and idempotent on its dedup key. This is the format-neutral seam both a legacy adapter and a
+future live runner emit. The full spec — the closed envelope, the trust boundary, the ingest
+gates, and writing an adapter — is in [migrating.md](migrating.md); the essentials:
+
+- **The closed envelope.** Each line's key set is exactly
+  `{kind, decision, observe?, grounds, blame?, authority?, jurisdiction?, source_ref?, provenance?}`.
+  `kind` MUST be the fixed string `"ev-decision-intake"`. An unknown `kind`, or **any** unknown
+  envelope key, is a **hard loud failure** — the wire envelope is strict and does **not** get the
+  on-disk forward-compat tolerance, so a mis-piped file cannot smuggle a field past ingest.
+- **`ev` owns identity.** The contract carries **no `id`, `parent_id`, `held_since`, or
+  `status`** — `ev` computes/stamps those (`parent_id = HEAD`; `held_since` = write-time;
+  `status = "live"`; `id =` the content-addressed hash). The producer never supplies identity;
+  that is the whole trust boundary.
+- **`ev` re-validates every ground.** The `grounds[]` / `check` sub-shape is byte-identical to
+  the on-disk one, and every element is re-parsed through `ev`'s own read-path validators at
+  ingest (claim non-empty; `supports ∈ {chosen, rejected:<non-empty>}`; full check shape). A
+  malformed ground is rejected at the door.
+- **`source_ref` is opaque.** Taken verbatim (a string) or carried whole (an object); `ev`
+  derives only a dedup key from it and never re-sniffs `observe` for a token when `source_ref`
+  is present.
+- **`provenance` defaults to `imported`.** On this import path a record that declares no
+  `provenance` is stamped `imported`; an explicit value (`agent-proposed` / `human-now`) wins.
+
+A worked record (one JSONL line, shown pretty):
+
+```json
+{
+  "kind": "ev-decision-intake",
+  "decision": "rate-limit lives at the edge proxy",
+  "observe": "round R1043",
+  "grounds": [
+    { "claim": "the edge sees every request first", "supports": "chosen" },
+    { "claim": "the app tier double-counts", "supports": "rejected:app-tier" }
+  ],
+  "blame": "Wang Yu",
+  "authority": "user-ruled",
+  "jurisdiction": "C",
+  "source_ref": "R1043",
+  "provenance": "imported"
+}
+```
+
+#### Ingest-boundary gates
+
+The same refusals `ev verify` enforces at rest are applied at the door, so a malformed record
+never lands:
+
+- a `C` / `D` (detect-only) decision may carry **no** runnable Test check;
+- a **harvested** check (a Test with no counter-test) is allowed **only** for
+  `provenance=imported` — a fresh `agent-proposed` Test binding must carry a counter-test and
+  full liveness, exactly like `ev decide` / `ev guard`;
+- **jurisdiction precedence:** an inline `jurisdiction` on a canonical record **wins** over
+  `--jurisdiction-map`; the map fills only a record that declares none; a record declaring a
+  **different** bucket than the map is a hard error.
+
+### The four convenience extractors (rulings + structured roads only — never NLP'd)
+
+The `gitlog` / `to-human` / `decisions-immutable` / `escalation` kinds are pure, format-aware
+extractors for **simple substrates** — a peripheral path beside the canonical contract. An
+adopter with a bespoke history writes a small adapter that emits canonical JSONL instead (see
+[migrating.md](migrating.md)); these built-ins are never widened to swallow one adopter's
+grammar. They parse **rulings and *structured* rejected-roads only** — a road becomes a ground
+iff the source declares it with an explicit `rejected: <option>: <why>` (or `reject …`) token. A
 free-text prose reason is **never** mined into a ground: a block with no structured road yields
 a record with **zero grounds** (an honest capture), never a synthesized one.
 
@@ -354,9 +423,9 @@ a record with **zero grounds** (an honest capture), never a synthesized one.
 - **`escalation`** — the *same* `RESOLVED` / `FLAG` reader as `to-human`, path-parameterized
   (no layout of its own).
 
-Each record's `source_key` (e.g. `R2289`, `#555`, `§3`) is carried into the hashed `observe`
-**and** written to the non-hashed `round_id`, so the backfill can dedup and reconcile durably —
-from the record's own payload, never from the events log.
+Each extracted record's `source_key` (e.g. `R2289`, `#555`, `§3`) is carried into the hashed
+`observe` **and** written to the non-hashed `source_ref`, so the backfill can dedup and
+reconcile durably — from the record's own payload, never from the events log.
 
 ### The idempotent backfill
 
@@ -364,8 +433,13 @@ A backfill sorts records by `source_key`, then for each computes the content-add
 *would* take and **skips it if that key is already in the store** — so running `ev migrate`
 twice writes nothing the second time. The chain is **kept** (`keep-chain`): a back-dated
 mid-chain insert that re-parents an existing tick is counted and reported as **re-linked**,
-never rewritten. A harvested decision is appended through the **same** single hashing path as
-`ev decide` (one `compute_id`, one write, one R3 lint).
+never rewritten. Every record — canonical or extractor-built — is appended through the **same**
+single hashing path as `ev decide` (one `compute_id`, one write, one R3 lint).
+
+On this import path a record's **`provenance` defaults to `imported`** (history) when it
+declares none; an explicit value on a canonical record wins. Fresh authorship can never reach
+here: `ev decide` / `ev guard` always stamp `human-now`, so a forbidden op can never be
+laundered as `imported` (see the provenance partition in [concepts.md](concepts.md)).
 
 ### Jurisdiction on import (`--jurisdiction-map <path>`)
 
@@ -376,22 +450,26 @@ An imported decision is **untagged by default** — and an untagged decision can
 The file is a plain text `source_key → bucket` map, one pair per line:
 
 ```
-# round-id -> bucket   (a `#` line is a comment; blank lines are skipped)
+# source_ref -> bucket   (a `#` line is a comment; blank lines are skipped)
 R2289 C
 #1194 C
 §3   A
 ```
 
 - each non-blank, non-`#` line is **exactly two whitespace-separated tokens**: `<source_key> <bucket>`;
-- `<source_key>` is the record's durable key (its `R<N>` / `#<n>` / `§N` token — the same key the
-  extractors carry into `round_id` and used by reconcile);
+- `<source_key>` is the record's durable key (the dedup key derived from its `source_ref`, e.g. an
+  `R<N>` / `#<n>` / `§N` token — the same key the extractors carry into `source_ref` and used by
+  reconcile);
 - `<bucket>` is one of `{A, B, C, D}`. An out-of-vocabulary or malformed line is a **hard error that
   names the offending line** and writes nothing (`jurisdiction-map line "<line>": …`).
 
 A record whose key is in the map imports carrying that jurisdiction; a record **absent** from the map
-imports **untagged** (the map is purely additive — an omitted `--jurisdiction-map` tags nothing). Because
-jurisdiction is **non-hashed**, tagging never moves a tick id: a re-run is still idempotent (a tagged
-record already in the store is skipped, not rewritten), and the golden vectors do not move.
+imports **untagged** (the map is purely additive — an omitted `--jurisdiction-map` tags nothing). For a
+**canonical** record, an inline `jurisdiction` **wins** over the map; the map fills only a record that
+declares none; a record declaring a **different** bucket than the map is a hard error
+(`source <key>: inline jurisdiction <inline> conflicts with the --jurisdiction-map entry <mapped>`).
+Because jurisdiction is **non-hashed**, tagging never moves a tick id: a re-run is still idempotent (a
+tagged record already in the store is skipped, not rewritten), and the golden vectors do not move.
 
 This is how a detect-only import is made detect-only **structurally**, not by convention. A
 `C`/`D`-tagged decision can **never gate**: any not-green verdict on it is mapped to the non-gating
@@ -402,10 +480,11 @@ imports as a **permanent detect-only MISS** — surfaced forever, gating never (
 ### Reconcile (`--reconcile --against <src>`)
 
 Reconcile does not import. It reads the source's `source_key`s and the store's durable keys
-(each tick's `round_id`, else the first round token in its hashed `observe`) and reports four
-buckets: **in-both**, **source-only** (the *capture gap* — a ruling the source has that the
-ledger never captured), **store-only**, and **un-keyable** (store ticks with no derivable key,
-counted separately).
+(the dedup key of each tick's `source_ref`, else the first round token in its hashed `observe`)
+and reports four buckets: **in-both**, **source-only** (the *capture gap* — a ruling the source
+has that the ledger never captured), **store-only**, and **un-keyable** (store ticks with no
+derivable key, counted separately). `--against` accepts the same kinds as `--source`, including
+`canonical:<path.jsonl>`.
 
 **The refusals it enforces:**
 
@@ -413,10 +492,21 @@ counted separately).
   `ev migrate needs at least one --source <kind>:<path> (or --reconcile / --bind-check)`.
 - **Reconcile needs a target.** `--reconcile` without `--against` →
   `--reconcile requires --against <kind>:<path>`.
-- **A known source kind.** A `<kind>` outside the four →
-  `unknown source kind <k> (expected gitlog | to-human | decisions-immutable | escalation)`.
+- **A known source kind.** A `<kind>` outside the five →
+  `unknown source kind <k> (expected canonical | gitlog | to-human | decisions-immutable | escalation)`.
 - **A `<kind>:<path>` shape.** A `--source` / `--against` missing the colon →
   `--source expects <kind>:<path>, got <spec>`; an unreadable path → `reading <path>: <io error>`.
+- **A strict canonical envelope.** A `canonical:` line that is not JSON, not an object, carries
+  an unknown envelope key, or whose `kind` is not `ev-decision-intake` is a hard failure naming
+  the line, e.g. `canonical line <n>: field outside closed schema: <k>` or
+  `canonical line <n>: not an ev-decision-intake record (kind=<v>)`; a malformed ground fails
+  through the same read-path validator a stored tick uses.
+- **An ingest gate.** A `C` / `D` canonical record carrying a Test check →
+  `source <key>: a <C|D> jurisdiction (detect-only) decision cannot carry a runnable test check`;
+  a harvested check on a non-`imported` record →
+  `source <key>: a harvested test check (no counter-test) is allowed only for imported history, not <provenance>`;
+  an inline jurisdiction conflicting with the map →
+  `source <key>: inline jurisdiction <inline> conflicts with the --jurisdiction-map entry <mapped>`.
 - **No half-harvest (`--bind-check`).** An empty platform / trigger / surface →
   `a harvested binding requires at least one platform, triggered-by, and surface (no half-harvest)`;
   an empty selector → `a harvested binding requires a non-empty test reference`; a malformed
@@ -435,6 +525,17 @@ counted separately).
 - `--bind-check` (stdout):
   `harvested check (falsifiability not proven; no counter-test): "<selector>" on [<platforms>] triggered-by [<triggers>] surface [<surfaces>]`.
 - failure (stderr): `error: <message>`.
+
+**Example** — ingest a canonical decision-intake stream emitted by an adapter (one line per
+decision; `provenance` defaults to `imported`), then re-run to confirm idempotency:
+
+```sh
+ev migrate --source canonical:decisions.jsonl --blame "Wang Yu"
+# → imported 12, skipped 0, re-linked 0, 1 source-only gap(s)
+
+ev migrate --source canonical:decisions.jsonl --blame "Wang Yu"
+# → imported 0, skipped 12, re-linked 0, 0 source-only gap(s)   (idempotent on the dedup key)
+```
 
 **Example** — backfill a chat-room log and a decisions doc in one idempotent pass (with a
 blame fallback for un-attributed records), then reconcile the authority substrate against the
@@ -456,7 +557,7 @@ gateway record `#1194` lands as a permanent detect-only MISS (bucket `C`) instea
 
 ```sh
 cat gateway.map
-# # round-id -> bucket
+# # source_ref -> bucket
 # #1194 C
 # R2289 C
 
@@ -564,7 +665,8 @@ ev show <id>
 
 - success (stdout): the on-disk JSON of the tick, printed as-is.
 - declared tags, each only when the tick carries one (stdout, after the JSON):
-  `authority: <value>`, then `jurisdiction: <value>`, then `round_id: <value>`.
+  `authority: <value>`, then `jurisdiction: <value>`, then `source_ref: <value>` (a string
+  verbatim, or an object as its deterministic compact JSON).
 - not found (stderr): `error: no tick with id <id>`
 - read error (stderr): `error: reading <id>: <io error>`
 
@@ -701,7 +803,7 @@ unreadable.
 - decision (stdout): `decision <id>: <decision>` — `<decision>` is quoted (`{:?}`).
 - observe, only if non-empty (stdout): `observe: <observe>` — quoted.
 - declared tags, each only when present (stdout): `authority: <value>`, then
-  `jurisdiction: <value>`, then `round_id: <value>`.
+  `jurisdiction: <value>`, then `source_ref: <value>`.
 - per ground (stdout, one line each, indented two spaces):
   - Test: `  [<supports>] <claim> — test <reference> frozen@<sha8> now: <verdict>` — `<claim>`
     and `<reference>` are quoted; `<sha8>` is the first 8 chars of `verified_at_sha`;
@@ -817,7 +919,7 @@ store.
 - per tick (stdout, one row each, sorted by id): `<id>\t<status>\t<decision>` — `<decision>`
   is quoted (`{:?}`); e.g. `638c47b0c9dd\tlive\t"restore-safety counter DB-backed; reject Redis"`.
   When the tick carries a declared tag, the row gains a trailing field for each set, in order:
-  `\tauthority=<value>`, `\tjurisdiction=<value>`, `\tround_id=<value>`.
+  `\tauthority=<value>`, `\tjurisdiction=<value>`, `\tsource_ref=<value>`.
 - empty ledger (stdout): `no decisions yet`
 - no store (stderr): `error: no .evolving/ store here — run \`ev init\` first`
 

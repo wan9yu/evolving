@@ -38,22 +38,29 @@ pub fn verify(store: &Store) -> std::io::Result<Vec<String>> {
                 }
                 // LOCK 2 (at-rest, structural): a C/D-jurisdiction (detect-only) tick may carry NO
                 // Test check on any ground — a detect-only decision must not be able to gate, so it
-                // must hold no runnable test binding. A distinct invariant from no-vacuous-binding.
-                if matches!(t.jurisdiction.as_deref(), Some("C") | Some("D"))
-                    && t.grounds
-                        .iter()
-                        .any(|g| matches!(g.check, Some(crate::tick::Check::Test { .. })))
-                {
+                // must hold no runnable test binding. A distinct invariant from no-vacuous-binding;
+                // shares one predicate with the migrate ingest gate so the two can never drift.
+                if crate::tick::detect_only_carries_test(t.jurisdiction.as_deref(), &t.grounds) {
                     violations.push(format!(
                         "{filename}: a C/D jurisdiction (detect-only) tick may carry no test check"
                     ));
                 }
                 // R3 / R5 lexical lints over the free-text fields (best-effort; a re-wording evades).
+                // PROVENANCE PARTITION: only the R5 op-arm softens, and only for `imported` — a tick
+                // that faithfully transcribes historical text is not authoring a forbidden op now, so
+                // an op-word in it is surfaced as a non-gating warning (see `imported_op_warnings`),
+                // never a violation. EVERY other arm stays hard for all provenance including imported:
+                // R3 self-evolve here, plus empty-blame and C/D-no-test above. `agent-proposed` and
+                // `human-now` (the absent default) keep the R5 op-arm a hard violation.
+                let imported = t.provenance.as_deref() == Some("imported");
                 let mut texts = vec![t.decision.clone(), t.observe.clone()];
                 texts.extend(t.grounds.iter().map(|g| g.claim.clone()));
                 for text in &texts {
                     for verb in crate::lint::r3_self_evolve(text) {
                         violations.push(format!("{filename}: R3 self-evolve subject \"{verb}\" should be a human (best-effort lint)"));
+                    }
+                    if imported {
+                        continue; // imported R5 op-words are warnings, not violations
                     }
                     for op in crate::lint::r5_forbidden_op(text) {
                         violations.push(format!(
@@ -110,6 +117,31 @@ pub fn unknown_key_warnings(store: &Store) -> std::io::Result<Vec<String>> {
     Ok(warnings)
 }
 
+/// The provenance-partitioned R5 surfacing: an `imported` tick faithfully transcribes historical text,
+/// so an R5 forbidden-op word in it is a non-gating `warning:` (recorded, not authored now), NOT a
+/// violation — `verify` skips it as a violation for imported ticks, and this surfaces it instead so the
+/// op-word stays visible with a named human still on the hook. Fresh authorship (`human-now` /
+/// `agent-proposed`) keeps the op-arm a hard violation in `verify`, and every other arm stays hard.
+pub fn imported_op_warnings(store: &Store) -> std::io::Result<Vec<String>> {
+    let mut warnings = Vec::new();
+    for (filename, raw) in &store.read_all()? {
+        let Ok(t) = from_value(raw) else { continue };
+        if t.provenance.as_deref() != Some("imported") {
+            continue;
+        }
+        let mut texts = vec![t.decision.clone(), t.observe.clone()];
+        texts.extend(t.grounds.iter().map(|g| g.claim.clone()));
+        for text in &texts {
+            for op in crate::lint::r5_forbidden_op(text) {
+                warnings.push(format!(
+                    "{filename}: warning: R5 op language \"{op}\" in imported historical text (recorded, not authored — best-effort lint)"
+                ));
+            }
+        }
+    }
+    Ok(warnings)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -145,7 +177,8 @@ mod tests {
             blame: "Wang Yu".into(),
             authority: None,
             jurisdiction: None,
-            round_id: None,
+            source_ref: None,
+            provenance: None,
         };
         t.id = compute_id(&t);
         t
@@ -300,6 +333,106 @@ mod tests {
 
         // then: there are no violations (a test-free C tick is well-formed)
         assert!(v.is_empty(), "unexpected violations: {v:?}");
+    }
+
+    // The R5 op-word the lint catches; isolated here so the provenance partition is the only variable.
+    const OP_TEXT: &str = "the stale cron tracker will auto-close after a week";
+
+    fn op_tick_with_provenance(
+        provenance: Option<&str>,
+    ) -> (std::path::PathBuf, Store, Vec<String>) {
+        let repo = tmp();
+        let s = Store::at(&repo);
+        s.init().unwrap();
+        let mut t = tick("");
+        t.decision = OP_TEXT.into();
+        t.provenance = provenance.map(String::from);
+        t.id = compute_id(&t);
+        s.write_tick(&t).unwrap();
+        let v = verify(&s).unwrap();
+        (repo, s, v)
+    }
+
+    #[test]
+    fn verify_should_warn_not_violate_on_an_op_word_when_provenance_is_imported() {
+        // given/when: an imported tick whose transcribed text carries an R5 op-word
+        let (_repo, s, v) = op_tick_with_provenance(Some("imported"));
+
+        // then: it is NOT a gating violation, and the op-word is surfaced as a non-gating warning
+        assert!(
+            !v.iter().any(|x| x.contains("R5 forbidden op")),
+            "imported history must not gate on an op-word; got: {v:?}"
+        );
+        let w = imported_op_warnings(&s).unwrap();
+        assert!(
+            w.iter()
+                .any(|x| x.contains("auto-close") && x.contains("warning")),
+            "the op-word must surface as a warning; got: {w:?}"
+        );
+    }
+
+    #[test]
+    fn verify_should_still_violate_on_an_op_word_when_provenance_is_agent_proposed() {
+        // given/when: an agent-proposed tick with the same op-word (a live agent draft, not history)
+        let (_repo, _s, v) = op_tick_with_provenance(Some("agent-proposed"));
+
+        // then: it is a hard violation (a live agent draft must not smuggle op-language)
+        assert!(
+            v.iter().any(|x| x.contains("R5 forbidden op")),
+            "agent-proposed must keep the op-arm hard; got: {v:?}"
+        );
+    }
+
+    #[test]
+    fn verify_should_still_violate_on_an_op_word_when_provenance_is_human_now() {
+        // given/when: a fresh human-now tick (absent provenance) with the same op-word
+        let (_repo, _s, v) = op_tick_with_provenance(None);
+
+        // then: it is a hard violation (fresh authorship keeps the op-arm hard)
+        assert!(
+            v.iter().any(|x| x.contains("R5 forbidden op")),
+            "human-now must keep the op-arm hard; got: {v:?}"
+        );
+    }
+
+    #[test]
+    fn verify_should_keep_empty_blame_and_c_d_no_test_hard_even_when_imported() {
+        // given: an IMPORTED tick that ALSO violates a hard arm — blanked blame and a C/D test check
+        use crate::tick::{Check, Liveness};
+        let repo = tmp();
+        let s = Store::at(&repo);
+        s.init().unwrap();
+        let mut t = tick("");
+        t.provenance = Some("imported".into());
+        t.jurisdiction = Some("C".into());
+        t.blame = "".into();
+        t.grounds[0].check = Some(Check::Test {
+            reference: "pytest x".into(),
+            verified_at_sha: "d308afac1b2c3d4e5f60718293a4b5c6d7e8f901".into(),
+            counter_test: Some("pytest x::flips".into()),
+            liveness: Liveness {
+                platforms: vec!["linux-ci".into()],
+                triggered_by: vec!["f".into()],
+                surfaces: vec!["s".into()],
+            },
+        });
+        t.id = compute_id(&t);
+        s.write_tick(&t).unwrap();
+
+        // when: verify scans the store
+        let v = verify(&s).unwrap();
+
+        // then: the hard arms still fire for imported — only the R5 lexical op-arm ever softens
+        assert!(
+            v.iter().any(|x| x.contains("empty blame")),
+            "empty-blame stays hard for imported; got: {v:?}"
+        );
+        assert!(
+            v.iter()
+                .any(|x| x.to_lowercase().contains("jurisdiction")
+                    && x.to_lowercase().contains("test")),
+            "C/D-no-test stays hard for imported; got: {v:?}"
+        );
     }
 
     #[test]

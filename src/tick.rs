@@ -13,7 +13,8 @@ pub struct Tick {
     pub blame: String,                // bookkeeping
     pub authority: Option<String>,    // bookkeeping (declared, not hashed)
     pub jurisdiction: Option<String>, // bookkeeping (declared ∈ {A,B,C,D}, not hashed); C/D = detect-only
-    pub round_id: Option<String>,     // bookkeeping (declared join/dedup key, not hashed)
+    pub source_ref: Option<Value>, // bookkeeping (opaque producer-supplied source identity — a string or object, not hashed); ev derives a dedup key, never interprets it
+    pub provenance: Option<String>, // bookkeeping (declared ∈ {imported,agent-proposed,human-now}, not hashed); absent = human-now
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -60,8 +61,11 @@ pub fn full_value(t: &Tick) -> Value {
         if let Some(j) = &t.jurisdiction {
             map.insert("jurisdiction".into(), Value::String(j.clone()));
         }
-        if let Some(r) = &t.round_id {
-            map.insert("round_id".into(), Value::String(r.clone()));
+        if let Some(r) = &t.source_ref {
+            map.insert("source_ref".into(), r.clone());
+        }
+        if let Some(p) = &t.provenance {
+            map.insert("provenance".into(), Value::String(p.clone()));
         }
     }
     v
@@ -76,6 +80,57 @@ pub(crate) fn validate_jurisdiction(val: &str) -> Result<(), String> {
             "jurisdiction must be one of A, B, C, D (got {val:?})"
         ))
     }
+}
+
+/// The closed provenance vocabulary — how a tick entered the ledger. `human-now` (the absent
+/// default) and `agent-proposed` are fresh authorship; `imported` is faithfully-transcribed history.
+/// `verify` partitions only the R5 lexical op-lint by this tag (a transcribed historical op-word is
+/// a warning, not a fresh op-claim); every hard refusal stays hard for all provenance. The vocabulary
+/// is a non-hashed bookkeeping value — a future value is a non-breaking additive change.
+pub(crate) fn validate_provenance(val: &str) -> Result<(), String> {
+    if matches!(val, "imported" | "agent-proposed" | "human-now") {
+        Ok(())
+    } else {
+        Err(format!(
+            "provenance must be one of imported, agent-proposed, human-now (got {val:?})"
+        ))
+    }
+}
+
+/// The opaque source reference is a producer-supplied identity for the decision in ITS source — a
+/// non-empty string (e.g. an issue/commit ref) or a non-empty structured object. ev NEVER interprets
+/// its contents: it is the adopter's concept (a "round", a ticket, a work-unit), carried opaquely.
+/// Only these two shapes are accepted; a bare number/bool/null/array is not a meaningful identity.
+pub(crate) fn validate_source_ref(v: &Value) -> Result<(), String> {
+    match v {
+        Value::String(s) if !s.is_empty() => Ok(()),
+        Value::String(_) => Err("source_ref string is empty".into()),
+        Value::Object(m) if !m.is_empty() => Ok(()),
+        Value::Object(_) => Err("source_ref object is empty".into()),
+        _ => Err("source_ref must be a non-empty string or object".into()),
+    }
+}
+
+/// The ONE thing ev derives from a source_ref: a stable scalar dedup/reconcile key. A string is its
+/// own key; an object's key is its deterministic JSON (serde_json's Map is a sorted BTreeMap with
+/// `preserve_order` off, so equal objects serialize identically). ev compares THESE keys, never the
+/// contents — so a producer that keeps its source identity stable gets idempotent re-imports.
+pub(crate) fn source_ref_key(v: &Value) -> String {
+    match v {
+        Value::String(s) => s.clone(),
+        other => other.to_string(),
+    }
+}
+
+/// Whether a detect-only (`C`/`D`) jurisdiction carries a runnable Test check on any ground. This is
+/// the single predicate behind the structural "a detect-only decision must not be able to gate, so it
+/// holds no runnable test binding" refusal — enforced both at the migrate ingest boundary (refuse at
+/// the door) and at-rest by `verify` (LOCK 2). One definition so the two sites can never drift.
+pub(crate) fn detect_only_carries_test(jurisdiction: Option<&str>, grounds: &[Ground]) -> bool {
+    matches!(jurisdiction, Some("C") | Some("D"))
+        && grounds
+            .iter()
+            .any(|g| matches!(g.check, Some(Check::Test { .. })))
 }
 
 pub(crate) fn only_keys(
@@ -187,7 +242,7 @@ fn check_from_value(v: &Value) -> Result<Check, String> {
     }
 }
 
-fn ground_from_value(v: &Value) -> Result<Ground, String> {
+pub(crate) fn ground_from_value(v: &Value) -> Result<Ground, String> {
     let obj = v.as_object().ok_or("ground is not an object")?;
     only_keys(obj, &["claim", "supports", "check"], "ground")?;
     let claim = req_str(obj, "claim")?;
@@ -227,7 +282,8 @@ pub(crate) const HASHED_TOP_LEVEL_KEYS: &[&str] = &[
 ];
 
 /// The known-non-hashed allow-list: declared bookkeeping fields, validated but not hashed.
-pub(crate) const KNOWN_NON_HASHED_KEYS: &[&str] = &["authority", "jurisdiction", "round_id"];
+pub(crate) const KNOWN_NON_HASHED_KEYS: &[&str] =
+    &["authority", "jurisdiction", "source_ref", "provenance"];
 
 /// A tick's top-level keys that are neither hashed/identity nor a known-non-hashed field — the
 /// truly-unknown, tolerated forward-compat keys (`from_value` parses them through; verify warns).
@@ -279,15 +335,18 @@ pub fn from_value(v: &Value) -> Result<Tick, String> {
                 Some(j.to_string())
             }
         },
-        round_id: match obj.get("round_id") {
+        source_ref: match obj.get("source_ref") {
             None => None,
             Some(rv) => {
-                // non-empty-if-present; no other format constraint (a free-form join/dedup key).
-                let s = rv.as_str().ok_or("round_id present but not a string")?;
-                if s.is_empty() {
-                    return Err("round_id present but empty".into());
-                }
-                Some(s.to_string())
+                validate_source_ref(rv)?; // a non-empty string or object; ev never interprets it
+                Some(rv.clone())
+            }
+        },
+        provenance: match obj.get("provenance").and_then(|x| x.as_str()) {
+            None => None,
+            Some(p) => {
+                validate_provenance(p)?; // out-of-vocab → Err
+                Some(p.to_string())
             }
         },
     })
@@ -457,44 +516,120 @@ mod tests {
     }
 
     #[test]
-    fn from_value_should_round_trip_round_id_when_present() {
-        // given: a well-formed tick carrying a round_id join/dedup key
+    fn from_value_should_round_trip_a_string_source_ref_when_present() {
+        // given: a well-formed tick carrying a bare-string opaque source_ref
         let mut v = genesis_full();
         v.as_object_mut()
             .unwrap()
-            .insert("round_id".into(), json!("R2289"));
+            .insert("source_ref".into(), json!("R2289"));
 
         // when: it is parsed
         let t = from_value(&v).expect("valid");
 
-        // then: the round_id is preserved (durable, non-hashed)
-        assert_eq!(t.round_id.as_deref(), Some("R2289"));
+        // then: the source_ref is preserved verbatim (durable, non-hashed, opaque)
+        assert_eq!(t.source_ref, Some(json!("R2289")));
     }
 
     #[test]
-    fn from_value_should_default_round_id_to_none_when_absent() {
-        // given: a tick with no round_id field (the existing genesis shape)
+    fn from_value_should_round_trip_a_structured_source_ref_when_given_an_object() {
+        // given: a tick whose source_ref is a STRUCTURED object (richer than a string)
+        let mut v = genesis_full();
+        v.as_object_mut().unwrap().insert(
+            "source_ref".into(),
+            json!({"round": "R2289", "ticket": "#1194"}),
+        );
+
+        // when: it is parsed
+        let t = from_value(&v).expect("valid");
+
+        // then: the whole object is carried opaquely (ev never interprets its fields)
+        assert_eq!(
+            t.source_ref,
+            Some(json!({"round": "R2289", "ticket": "#1194"}))
+        );
+    }
+
+    #[test]
+    fn from_value_should_default_source_ref_to_none_when_absent() {
+        // given: a tick with no source_ref field (the existing genesis shape)
         let v = genesis_full();
 
         // when: it is parsed
         let t = from_value(&v).expect("valid");
 
-        // then: round_id is None (absent = no claim)
-        assert_eq!(t.round_id, None);
+        // then: source_ref is None (absent = no claim)
+        assert_eq!(t.source_ref, None);
     }
 
     #[test]
-    fn from_value_should_reject_an_empty_round_id_when_present() {
-        // given: a tick whose round_id is present but empty
+    fn from_value_should_reject_an_empty_source_ref_when_present() {
+        // given: a tick whose source_ref is present but an empty string
         let mut v = genesis_full();
         v.as_object_mut()
             .unwrap()
-            .insert("round_id".into(), json!(""));
+            .insert("source_ref".into(), json!(""));
 
         // when: it is parsed
         let result = from_value(&v);
 
-        // then: parsing fails (non-empty-if-present; no other format constraint)
+        // then: parsing fails (an empty identity is no identity)
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn from_value_should_reject_a_non_string_non_object_source_ref() {
+        // given: a tick whose source_ref is a bare number (not a meaningful identity)
+        let mut v = genesis_full();
+        v.as_object_mut()
+            .unwrap()
+            .insert("source_ref".into(), json!(42));
+
+        // when: it is parsed
+        let result = from_value(&v);
+
+        // then: parsing fails (only a non-empty string or object is accepted)
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn from_value_should_round_trip_provenance_when_present() {
+        // given: a well-formed tick carrying a provenance tag in the vocabulary
+        let mut v = genesis_full();
+        v.as_object_mut()
+            .unwrap()
+            .insert("provenance".into(), json!("imported"));
+
+        // when: it is parsed
+        let t = from_value(&v).expect("valid");
+
+        // then: the provenance tag is preserved (declared, non-hashed)
+        assert_eq!(t.provenance.as_deref(), Some("imported"));
+    }
+
+    #[test]
+    fn from_value_should_default_provenance_to_none_when_absent() {
+        // given: a tick with no provenance field (the existing genesis shape = human-now)
+        let v = genesis_full();
+
+        // when: it is parsed
+        let t = from_value(&v).expect("valid");
+
+        // then: provenance is None (absent = human-now, no laundering possible)
+        assert_eq!(t.provenance, None);
+    }
+
+    #[test]
+    fn from_value_should_reject_an_out_of_vocab_provenance() {
+        // given: a tick whose provenance is outside the closed vocabulary
+        let mut v = genesis_full();
+        v.as_object_mut()
+            .unwrap()
+            .insert("provenance".into(), json!("self-asserted"));
+
+        // when: it is parsed
+        let result = from_value(&v);
+
+        // then: parsing fails (vocab-validated, like jurisdiction)
         assert!(result.is_err());
     }
 

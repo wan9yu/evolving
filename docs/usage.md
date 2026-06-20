@@ -207,10 +207,24 @@ never decay into a check that always passes.
 ## "Migrate your existing decisions, and harvest the tests you already have"
 
 You do not start from an empty ledger. A team usually already has its decisions written
-somewhere — a chat-room/git log, a `RESOLVED` / `FLAG` to-human doc, a numbered
-decisions-immutable document, an escalation log — and a pile of tests that already guard those
-decisions. `ev migrate` backfills that history into the ledger and adopts those tests, without
-re-typing anything.
+somewhere — and a pile of tests that already guard those decisions. `ev migrate` brings that
+history into the ledger and adopts those tests, without re-typing anything.
+
+The **primary intake** is the **Canonical Decision Intake Contract**: you (or your tooling)
+emit one canonical JSON line per decision and `ev` re-validates each line on the way in. An
+adopter with a bespoke format writes a small adapter — in any language — that parses *their*
+format at the edge and emits canonical JSONL; `ev` never sees the bespoke markdown. The same
+JSONL a one-shot adapter emits is what a future live agent-runner emits as a native side-effect
+— same contract, two producers. See [migrating.md](migrating.md) for the format, the trust
+boundary, and writing an adapter.
+
+```sh
+ev migrate --source canonical:decisions.jsonl --blame "Wang Yu"   # the primary, format-neutral intake
+```
+
+For **simple substrates** there are four built-in convenience extractors — a chat-room/git log
+(`gitlog`), a `RESOLVED` / `FLAG` to-human doc (`to-human`), a numbered decisions-immutable
+document (`decisions-immutable`), an escalation log (`escalation`):
 
 ```sh
 ev migrate \
@@ -219,17 +233,18 @@ ev migrate \
   --blame "Wang Yu"          # fallback author for any un-attributed record
 ```
 
-Each source is read by a format-aware extractor (`gitlog` / `to-human` /
-`decisions-immutable` / `escalation`). It harvests the **rulings** and the **structured**
-roads-not-taken (`rejected: <option>: <why>`) — and **only** those. A free-text prose reason is
-**never** mined into a ground: a block with no structured road imports as an honest
-zero-grounds capture, not a synthesized one.
+The four extractors harvest the **rulings** and the **structured** roads-not-taken
+(`rejected: <option>: <why>`) — and **only** those. A free-text prose reason is **never** mined
+into a ground: a block with no structured road imports as an honest zero-grounds capture, not a
+synthesized one. (`ev` validates that grounds are well-*formed*, never that an adapter parsed
+its source *faithfully* — a mis-parse is a producer bug `ev` cannot catch.)
 
-It is **idempotent** — run it twice and the second pass writes nothing (records are deduped on
-their durable `round_id` / round token). It **keeps the chain**: a back-dated mid-chain insert
-is reported as *re-linked*, never rewritten. And it **never invents an author** — a record with
-no author and no `--blame` fallback is reported as a source-only gap (R5 stays intact), not
-imported with a fabricated name:
+A migrate is **idempotent** — run it twice and the second pass writes nothing (records are
+deduped on the durable key derived from their `source_ref` / round token). It **keeps the
+chain**: a back-dated mid-chain insert is reported as *re-linked*, never rewritten. On this
+import path a record's **`provenance` defaults to `imported`** (history). And it **never invents
+an author** — a record with no author and no `--blame` fallback is reported as a source-only gap
+(R5 stays intact), not imported with a fabricated name:
 
 ```sh
 ev migrate --source gitlog:chat-room.md --blame "Wang Yu"
@@ -242,7 +257,7 @@ decision gets its jurisdiction**. The map is a plain `source_key → bucket` fil
 
 ```sh
 cat gateway.map
-# # round-id -> bucket
+# # source_ref -> bucket
 # #1194 C
 # R2289 C
 
@@ -317,4 +332,6 @@ drift.
 
 For the exact flags, exit codes, and output of every command, see
 [commands.md](commands.md). For the model — the Tick schema, Grounds, Checks, content-addressed
-identity, and the honesty / trust boundary — see [concepts.md](concepts.md).
+identity, and the honesty / trust boundary — see [concepts.md](concepts.md). For bringing an
+existing decision history in — the canonical intake format and writing an adapter — see
+[migrating.md](migrating.md).

@@ -5,6 +5,16 @@ use crate::verify::verify;
 use std::path::Path;
 use std::process::ExitCode;
 
+/// Render an opaque `source_ref` for human display: a bare string verbatim, an object as its
+/// deterministic compact JSON. ev only renders it — it never interprets the contents. Kept distinct
+/// from `tick::source_ref_key` (which derives the dedup/join key): they coincide today but are
+/// different concepts — display may later pretty-print, while the key must stay byte-stable.
+fn render_source_ref(v: &serde_json::Value) -> String {
+    v.as_str()
+        .map(String::from)
+        .unwrap_or_else(|| v.to_string())
+}
+
 /// Whether a triggering change landed after this ground's most recent run. Uses the latest
 /// receipt's commit + the binding's triggered_by paths. False when there is no receipt, no
 /// Test binding, or git can't tell (None ⇒ not evaluated).
@@ -61,8 +71,8 @@ pub fn show(repo: &Path, id: &str) -> ExitCode {
                 if let Some(j) = v.get("jurisdiction").and_then(|x| x.as_str()) {
                     println!("jurisdiction: {j}");
                 }
-                if let Some(r) = v.get("round_id").and_then(|x| x.as_str()) {
-                    println!("round_id: {r}");
+                if let Some(r) = v.get("source_ref") {
+                    println!("source_ref: {}", render_source_ref(r));
                 }
             }
             ExitCode::SUCCESS
@@ -121,6 +131,11 @@ pub fn verify_cmd(repo: &Path, self_test: bool) -> ExitCode {
     // Forward-compat: tolerated unknown top-level keys are warnings, never violations — they do
     // not affect the verdict, but they keep a typo'd field name visible.
     for w in crate::verify::unknown_key_warnings(&store).unwrap_or_default() {
+        eprintln!("{w}");
+    }
+    // Provenance partition: an op-word in faithfully-transcribed imported history is a warning, not a
+    // gating violation — surfaced here so it stays visible while fresh authorship keeps the op-lint hard.
+    for w in crate::verify::imported_op_warnings(&store).unwrap_or_default() {
         eprintln!("{w}");
     }
     match verify(&store) {
@@ -415,13 +430,16 @@ fn extract_source(spec: &str) -> Result<Vec<crate::migrate::MigrationRecord>, St
         .ok_or_else(|| format!("--source expects <kind>:<path>, got {spec:?}"))?;
     let text = std::fs::read_to_string(path).map_err(|e| format!("reading {path}: {e}"))?;
     let recs = match kind {
+        // The format-neutral primary intake: a producer-owned adapter (or a live runner) emits the
+        // Canonical Decision Intake JSONL, re-validated through ev's read-path validators on the way in.
+        "canonical" => crate::migrate::canonical_records(&text)?,
         "gitlog" => crate::migrate::extract_gitlog(&text),
         "to-human" => crate::migrate::extract_to_human(&text),
         "decisions-immutable" => crate::migrate::extract_decisions_immutable(&text),
         "escalation" => crate::migrate::extract_escalation(&text),
         other => {
             return Err(format!(
-                "unknown source kind {other:?} (expected gitlog | to-human | decisions-immutable | escalation)"
+                "unknown source kind {other:?} (expected canonical | gitlog | to-human | decisions-immutable | escalation)"
             ))
         }
     };
@@ -607,7 +625,7 @@ pub fn list(repo: &Path) -> ExitCode {
         }
     };
     // One pre-rendered line per tick, keyed by id so the output is deterministic. The bookkeeping
-    // tags (authority, jurisdiction, round_id) are appended inline when present — same one-line shape as show.
+    // tags (authority, jurisdiction, source_ref) are appended inline when present — same one-line shape as show.
     let mut rows: Vec<String> = files
         .iter()
         .map(|(name, raw)| {
@@ -620,8 +638,8 @@ pub fn list(repo: &Path) -> ExitCode {
                     if let Some(j) = &t.jurisdiction {
                         l.push_str(&format!("\tjurisdiction={j}"));
                     }
-                    if let Some(r) = &t.round_id {
-                        l.push_str(&format!("\tround_id={r}"));
+                    if let Some(r) = &t.source_ref {
+                        l.push_str(&format!("\tsource_ref={}", render_source_ref(r)));
                     }
                     l
                 }
@@ -785,8 +803,8 @@ pub fn reopen(repo: &Path, id: &str) -> ExitCode {
     if let Some(j) = &tick.jurisdiction {
         println!("jurisdiction: {j}");
     }
-    if let Some(r) = &tick.round_id {
-        println!("round_id: {r}");
+    if let Some(r) = &tick.source_ref {
+        println!("source_ref: {}", render_source_ref(r));
     }
     for g in &tick.grounds {
         match &g.check {
@@ -842,7 +860,8 @@ fn self_test_golden() -> ExitCode {
         blame: "Wang Yu".into(),
         authority: None,
         jurisdiction: None,
-        round_id: None,
+        source_ref: None,
+        provenance: None,
     };
     let case1 = Tick {
         id: String::new(),
@@ -884,7 +903,8 @@ fn self_test_golden() -> ExitCode {
         blame: "Wang Yu".into(),
         authority: None,
         jurisdiction: None,
-        round_id: None,
+        source_ref: None,
+        provenance: None,
     };
     // A harvested binding: case1's first ground with counter_test omitted (None). Pins that
     // omit-on-None keeps every harvested id byte-stable — moving it would mean the payload changed.

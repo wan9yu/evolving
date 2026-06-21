@@ -61,13 +61,26 @@ jobs:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      # Idempotent: `cargo publish` can exit non-zero AFTER a successful upload (a transient
+      # post-upload index refresh — e.g. an HTTP2 framing error downloading config.json), and a
+      # re-run hits "already exists". Treat an already-published version as success so a transient
+      # blip never blocks the GitHub Release + binaries below; any OTHER error still fails the job.
       - name: Publish to crates.io
-        run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          if cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }} 2>publish.err; then
+            cat publish.err >&2
+          elif grep -q "already exists" publish.err; then
+            cat publish.err >&2
+            echo "note: ${GITHUB_REF_NAME} is already on crates.io — treating as success (idempotent re-run / post-upload transient)."
+          else
+            cat publish.err >&2; exit 1
+          fi
       # The published tag becomes a GitHub Release — the single source of truth for
       # what each version shipped. Notes are generated from the commits since the
-      # previous tag, so no release history is restated in the docs.
+      # previous tag, so no release history is restated in the docs. Idempotent: skip if the
+      # Release already exists (a re-run, or a manually-created Release).
       - name: Create GitHub Release
-        run: gh release create "${GITHUB_REF_NAME}" --verify-tag --generate-notes
+        run: gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1 || gh release create "${GITHUB_REF_NAME}" --verify-tag --generate-notes
         env:
           GH_TOKEN: ${{ github.token }}
 

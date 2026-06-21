@@ -637,8 +637,8 @@ reading that edge to supersede the corrected tick precisely — so the corrected
 stale parent stays as honest history (`ev log` still shows the full lineage; `ev show` / `ev reopen`
 print the `corrects:` edge so the correction is traceable). The `corrects` edge is `ev`'s **first and
 only** relation overlay; the general case-law graph is deliberately not built (a machine-fence test
-pins this). A pre-0.1.10 corrective child without the edge still collapses via content-equality
-(backward-compatible). Limit: two genuinely-independent decisions with byte-identical
+pins this). A corrective child that carries no `corrects` edge still collapses via content-equality —
+the fallback that keeps edge-less corrections working. Limit: two genuinely-independent decisions with byte-identical
 `decision`/`observe`/`grounds` would also collapse under that content-equality fallback — the explicit
 edge is the precise going-forward signal.
 

@@ -2,8 +2,9 @@
 //! No I/O — receipts, the live-origin sha, and the selected-list are passed in. Facts,
 //! not verdicts: every not-green state is a co-equal fact, never ranked or scored.
 //!
-//! Precedence (first match wins): sha-stale → not-run → age-stale → unproven → gray→red →
-//! red → silently-unbound → green.
+//! Precedence (first match wins): sha-stale → exempt → not-run → count-window-stale → age-stale →
+//! unproven → gray→red → red → silently-unbound → green. (The three `stale` sub-kinds — sha,
+//! count-window, age — share the flat `stale` label but fire at distinct points in the chain.)
 use crate::receipt::Receipt;
 use crate::selected::SelectedList;
 use crate::tick::{Check, Ground};

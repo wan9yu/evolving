@@ -243,10 +243,11 @@ fn verdict_rank(v: &crate::verdict::Verdict) -> u8 {
 
 /// Roll up a tick's test-bound verdicts to the one per-tick check event: `(worst_event_label,
 /// masked_stale)`. The worst verdict (by `verdict_rank`) is the event's verdict — a strict `>` keeps
-/// the FIRST top-rank ground, so a stale sub-kind follows verdict_for's own precedence (sha → count →
-/// age), not ground order. `masked_stale` is the first stale sub-kind present ONLY when a worse verdict
-/// (red / silently-unbound, rank > stale's 4) hides it — so a drifted/disabled staleness_ref masking a
-/// real red never silently drops. None when no test-bound ground (the tick emits no check event).
+/// the FIRST top-rank ground. `masked_stale` is the sub-kind of the FIRST stale-reading ground (in
+/// ground order — each ground's own sub-kind was already resolved by verdict_for's precedence),
+/// surfaced ONLY when a worse verdict (red / silently-unbound, rank > stale's 4) hides it — so a
+/// drifted/disabled staleness_ref masking a real red never silently drops. Ground order is stable, so
+/// this is deterministic per tick. None when no test-bound ground (the tick emits no check event).
 fn roll_up_check(verdicts: &[&crate::verdict::Verdict]) -> Option<(String, Option<String>)> {
     use crate::verdict::Verdict;
     let mut worst: Option<(u8, &Verdict)> = None;

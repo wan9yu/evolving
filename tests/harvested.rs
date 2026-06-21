@@ -92,6 +92,7 @@ fn write_harvested(repo: &std::path::Path, reference: &str, sha: &str) -> String
         jurisdiction: None,
         source_ref: None,
         provenance: None,
+        corrects: None,
     };
     t.id = ev::canonical::compute_id(&t);
     store.write_tick(&t).unwrap();

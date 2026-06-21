@@ -630,10 +630,17 @@ ev migrate --bind-check "pytest tests/test_redis_absent.py" \
 **Synopsis:** fix a **stale non-hashed tag** (`authority` / `jurisdiction` / `provenance`) on an
 existing decision under `ev`'s append-only law. It does **not** rewrite the target tick: it
 appends a corrective **child** that copies the target's hashed payload (`decision` / `observe` /
-`grounds`) verbatim — so it is recognizably the same decision — and carries the corrected tag.
-`ev brief` / `ev list` then collapse the corrective lineage to its current state, so the corrected
-child surfaces and the stale parent stays as honest history (and `ev log` still shows the full
-lineage).
+`grounds`) verbatim — so it is recognizably the same decision — carries the corrected tag, and
+records an explicit **`corrects:<target-id>` relation-overlay edge** (non-hashed, so the child's `id`
+is unaffected). `ev brief` / `ev list` then collapse the corrective lineage to its current state —
+reading that edge to supersede the corrected tick precisely — so the corrected child surfaces and the
+stale parent stays as honest history (`ev log` still shows the full lineage; `ev show` / `ev reopen`
+print the `corrects:` edge so the correction is traceable). The `corrects` edge is `ev`'s **first and
+only** relation overlay; the general case-law graph is deliberately not built (a machine-fence test
+pins this). A pre-0.1.10 corrective child without the edge still collapses via content-equality
+(backward-compatible). Limit: two genuinely-independent decisions with byte-identical
+`decision`/`observe`/`grounds` would also collapse under that content-equality fallback — the explicit
+edge is the precise going-forward signal.
 
 ```
 ev correct <id> [--authority <v>] [--jurisdiction <v>] [--provenance <v>] [--blame "<name>"]
@@ -795,7 +802,8 @@ ev show <id>
 - success (stdout): the on-disk JSON of the tick, printed as-is.
 - declared tags, each only when the tick carries one (stdout, after the JSON):
   `authority: <value>`, then `jurisdiction: <value>`, then `source_ref: <value>` (a string
-  verbatim, or an object as its deterministic compact JSON).
+  verbatim, or an object as its deterministic compact JSON), then `corrects: <id>` (the
+  relation-overlay edge, when the tick is a correction).
 - not found (stderr): `error: no tick with id <id>`
 - read error (stderr): `error: reading <id>: <io error>`
 
@@ -932,7 +940,8 @@ unreadable.
 - decision (stdout): `decision <id>: <decision>` — `<decision>` is quoted (`{:?}`).
 - observe, only if non-empty (stdout): `observe: <observe>` — quoted.
 - declared tags, each only when present (stdout): `authority: <value>`, then
-  `jurisdiction: <value>`, then `source_ref: <value>`.
+  `jurisdiction: <value>`, then `source_ref: <value>`, then `corrects: <id>` (the
+  relation-overlay edge, when the decision is a correction).
 - per ground (stdout, one line each, indented two spaces):
   - Test: `  [<supports>] <claim> — test <reference> frozen@<sha8> now: <verdict>` — `<claim>`
     and `<reference>` are quoted; `<sha8>` is the first 8 chars of `verified_at_sha`;

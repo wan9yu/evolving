@@ -20,12 +20,13 @@ pub fn correct(repo: &Path, a: crate::correct::CorrectArgs) -> ExitCode {
     }
 }
 
-/// The identity of a DECISION (not a tick): its hashed payload minus `parent_id`. Ticks sharing this —
-/// in practice an `ev correct` child and the tick it re-tags (same decision/observe/grounds, a
-/// different chain position) — are treated as one decision and collapsed to the latest. (Content
-/// equality, not an explicit corrective link: two genuinely-independent decisions with byte-identical
-/// decision/observe/grounds would also collapse; an explicit `corrects:<id>` back-link is a future
-/// refinement.) Used to collapse a corrective lineage to its current state.
+/// The identity of a DECISION (not a tick): its hashed payload minus `parent_id`. The LEGACY collapse
+/// signal: ticks sharing this — in practice a pre-0.1.10 `ev correct` child and the tick it re-tags
+/// (same decision/observe/grounds, a different chain position) — are treated as one decision and
+/// collapsed to the latest. Content equality is a weaker signal than the explicit `corrects` edge
+/// (two genuinely-independent decisions with byte-identical decision/observe/grounds also share it);
+/// since 0.1.10 a correction carries an explicit `corrects:<id>` edge, and the edge supersedes first —
+/// content-equality remains only as the fallback that keeps legacy (edge-less) corrections collapsing.
 fn decision_identity(t: &Tick) -> String {
     let mut v = crate::canonical::hashed_value(t);
     if let serde_json::Value::Object(m) = &mut v {
@@ -34,16 +35,27 @@ fn decision_identity(t: &Tick) -> String {
     v.to_string()
 }
 
-/// Collapse a corrective lineage to its CURRENT state: among ticks that are the same decision (same
-/// `decision_identity`), keep only the latest (by `held_since`, then id) — so an `ev correct` child
-/// supersedes the stale tick it re-tags. A decision that was never corrected is its own sole entry.
+/// Collapse a corrective lineage to its CURRENT state. Two signals, in order:
+/// 1. The explicit `corrects:<id>` relation-overlay edge (0.1.10+): a tick whose id is named by some
+///    other tick's `corrects` is SUPERSEDED — dropped precisely, regardless of content. (No cycles:
+///    `corrects` only ever points backward to an older tick — append-only + content-addressed.)
+/// 2. Legacy content-equality fallback: among the survivors, keep only the latest (by `held_since`,
+///    then id) per `decision_identity` — so pre-0.1.10 corrective children (no edge) still collapse.
+///
+/// A decision that was never corrected is its own sole entry.
 fn current_decisions(mut ticks: Vec<(String, Tick)>) -> Vec<(String, Tick)> {
+    // every id named by a `corrects` edge — explicitly superseded by a correction
+    let corrected: std::collections::HashSet<String> = ticks
+        .iter()
+        .filter_map(|(_, t)| t.corrects.clone())
+        .collect();
     // latest-first, so the FIRST seen per decision identity is the current one
     ticks.sort_by(|a, b| b.1.held_since.cmp(&a.1.held_since).then(b.0.cmp(&a.0)));
     let mut seen = std::collections::HashSet::new();
     ticks
         .into_iter()
-        .filter(|(_, t)| seen.insert(decision_identity(t)))
+        .filter(|(_, t)| !corrected.contains(&t.id)) // explicit-edge supersession (precise)
+        .filter(|(_, t)| seen.insert(decision_identity(t))) // legacy content-equality fallback
         .collect()
 }
 
@@ -115,6 +127,9 @@ pub fn show(repo: &Path, id: &str) -> ExitCode {
                 }
                 if let Some(r) = v.get("source_ref") {
                     println!("source_ref: {}", render_source_ref(r));
+                }
+                if let Some(c) = v.get("corrects").and_then(|x| x.as_str()) {
+                    println!("corrects: {c}");
                 }
             }
             ExitCode::SUCCESS
@@ -1024,6 +1039,9 @@ pub fn reopen(repo: &Path, id: &str) -> ExitCode {
     if let Some(r) = &tick.source_ref {
         println!("source_ref: {}", render_source_ref(r));
     }
+    if let Some(c) = &tick.corrects {
+        println!("corrects: {c}");
+    }
     for g in &tick.grounds {
         match &g.check {
             Some(Check::Test {
@@ -1080,6 +1098,7 @@ fn self_test_golden() -> ExitCode {
         jurisdiction: None,
         source_ref: None,
         provenance: None,
+        corrects: None,
     };
     let case1 = Tick {
         id: String::new(),
@@ -1123,6 +1142,7 @@ fn self_test_golden() -> ExitCode {
         jurisdiction: None,
         source_ref: None,
         provenance: None,
+        corrects: None,
     };
     // A harvested binding: case1's first ground with counter_test omitted (None). Pins that
     // omit-on-None keeps every harvested id byte-stable — moving it would mean the payload changed.

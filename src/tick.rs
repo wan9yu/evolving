@@ -15,6 +15,7 @@ pub struct Tick {
     pub jurisdiction: Option<String>, // bookkeeping (declared ∈ {A,B,C,D}, not hashed); C/D = detect-only
     pub source_ref: Option<Value>, // bookkeeping (opaque producer-supplied source identity — a string or object, not hashed); ev derives a dedup key, never interprets it
     pub provenance: Option<String>, // bookkeeping (declared ∈ {imported,agent-proposed,human-now}, not hashed); absent = human-now
+    pub corrects: Option<String>, // bookkeeping (non-hashed): the explicit relation-overlay edge — this tick CORRECTS the tick with this id (written by `ev correct`). The first, and currently the ONLY, overlay relation; the general case-law graph is deliberately not built.
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -66,6 +67,9 @@ pub fn full_value(t: &Tick) -> Value {
         }
         if let Some(p) = &t.provenance {
             map.insert("provenance".into(), Value::String(p.clone()));
+        }
+        if let Some(c) = &t.corrects {
+            map.insert("corrects".into(), Value::String(c.clone()));
         }
     }
     v
@@ -282,8 +286,29 @@ pub(crate) const HASHED_TOP_LEVEL_KEYS: &[&str] = &[
 ];
 
 /// The known-non-hashed allow-list: declared bookkeeping fields, validated but not hashed.
-pub(crate) const KNOWN_NON_HASHED_KEYS: &[&str] =
-    &["authority", "jurisdiction", "source_ref", "provenance"];
+pub(crate) const KNOWN_NON_HASHED_KEYS: &[&str] = &[
+    "authority",
+    "jurisdiction",
+    "source_ref",
+    "provenance",
+    "corrects",
+];
+
+/// Validate a `corrects` back-link: it must be a tick id — exactly 12 lowercase hex. (ev itself only
+/// ever writes a real target id via `ev correct`; the check catches a hand-edited/typo'd reference.)
+pub(crate) fn validate_corrects(val: &str) -> Result<(), String> {
+    if val.len() == 12
+        && val
+            .bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    {
+        Ok(())
+    } else {
+        Err(format!(
+            "corrects must be a 12-char lowercase-hex tick id (got {val:?})"
+        ))
+    }
+}
 
 /// A tick's top-level keys that are neither hashed/identity nor a known-non-hashed field — the
 /// truly-unknown, tolerated forward-compat keys (`from_value` parses them through; verify warns).
@@ -349,6 +374,13 @@ pub fn from_value(v: &Value) -> Result<Tick, String> {
                 Some(p.to_string())
             }
         },
+        corrects: match obj.get("corrects").and_then(|x| x.as_str()) {
+            None => None,
+            Some(c) => {
+                validate_corrects(c)?; // must be a 12-hex tick id
+                Some(c.to_string())
+            }
+        },
     })
 }
 
@@ -356,6 +388,61 @@ pub fn from_value(v: &Value) -> Result<Tick, String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn the_only_relation_overlay_edge_is_corrects() {
+        // given/then: 0.1.10 ships exactly ONE relation-overlay edge — `corrects` — written by
+        // `ev correct` and read by the brief/list collapse. The general case-law graph (governed-by /
+        // case-of / arbitrary typed edges) is the PARKED 0.2 work and is deliberately NOT built. This
+        // fence pins the overlay surface: the non-hashed key set is exactly these five — four
+        // bookkeeping TAGS plus the ONE relation edge. Adding another overlay field (a new relation
+        // especially) must be a DELIBERATE decision that updates this fence, never an accident.
+        assert_eq!(
+            KNOWN_NON_HASHED_KEYS,
+            &[
+                "authority",
+                "jurisdiction",
+                "source_ref",
+                "provenance",
+                "corrects"
+            ],
+            "the relation-overlay surface changed — is this a deliberate new edge (the 0.2 graph)?"
+        );
+    }
+
+    #[test]
+    fn from_value_should_reject_a_corrects_that_is_not_a_tick_id() {
+        // given: an on-disk tick whose corrects edge is hand-edited to a non-id value
+        let mut v = genesis_full();
+        v.as_object_mut()
+            .unwrap()
+            .insert("corrects".into(), json!("not-a-real-id"));
+
+        // when/then: the read-path validator rejects it — the overlay edge must be a real tick id
+        assert!(from_value(&v).is_err());
+    }
+
+    #[test]
+    fn from_value_should_accept_a_valid_corrects_edge() {
+        // given: an on-disk tick carrying a well-formed 12-hex corrects edge
+        let mut v = genesis_full();
+        v.as_object_mut()
+            .unwrap()
+            .insert("corrects".into(), json!("638c47b0c9dd"));
+
+        // when/then: it parses and round-trips the edge
+        let t = from_value(&v).expect("a valid corrects edge parses");
+        assert_eq!(t.corrects.as_deref(), Some("638c47b0c9dd"));
+    }
+
+    #[test]
+    fn corrects_must_be_a_twelve_hex_tick_id() {
+        // given/then: the edge validates as a tick id — a hand-edited/typo'd reference is rejected
+        assert!(validate_corrects("e2b337f53a1f").is_ok());
+        assert!(validate_corrects("E2B337F53A1F").is_err()); // uppercase
+        assert!(validate_corrects("e2b337").is_err()); // too short
+        assert!(validate_corrects("not-hex-here!").is_err());
+    }
 
     fn genesis_full() -> serde_json::Value {
         json!({

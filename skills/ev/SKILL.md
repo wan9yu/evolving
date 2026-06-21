@@ -190,8 +190,11 @@ proven one.
 **Correct a stale non-hashed tag** (`authority` / `jurisdiction` / `provenance`) on an existing
 decision with `ev correct <id> [--authority <v>] [--jurisdiction <v>] [--provenance <v>] --blame
 "<name>"`. Under append-only immutability it never rewrites the target — it appends a corrective
-**child** that copies the target's hashed payload verbatim and carries the corrected tag (`ev
-brief` / `ev list` then surface the child; the stale parent stays in `ev log`). At least one tag is
+**child** that copies the target's hashed payload verbatim, carries the corrected tag, and records an
+explicit **`corrects:<target-id>` edge** (non-hashed — `ev`'s first and only relation overlay; the
+general case-law graph is not built). `ev brief` / `ev list` collapse via that edge to surface the
+child (the stale parent stays in `ev log`; `ev show` / `ev reopen` print the `corrects:` edge so the
+correction is traceable). At least one tag is
 required; a no-op is refused (`nothing to correct`); an override wins, an unspecified tag inherits.
 This is the remedy when **`ev migrate` reports a discrepancy** — a re-import whose resolved tags
 differ from the stored tick is surfaced loudly (`… N discrepancy(ies) — see above`, never silently

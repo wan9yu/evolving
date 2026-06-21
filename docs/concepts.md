@@ -45,10 +45,16 @@ forging a new identity:
   `{imported, agent-proposed, human-now}`, excluded from the hash; written only when set,
   **absent ⇒ `human-now`**. It records **how** the decision entered the ledger (see
   *Provenance* below). Vocab-validated; an out-of-vocabulary value is refused.
+- `corrects` — the **relation-overlay edge**: when set, the 12-hex id of the tick this one
+  **corrects** (written only by [`ev correct`](commands.md#ev-correct)). Non-hashed, so it never
+  moves the `id`; the brief/list collapse reads it to supersede the corrected tick precisely. It is
+  the **first, and currently the only, overlay relation** — the general case-law graph (governed-by /
+  case-of / arbitrary typed edges) is deliberately not built. A machine-fence test pins this so a new
+  edge type can only be added deliberately.
 
 On disk a tick is stored as pretty JSON containing the hashed payload keys **plus** the
 bookkeeping keys at top level (`id`, `status`, `held_since`, `blame`, and — when set —
-`authority`, `jurisdiction`, `source_ref`, `provenance`). `ev show` prints that file as-is.
+`authority`, `jurisdiction`, `source_ref`, `provenance`, `corrects`). `ev show` prints that file as-is.
 The genesis tick on disk looks like:
 
 ```json
@@ -75,11 +81,13 @@ This is the frozen `genesis` golden vector, so its `id` is genuinely `e2b337f53a
 same id pinned in the *Identity* table below). The `held_since` is shown as a placeholder; the
 real one is an RFC3339 time stamped at write time.
 
-Because `blame`, `status`, `held_since`, `authority`, `jurisdiction`, `source_ref`, and
-`provenance` sit outside the hash, blanking `blame` on disk does **not** change the `id` —
-which is exactly why `ev verify` checks `blame` separately (R5). Equally, tagging a
-`jurisdiction`, a `source_ref`, or a `provenance` on a decision leaves its `id` untouched:
-these are declared bookkeeping, never part of the decision's identity.
+Because `blame`, `status`, `held_since`, `authority`, `jurisdiction`, `source_ref`,
+`provenance`, and `corrects` sit outside the hash, blanking `blame` on disk does **not** change the
+`id` — which is exactly why `ev verify` checks `blame` separately (R5). Equally, tagging a
+`jurisdiction`, a `source_ref`, a `provenance`, or a `corrects` edge on a decision leaves its `id`
+untouched: these are declared bookkeeping, never part of the decision's identity. (The non-hashed
+`corrects` edge is what lets a correction be recorded as an *overlay* on top of the immutable chain
+without rewriting — or re-identifying — the tick it corrects.)
 
 ### `source_ref` is the adopter's concept, carried opaquely
 

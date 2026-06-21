@@ -124,6 +124,7 @@ mod tests {
             jurisdiction: None,
             source_ref: None,
             provenance: None,
+            corrects: None,
         };
         let rows = vec![
             (

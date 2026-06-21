@@ -90,6 +90,11 @@ pub fn run(repo: &Path, a: CorrectArgs) -> Result<Tick, String> {
             jurisdiction,
             source_ref: target.source_ref.clone(),
             provenance,
+            // The explicit relation-overlay edge: this child CORRECTS the target. Read by the
+            // brief/list collapse (precise supersession) and surfaced by show/log/reopen. Non-hashed,
+            // so it never moves the child's id; the child is still recognizably the same decision by
+            // its copied hashed payload.
+            corrects: Some(target.id.clone()),
         },
     )?;
     crate::events::append(&store, "correct", Some(&child), None, None);

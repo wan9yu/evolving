@@ -211,6 +211,9 @@ pub struct Decision {
     pub jurisdiction: Option<String>,
     pub source_ref: Option<serde_json::Value>,
     pub provenance: Option<String>,
+    // The non-hashed relation-overlay edge: Some(target-id) when this decision CORRECTS another
+    // (set only by `ev correct`); None for a fresh decision. See Tick::corrects.
+    pub corrects: Option<String>,
 }
 
 /// THE one place a decision becomes a tick: R3-lint the free text, read HEAD as the parent, stamp
@@ -250,6 +253,7 @@ pub fn append(repo: &Path, d: Decision) -> Result<Tick, String> {
         jurisdiction: d.jurisdiction,
         source_ref: d.source_ref,
         provenance: d.provenance,
+        corrects: d.corrects,
     };
     t.id = compute_id(&t);
     store
@@ -495,6 +499,7 @@ pub fn run(repo: &Path, decision: Option<&str>, args: &[String]) -> Result<Tick,
             // Fresh authorship is hard-stamped human-now (the absent default); decide takes no
             // provenance from the caller, so an importer can never launder a forbidden op as imported.
             provenance: None,
+            corrects: None,
         },
     )
 }
@@ -1051,6 +1056,7 @@ mod tests {
             jurisdiction: None,
             source_ref: None,
             provenance: None,
+            corrects: None,
         };
 
         // when: it is appended onto the empty store (genesis: parent_id == "")

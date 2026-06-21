@@ -128,6 +128,40 @@ fn check_run_should_be_green_when_the_counter_test_produces_the_opposite() {
 }
 
 #[test]
+fn check_run_should_be_unproven_and_gate_when_the_counter_test_cannot_execute() {
+    // given: a binding whose check passes but whose counter-test is a non-runnable selector (a
+    // typo / missing binary → `sh` exits 127). A broken counter "fails" for the WRONG reason, which
+    // would otherwise look like it flipped (green check vs failed counter → spuriously "proven").
+    // (Honest limit: a command that *intentionally* exits 126/127 is indistinguishable from a missing
+    // one and would also read unproven here — we err toward gating, never a false-green.)
+    let (r, head) = git_repo();
+    decide_bound(&r, "true", "this_is_not_a_real_command_xyz123", &head);
+
+    // when: check --run executes both
+    let out = ev()
+        .args(["check", "--run", "--platform", "local", "--exit-on-red"])
+        .current_dir(&r)
+        .output()
+        .unwrap();
+
+    // then: unproven, NOT green — a counter-test that could not run never proves falsifiability, so
+    // the binding cannot read as a proven green (no false-green); the gate fails
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !out.status.success(),
+        "a non-runnable counter-test must gate, not pass; stdout: {stdout}"
+    );
+    assert!(
+        stdout.lines().any(|l| l.starts_with("unproven\t")),
+        "must read unproven (not green); stdout: {stdout}"
+    );
+    assert!(
+        !stdout.lines().any(|l| l.starts_with("green\t")),
+        "must NOT read green; stdout: {stdout}"
+    );
+}
+
+#[test]
 fn check_run_should_be_unproven_and_gate_when_the_counter_test_agrees_with_the_check() {
     // given: a vacuous binding — check and counter-test both pass (true vs true)
     let (r, head) = git_repo();

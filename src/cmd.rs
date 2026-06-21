@@ -328,13 +328,26 @@ pub fn check(
                                 // result. A harvested binding (counter_test None) skips this step,
                                 // leaving falsifiable None — the existing default.
                                 if let Some(counter_test) = counter_test {
-                                    if let Ok(ct) = crate::runner::run_check(
+                                    match crate::runner::run_check(
                                         repo,
                                         counter_test,
                                         platform,
                                         config.green_exit_code,
                                     ) {
-                                        rc.falsifiable = Some(rc.result != ct.result);
+                                        Ok(ct) => rc.falsifiable = Some(rc.result != ct.result),
+                                        Err(e) => {
+                                            // The binding DECLARES a counter-test but it could not be
+                                            // executed — falsifiability is NOT established, so the
+                                            // binding must read unproven (it gates), never let the
+                                            // check's own green stand. Leaving falsifiable None (the
+                                            // old behavior) was a false-green: an un-provable guard
+                                            // reading as proven. Some(false) here means "unproven —
+                                            // counter could not run", not the vacuous "counter ran and
+                                            // agreed" case; the stderr warning differentiates the two
+                                            // (the verdict is the same: unproven, which gates).
+                                            eprintln!("warning: counter-test {counter_test:?} could not run ({e}) — recording unproven");
+                                            rc.falsifiable = Some(false);
+                                        }
                                     }
                                 }
                                 if let Err(e) = crate::receipt::append(&store, &rc) {

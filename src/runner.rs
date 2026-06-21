@@ -27,6 +27,21 @@ pub fn run_check(
         .current_dir(repo)
         .status()
         .map_err(|e| format!("cannot run {reference:?}: {e}"))?;
+    // 126 (not executable) / 127 (command not found) from `sh -c` mean the selector could not be
+    // EXECUTED as a command — a typo, a missing binary. That is NOT a clean pass/fail: treating it
+    // as `red` would let a broken counter-test "flip" against a passing check and read as a proven
+    // green (a false-green). Surface it as an error so the caller records it honestly (the check
+    // path → not-run; the counter-test path → unproven), never as a meaningful result.
+    // LIMIT (honest, unavoidable under `sh -c`): a command that *intentionally* exits 126/127 is
+    // indistinguishable from a missing one, so it is treated as un-executed too. We err toward
+    // not-run/unproven (which GATE), never toward a false-green; a check should not use 126/127 as a
+    // meaningful exit code.
+    if matches!(status.code(), Some(126) | Some(127)) {
+        return Err(format!(
+            "{reference:?} could not be executed (exit {})",
+            status.code().unwrap_or(127)
+        ));
+    }
     // exit == the configured green code is green; anything else (incl. signal kills) is red.
     let result = if status.code() == Some(green_exit_code) {
         "green"
@@ -98,5 +113,21 @@ mod tests {
 
         // then: the receipt is red
         assert_eq!(r.result, "red");
+    }
+
+    #[test]
+    fn run_check_should_error_when_the_command_cannot_execute() {
+        // given: a git repo and a selector that is not a runnable command (sh exits 127)
+        let repo = git_repo();
+
+        // when: the bound ref is run
+        let r = run_check(&repo, "this_is_not_a_real_command_xyz123", "local", 0);
+
+        // then: it is an Err (could-not-execute), NOT a clean red — so a green check is never paired
+        // with a counter that merely failed to run (which would read as a false-green "proven")
+        assert!(
+            r.is_err(),
+            "a non-runnable selector must error, not return a red receipt"
+        );
     }
 }

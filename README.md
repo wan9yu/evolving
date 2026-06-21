@@ -135,6 +135,7 @@ Usage docs live in [`docs/`](docs/):
 - [`docs/commands.md`](docs/commands.md) — the authoritative command reference: every flag, exit code, the exact strings each command prints, and a worked example per command.
 - [`docs/migrating.md`](docs/migrating.md) — bringing an existing decision history into `ev`: the canonical decision-intake format, writing a small adapter that emits it, and the built-in convenience extractors.
 - [`docs/philosophy.md`](docs/philosophy.md) — the design philosophy: the tenets behind `ev`, and why it makes the choices it does.
+- [`docs/measuring-drift-defense.md`](docs/measuring-drift-defense.md) — how to honestly measure whether `ev` is catching real re-derivations: never quote a catch-rate without its denominator, the blind external denominator, the never-broke control, the uncatchable co-population, and leading with a MISS.
 
 **Using `ev` from an AI agent?** [`skills/ev/SKILL.md`](skills/ev/SKILL.md) is a tool-agnostic agent skill — drop it into your agent's skills directory so it uses `ev` correctly without reading the manual.
 

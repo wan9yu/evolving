@@ -57,6 +57,14 @@ the act and no structural marker. ev's record can hold that decision, but the tr
 prose re-walk of it. We state this as scope, not apology, and **never** claim the tripwire "fixes" or
 "would have caught" such a case.
 
+**A check the runner cannot execute never reads green.** `ev check --run` runs the bound test through
+`sh -c`. A selector that cannot run (a typo, a missing binary → exit 126/127) is recorded as
+**not-run** (for a check) or **unproven** (for a counter-test) — both of which gate — never as a clean
+result; a green check is never paired with a counter-test that merely failed to run (that would be a
+false-green). The honest, unavoidable limit: a command that *intentionally* exits 126/127 is
+indistinguishable from a missing one and is treated as un-executed too — we always err toward
+gating, never toward a false-green, so a check should not use 126/127 as a meaningful exit code.
+
 **Agent-authored rules never gate.** A tick with `provenance=agent-proposed` can never flip
 `--exit-on-red`: any not-green verdict maps to the non-gating `memo` (surfaced, never a false-green,
 never a block). An agent cannot author a gating rule; only a named human ratifies one. This mirrors

@@ -48,6 +48,25 @@ trust **on one condition: the half ev covers must be the painful half.** "Only h
 it is the easy half; it is adopted when the covered half (durable capture of the human-judged
 decisions that otherwise scroll away) is the one that actually hurts.
 
+**Detection is structural-token only.** A rejected-road tripwire — a falsifiable check bound to a road
+a `user-ruled` decision closed — catches a re-walk only when the re-walk touches a **structural,
+grep-able artifact** (a file token, a commit, a schema). It reads green while the road stays closed and
+red when re-walked, and the required counter-test proves it can flip; but a **prose** act with no token
+is outside its reach. The canonical miss is **#1194** — a milestone re-assignment with no git commit of
+the act and no structural marker. ev's record can hold that decision, but the tripwire cannot *catch* a
+prose re-walk of it. We state this as scope, not apology, and **never** claim the tripwire "fixes" or
+"would have caught" such a case.
+
+**Agent-authored rules never gate.** A tick with `provenance=agent-proposed` can never flip
+`--exit-on-red`: any not-green verdict maps to the non-gating `memo` (surfaced, never a false-green,
+never a block). An agent cannot author a gating rule; only a named human ratifies one. This mirrors
+`ev brief` excluding agent-proposed from the boot-read, and it protects the tripwire — an agent-authored
+tripwire cannot gate. The enforcement is at **gate time** (the provenance check, LOCK 3), the one
+chokepoint every tick passes through regardless of how it entered — not a signature, and not the
+`--authority` tag (which is declared, not cryptographically verified: an agent could even claim
+`user-ruled`, and the `provenance=agent-proposed` exclusion would still deny it the gate). The signing
+boundary is banked; until then, the gate-time provenance check is what holds the line.
+
 ## 6. Capture beats auto-resurface for the human-judged half
 The most painful decisions are pure judgment — no falsifiable check can auto-surface them. There, the
 value is durable **capture** + a legible boot-time object + a re-check reminder, not cleverness. But

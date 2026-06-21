@@ -67,7 +67,10 @@ records a road-not-taken. Per-ground flags (`--revisit`, `--assume-test`, `--cou
 decision-global flags (`--observe`, `--blame`, `--authority`, `--verified-at-sha`,
 `--from-git`) may appear anywhere. Set `--authority user-ruled`
 when you are capturing a **human's** ruling (so a future fresh agent sees it via `ev brief`);
-use `--authority agent-disposable` for a working call an agent may later revise.
+use `--authority agent-disposable` for a working call an agent may later revise. A rejected
+road may carry a **falsifiable tripwire** (a Test check that trips when the closed road is
+re-walked) **only** when the decision is `--authority user-ruled`, and a `--counter-test` is
+still required (no harvested rejected-road tripwire).
 
 ```sh
 ev decide "restore-safety counter DB-backed; reject Redis" \
@@ -86,6 +89,16 @@ A **test binding** (`--assume-test`) is self-verifying: it MUST carry a `--count
 (the test that should flip red if the claim breaks — proving the check can fail) plus at
 least one `--on-platform` / `--triggered-by` / `--surface`. A **human re-check** instead is
 `--revisit "<when/where a person re-affirms it>"`.
+
+A **rejected-road tripwire** binds the same kind of falsifiable test to a road a `user-ruled`
+decision CLOSED (`--reject`): attach `--assume-test` + the required `--counter-test` + 3-key
+liveness to the `--reject` ground, with `--authority user-ruled` on the decision. The check
+reads GREEN while the road stays closed and RED when someone **re-walks** it; the counter-test
+proves it can flip; re-walking trips `--exit-on-red`. A `--revisit` (human re-check) on a
+rejected road is **hard-refused** — a closed road is guarded by a structural tripwire, not by
+a person re-confirming a non-choice. **Honesty:** a tripwire binds only a **structural token**
+(a grep-able artifact); a prose re-walk with no token (e.g. #1194's milestone re-assignment)
+has nothing to bind and stays surface-only — never claim the tripwire "fixes" such a case.
 
 **Seed a decision that already lives in a commit** with `--from-git <commit>`: the decision
 text becomes the commit subject; the default `--blame` is a leading `<Role>:` prefix on the
@@ -109,6 +122,21 @@ ev guard "<test selector>" <HEAD-id> "<ground claim>" \
   --counter-test "<selector>" --on-platform linux-ci --triggered-by schema.sql --surface ddl
 ```
 
+To add a **rejected-road tripwire** after the fact (the ground is a `--reject` road), pass
+`--authority user-ruled` as well — the same counter-test + 3-key liveness still apply:
+
+```sh
+ev guard "<test selector>" <HEAD-id> "<rejected-road claim>" \
+  --counter-test "<selector>" --on-platform linux-ci --triggered-by pyproject.toml \
+  --surface deps --authority user-ruled
+```
+
+An **agent-proposed tripwire (or any agent-proposed check) can never gate.** A tick with
+`provenance=agent-proposed` maps any not-green verdict to the non-gating `memo` under
+`--exit-on-red` (surfaced, never dropped, never a false-green). This is the gate analogue of
+`ev brief` excluding agent-proposed from the boot-read: an agent cannot author a gating rule;
+only a named human ratifies one.
+
 **Ingest an existing decision history** with `ev migrate` — don't re-type a ledger you
 already have written down. The **primary intake** is the **Canonical Decision Intake Contract**
 (`--source canonical:<path.jsonl>`): one JSON object per line on the closed envelope
@@ -122,7 +150,9 @@ this path `provenance` defaults to `imported`. Four built-in convenience extract
 simple substrates: `--source <kind>:<path>` with kind ∈ `gitlog` / `to-human` /
 `decisions-immutable` / `escalation`, each harvesting **rulings** and **structured**
 roads-not-taken (`rejected: <opt>: <why>`) only — a prose reason is **never** NLP'd into a
-ground (a block with no structured road imports as an honest zero-grounds capture). A migrate is
+ground (a block with no structured road imports as an honest zero-grounds capture). A rejected-road
+Test check on intake admits the same rule as `ev decide` — `authority=user-ruled` **and** a
+counter-test present (so the user-ruled-only tripwire rule is structural across all producers). A migrate is
 **idempotent** (a re-run writes nothing; records dedup on the key derived from `source_ref`),
 **keeps the chain** (a back-dated insert is reported *re-linked*, never rewritten), and **never
 invents an author** (a record with no author and no `--blame` fallback is a source-only gap, R5
@@ -207,8 +237,11 @@ not verdicts the agent should silently act on.
   set). Be honest about who is on the hook for the call.
 - **A human re-check can never be force-bound to a test** (`--revisit` and `--assume-test`
   are exclusive on one ground).
-- **A road-not-taken carries no check** — `--reject` grounds record *why* an option was
-  declined; they take no `--assume-test`.
+- **A road-not-taken carries a tripwire only when user-ruled** — `--reject` grounds record
+  *why* an option was declined; by default they take no check. A `user-ruled` rejection may
+  carry a falsifiable **tripwire** (a Test check) with a required `--counter-test` and 3-key
+  liveness. A rejected road **never** carries a human re-check (`--revisit` on a rejected ground
+  is hard-refused).
 - **A test binding is never vacuous** — it needs a `--counter-test` and non-empty
   platform/trigger/surface.
 
@@ -224,6 +257,20 @@ And one item is a *warning*, not a hard refusal:
 `ev` answers one question well — *does a human-vetted decision stay live, and is the check
 guarding it itself alive?* Respect these limits; do not over-claim them to the human:
 
+- **Rejected-road tripwires bind ONLY structural tokens.** A tripwire check binds a grep-able
+  token in a real artifact (a file, a commit, a schema). A prose re-walk with no structural
+  token stays surface-only — the tripwire detects a *structural* re-walk and surfaces the
+  decision; it does not prevent the re-walk.
+- **#1194 is the canonical MISS.** It was a prose milestone re-assignment — no structural token,
+  no git commit of the act — so a tripwire cannot catch it. Lead with this MISS where the
+  tripwire is described; **never** claim or imply the tripwire "fixes #1194" or "would have
+  caught #1194."
+- **`--authority` is declared, not verified.** It banks on the named human's accountability (the
+  signing boundary is not yet built). Agent-proposed checks are **structurally excluded from
+  gating at gate time** (any not-green → non-gating `memo`, the LOCK 3 provenance check every tick
+  passes through): an agent cannot author a gating rule. An agent could even *claim*
+  `authority=user-ruled` (the tag is declared, not verified) — but the `provenance=agent-proposed`
+  exclusion still denies it the gate, so an agent-authored tripwire cannot gate.
 - **Facts, not verdicts.** `ev check` emits flat states, never a score or a rank. A red check
   is an **invitation for a human to re-decide**, not a pass/fail judgement and not an
   instruction to the agent.

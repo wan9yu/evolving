@@ -123,6 +123,89 @@ fn check_run_should_record_red_and_gate_when_the_bound_test_fails() {
     assert!(String::from_utf8_lossy(&out.stdout).contains("red"));
 }
 
+// A canonical intake line: a chosen ground bound to a RED-reading test (ref "false", counter "true"
+// → falsifiable, so the verdict is a real red, not unproven), on platform "local" so --run executes
+// it. Parameterized by provenance — the bit LOCK 3 (Part B) keys on.
+fn canonical_red_check(provenance: &str) -> String {
+    format!(
+        "{{\"kind\":\"ev-decision-intake\",\"decision\":\"a ruling\",\
+\"grounds\":[{{\"claim\":\"holds\",\"supports\":\"chosen\",\
+\"check\":{{\"by\":\"test\",\"ref\":\"false\",\
+\"verified_at_sha\":\"d308afac1b2c3d4e5f60718293a4b5c6d7e8f901\",\"counter_test\":\"true\",\
+\"liveness\":{{\"platforms\":[\"local\"],\"triggered_by\":[\"f\"],\"surfaces\":[\"s\"]}}}}}}],\
+\"blame\":\"agent-runner\",\"provenance\":\"{provenance}\",\"source_ref\":\"R-ap1\"}}\n"
+    )
+}
+
+fn migrate_canonical(repo: &std::path::Path, body: &str) {
+    let path = repo.join("intake.jsonl");
+    std::fs::write(&path, body).unwrap();
+    let out = ev()
+        .args([
+            "migrate",
+            "--source",
+            &format!("canonical:{}", path.display()),
+        ])
+        .current_dir(repo)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "migrate failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn check_should_not_flip_exit_on_red_when_the_tick_is_agent_proposed_even_if_red() {
+    // given: an agent-PROPOSED tick whose bound check reads RED (Part B / §五: an agent cannot author
+    // a gating rule). It is a real red — counter-test flips — not a vacuous/unproven one.
+    let (r, _head) = git_repo();
+    migrate_canonical(&r, &canonical_red_check("agent-proposed"));
+
+    // when: the gate runs
+    let out = ev()
+        .args(["check", "--run", "--platform", "local", "--exit-on-red"])
+        .current_dir(&r)
+        .output()
+        .unwrap();
+
+    // then: the gate PASSES (exit 0) — LOCK 3 maps the agent-proposed not-green to the non-gating
+    // memo — but the row is SURFACED as memo (not hidden): non-gating, never a false-green or a drop
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "an agent-proposed red must not gate; stdout: {stdout}"
+    );
+    assert!(
+        stdout.contains("memo"),
+        "the agent-proposed red must surface as memo, not vanish; stdout: {stdout}"
+    );
+}
+
+#[test]
+fn check_should_still_flip_exit_on_red_when_the_tick_is_human_authored() {
+    // given: the IDENTICAL red check but provenance=imported (human-authored history) — the control
+    // proving Part B is provenance-keyed, not a dead gate
+    let (r, _head) = git_repo();
+    migrate_canonical(&r, &canonical_red_check("imported"));
+
+    // when: the gate runs
+    let out = ev()
+        .args(["check", "--run", "--platform", "local", "--exit-on-red"])
+        .current_dir(&r)
+        .output()
+        .unwrap();
+
+    // then: a human-authored red DOES gate (exit non-zero) and reads red
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !out.status.success(),
+        "a human-authored red must gate; stdout: {stdout}"
+    );
+    assert!(stdout.contains("red"), "stdout: {stdout}");
+}
+
 #[test]
 fn check_run_should_leave_other_platforms_not_run_when_only_local_is_run() {
     // given: a ground that declares platform "local" only, run on a different platform name

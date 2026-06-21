@@ -105,23 +105,29 @@ opens a rejected road with `claim = <why>` and `supports = rejected:<opt>`.
 
 ## Check
 
-A **Check** is what keeps a chosen ground honest as the world changes. It is one of two
+A **Check** is a binding that keeps a ground honest as the world changes. It is one of two
 shapes, distinguished on disk by the `by` field:
 
 - **Person** — a human re-check. `{ "by": "person", "ref": <reference> }`, where
   `reference` names when/where a person re-affirms the ground (e.g. `"Q3 infra review"`).
-  Created with `--revisit`.
+  Created with `--revisit`. A Person check binds **only a chosen** ground — a rejected road
+  never carries a human re-check.
 
 - **Test** — a test that guards the ground. `{ "by": "test", "ref": <selector>,
-  "verified_at_sha": <40-hex>, "counter_test": <selector>, "liveness": { … } }`:
-  - `reference` (`ref`) — the test selector that should pass while the claim holds.
+  "verified_at_sha": <40-hex>, "counter_test": <selector>, "liveness": { … } }`. A Test check
+  binds a **chosen** ground unconditionally, or a **rejected** road when the decision is
+  `--authority user-ruled` and a counter-test is present (a "tripwire" — see
+  *User-ruled rejected tripwires* below):
+  - `reference` (`ref`) — the test selector that should pass while the claim holds (or, for a
+    tripwire, while the rejected road stays closed).
   - `verified_at_sha` — the commit the test was last verified at; exactly 40 lowercase hex.
-  - `counter_test` — **optional**: the test that should flip **red** if the claim breaks.
-    When present it is a non-empty selector; when **absent** the key is **omitted entirely**
-    from the JSON (it never serializes as `null` or `""`). An authored binding from
-    `ev decide` / `ev guard` always carries one (such a binding without it is refused as
-    vacuous). A **harvested** binding (`ev migrate`) deliberately carries **none** — see
-    *Harvested bindings* below.
+  - `counter_test` — **required for an authored binding, optional for a harvested one**: the
+    test that should flip **red** if the claim breaks. When present it is a non-empty selector;
+    when **absent** the key is **omitted entirely** from the JSON (it never serializes as `null`
+    or `""`). An authored binding from `ev decide` / `ev guard` always carries one (such a binding
+    without it is refused as vacuous), and a rejected-road **tripwire** always carries one (no
+    harvested rejected-road tripwire). A **harvested** binding (`ev migrate`, chosen grounds only)
+    deliberately carries **none** — see *Harvested bindings* below.
   - `liveness` — three **non-empty** string sets that say where the test must keep running
     for the binding to be considered alive: `platforms`, `triggered_by`, `surfaces`. In the
     canonical form these sets are sorted and de-duplicated, so their order does not affect
@@ -131,6 +137,26 @@ shapes, distinguished on disk by the `by` field:
   by `ev migrate`.
 
 A ground may carry **at most one** check, and never both shapes at once.
+
+### User-ruled rejected tripwires
+
+By default a rejected road (`supports = rejected:<opt>`) carries **no** check. When the decision
+is `--authority user-ruled`, a rejected road **may** carry a Test check — a **tripwire**: a
+falsifiable check on a road the human deliberately closed. The rules:
+
+- the tripwire **must** carry a counter-test (a rejected-road check is never harvested), plus
+  full 3-key liveness — exactly the authored-binding grammar;
+- the check reads **green** while the road stays closed and **red** when someone **re-walks** it
+  (re-introduces the closed option); the counter-test proves the check can flip;
+- a `--revisit` (human re-check) on a rejected road is **always refused** — a closed road is
+  guarded by a structural tripwire, not by a person re-confirming a non-choice.
+
+A tripwire binds **only a structural token** (a grep-able artifact: a file change, a commit, a
+schema). A **prose** re-walk with no structural token — e.g. a GitHub milestone re-assignment
+(the canonical #1194 case) — has nothing to bind and stays **surface-only**: the tripwire does
+**not**, and cannot, catch it. This is the honest scope, not a flaw — see the structural-jurisdiction
+limit in the honesty boundary. (The same `authority=user-ruled` + counter-test rule is enforced on
+the canonical-intake path, so the constraint is structural across every producer.)
 
 ### Harvested bindings (counter-test absent)
 

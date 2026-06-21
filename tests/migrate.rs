@@ -631,6 +631,84 @@ fn ingest_should_accept_an_agent_proposed_binding_when_it_carries_a_counter_test
     assert_eq!(tick_count(&r), 1);
 }
 
+// A canonical line carrying a rejected-road TRIPWIRE (a Test check on a rejected: ground),
+// parameterized by the bits the ingest gate acts on: `extra_tags` splices authority/provenance;
+// `counter` is "" (harvested) or a counter_test field.
+fn canonical_rejected_tripwire(extra_tags: &str, counter: &str) -> String {
+    format!(
+        "{{\"kind\":\"ev-decision-intake\",\"decision\":\"keep redis out\",\
+\"grounds\":[{{\"claim\":\"redis adds a new infra dependency\",\"supports\":\"rejected:Redis\",\
+\"check\":{{\"by\":\"test\",\"ref\":\"! grep -q redis pyproject.toml\",\
+\"verified_at_sha\":\"d308afac1b2c3d4e5f60718293a4b5c6d7e8f901\"{counter},\
+\"liveness\":{{\"platforms\":[\"linux-ci\"],\"triggered_by\":[\"pyproject.toml\"],\"surfaces\":[\"pyproject-deps\"]}}}}}}],\
+\"blame\":\"Wang Yu\",\"source_ref\":\"R-rw1\"{extra_tags}}}\n"
+    )
+}
+
+#[test]
+fn ingest_should_refuse_a_rejected_road_tripwire_when_authority_is_not_user_ruled() {
+    // given: a canonical rejected-road tripwire carrying a counter-test but NO authority=user-ruled
+    let r = repo();
+    let body =
+        canonical_rejected_tripwire("", ",\"counter_test\":\"grep -q redis pyproject.toml\"");
+    let src = write_source(&r, "canonical", "rw.jsonl", &body);
+
+    // when: migrate ingests it
+    let out = run(&r, &["migrate", "--source", &src]);
+
+    // then: refused at the door — the user-ruled-only rule is structural across producers, so the
+    // permissive ground_from_value parse cannot bypass the capture/guard authoring gate
+    assert!(
+        !out.status.success(),
+        "a non-user-ruled rejected-road tripwire must be refused"
+    );
+    assert_eq!(tick_count(&r), 0, "nothing is written on a refused record");
+}
+
+#[test]
+fn ingest_should_accept_a_rejected_road_tripwire_when_authority_is_user_ruled() {
+    // given: a user-ruled canonical rejected-road tripwire carrying a counter-test
+    let r = repo();
+    let body = canonical_rejected_tripwire(
+        ",\"authority\":\"user-ruled\"",
+        ",\"counter_test\":\"grep -q redis pyproject.toml\"",
+    );
+    let src = write_source(&r, "canonical", "rw.jsonl", &body);
+
+    // when: migrate ingests it
+    let out = run(&r, &["migrate", "--source", &src]);
+
+    // then: accepted — a user-ruled closed road with a falsifiable tripwire is exactly the capability
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(tick_count(&r), 1);
+}
+
+#[test]
+fn ingest_should_refuse_a_harvested_rejected_road_tripwire_even_when_user_ruled_and_imported() {
+    // given: a user-ruled+imported rejected-road tripwire with NO counter-test (harvested) — the
+    // general harvested gate ALLOWS harvested for imported, so the rejected-road gate must still bite
+    let r = repo();
+    let body = canonical_rejected_tripwire(
+        ",\"authority\":\"user-ruled\",\"provenance\":\"imported\"",
+        "",
+    );
+    let src = write_source(&r, "canonical", "rw.jsonl", &body);
+
+    // when: migrate ingests it
+    let out = run(&r, &["migrate", "--source", &src]);
+
+    // then: refused — a GATING tripwire must always prove falsifiability; no harvested rejected-road tripwire
+    assert!(
+        !out.status.success(),
+        "a harvested rejected-road tripwire must be refused even when imported+user-ruled"
+    );
+    assert_eq!(tick_count(&r), 0);
+}
+
 #[test]
 fn ingest_should_refuse_a_c_jurisdiction_record_that_carries_a_test_check() {
     // given: a C-jurisdiction (detect-only) record that carries a fully-proven Test check

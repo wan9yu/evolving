@@ -114,7 +114,9 @@ in `ev` no matter what the adapter does:
   ones that guard an on-disk tick. The `grounds` / `check` sub-shape is byte-identical to the
   on-disk one, so there is exactly **one** grounds grammar in the system: claim non-empty;
   `supports ∈ {chosen, rejected:<non-empty>}`; a Test check needs a 40-hex `verified_at_sha` and
-  full liveness. A malformed ground is rejected at the door.
+  full liveness (and a counter-test unless harvested). A check on a **rejected** road is admitted
+  only under strict conditions (see the ingest-boundary gates below). A malformed ground is
+  rejected at the door.
 - **`ev` computes `id` and `parent_id` itself** — the producer cannot forge identity or lineage.
 - **`blame` is required or reported as a source-only gap** — never invented.
 - **The ingest-boundary gates** below run at the door, not only at a later `ev verify`.
@@ -137,6 +139,12 @@ never lands:
   `provenance=imported` — a fresh `agent-proposed` Test binding must carry a counter-test **and**
   full liveness, exactly like `ev decide` / `ev guard`
   (`source <key>: a harvested test check (no counter-test) is allowed only for imported history, not <provenance>`);
+- a **rejected-road Test check** (a tripwire) is admitted **only** when the decision is
+  `authority=user-ruled` **and** the check carries a counter-test (no harvested rejected-road
+  tripwire — stricter than the harvested rule above, which only covers chosen grounds). The
+  user-ruled-only rule is therefore structural across every producer, not just `ev decide` / `ev guard`
+  (`source <key>: a rejected road can carry a tripwire test only when authority=user-ruled`;
+  `source <key>: a rejected-road tripwire requires a counter-test (no harvested tripwire)`);
 - **jurisdiction precedence:** an inline `jurisdiction` on a canonical record **wins** over
   `--jurisdiction-map`; the map fills only a record that declares **none**; a record declaring a
   **different** bucket than the map is a hard error

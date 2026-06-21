@@ -395,6 +395,21 @@ pub fn check(
             {
                 v = Verdict::Memo;
             }
+            // LOCK 3 (gate-time, governance): an agent-PROPOSED tick must never flip --exit-on-red —
+            // an agent cannot author a gating rule; only a named human ratifies one (§五). Map ANY
+            // not-green to the non-gating Memo, the gate analogue of brief_visible excluding
+            // agent-proposed from the boot-read (defense-in-depth: even if such a tick reaches the
+            // gate, it cannot fire it; and it also protects the new rejected-road tripwire — an
+            // agent-authored tripwire cannot gate). LOCK 1 and LOCK 3 both map to Memo, so order is
+            // irrelevant to the outcome (a tick caught by LOCK 1 is already Memo and skips here).
+            if t.provenance.as_deref() == Some("agent-proposed")
+                && !matches!(
+                    v,
+                    Verdict::Green | Verdict::NotApplicable | Verdict::Exempt | Verdict::Memo
+                )
+            {
+                v = Verdict::Memo;
+            }
             if !matches!(
                 v,
                 Verdict::Green | Verdict::NotApplicable | Verdict::Exempt | Verdict::Memo
@@ -1102,11 +1117,28 @@ fn self_test_golden() -> ExitCode {
     if let Some(Check::Test { counter_test, .. }) = &mut harvested.grounds[0].check {
         *counter_test = None;
     }
+    // A rejected-road tripwire (0.1.8): case1's rejected:Redis road now CARRYING a Check::Test — the
+    // re-walk guard a user-ruled decision may bind to the road it closed. Pins the byte layout of a
+    // rejected: ground WITH a check (a layout no other golden exercises). authority=user-ruled is
+    // non-hashed (it never moves the id); the new check on grounds[2] is what makes this a fresh id.
+    let mut rejected_tripwire = case1.clone();
+    rejected_tripwire.authority = Some("user-ruled".into());
+    rejected_tripwire.grounds[2].check = Some(Check::Test {
+        reference: "! grep -q redis pyproject.toml".into(),
+        verified_at_sha: "d308afac1b2c3d4e5f60718293a4b5c6d7e8f901".into(),
+        counter_test: Some("grep -q redis pyproject.toml".into()),
+        liveness: Liveness {
+            platforms: vec!["linux-ci".into()],
+            triggered_by: vec!["pyproject.toml".into()],
+            surfaces: vec!["pyproject-deps".into()],
+        },
+    });
     let mut ok = true;
     for (name, t, want) in [
         ("genesis", &genesis, "e2b337f53a1f"),
         ("case1", &case1, "638c47b0c9dd"),
         ("harvested", &harvested, "0cf784b51331"),
+        ("rejected_tripwire", &rejected_tripwire, "9c5feb4582ac"),
     ] {
         let got = compute_id(t);
         let pass = got == want;

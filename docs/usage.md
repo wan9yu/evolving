@@ -38,6 +38,39 @@ a working call an agent may later revise.
 
 ---
 
+## "Bind a tripwire to a rejected road (so re-walking it fails the gate)"
+
+A `user-ruled` decision that closes a road **may** bind a falsifiable **tripwire** — a structural
+test that stays GREEN while the road is closed and goes RED if someone re-walks it (re-introduces
+the token). It is the "first teeth" pattern: it catches a re-walk that touches a **real artifact**
+(a file, a config, a commit-able change). It **cannot** catch a **prose** re-assignment with no
+structural token — those stay surface-only (see the honesty note below).
+
+```sh
+# Close the Redis road and bind a tripwire to it:
+ev decide "keep Redis out of the manifest" \
+  --reject "Redis: a new infra dependency the team ruled out" \
+  --assume-test "! grep -q redis pyproject.toml" \
+  --counter-test "grep -q redis pyproject.toml" \
+  --on-platform linux-ci \
+  --triggered-by pyproject.toml \
+  --surface pyproject-deps \
+  --authority user-ruled \
+  --blame "You"
+```
+
+The tripwire (`! grep -q redis …`) binds to the **rejected road**, reads GREEN while redis is
+absent, and flips RED when someone re-introduces it. The counter-test (`grep -q redis …`) is the
+re-walk — it proves the binding is falsifiable; if `ev check --run` finds it does not flip, the
+binding is reported **unproven** and gates, so the tripwire cannot decay into an always-green check.
+
+**Honesty — what this catches and what it does not.** A tripwire binds only a **structural,
+grep-able token**: the check and counter-test test a real artifact. A prose re-walk with no token
+(e.g. a GitHub milestone re-assignment — the canonical #1194 case) has nothing to bind and stays
+surface-only. The tripwire does not, and does not claim to, catch that class.
+
+---
+
 ## "Capture a decision that already lives in a commit"
 
 Seed the decision straight from a commit: its subject becomes the decision text. Blame defaults
@@ -125,7 +158,7 @@ with a trailing `harvested-unproven: …` debt line — run `ev guard` to add a 
 
 ---
 
-## "Bind a falsifiable check to an assumption after the fact"
+## "Bind a falsifiable check to a chosen assumption after the fact"
 
 When an assumption deserves a guarding test you did not bind at decision time, attach it to an
 unbound ground of the **current HEAD** decision. Because the check is part of the hashed

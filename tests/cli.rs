@@ -63,8 +63,14 @@ fn verify_should_reproduce_the_golden_vectors_when_run_in_self_test_mode() {
     // when: verify --self-test is run
     let out = ev().args(["verify", "--self-test"]).output().unwrap();
 
-    // then: it succeeds and emits both golden vectors
+    // then: it succeeds and emits ALL frozen golden vectors (genesis, case1, harvested, and the
+    // 0.1.8 rejected-road tripwire) — so a drift in any pinned byte layout fails self-test
     assert!(out.status.success(), "self-test must pass");
     let s = String::from_utf8_lossy(&out.stdout);
-    assert!(s.contains("e2b337f53a1f") && s.contains("638c47b0c9dd"));
+    assert!(
+        s.contains("e2b337f53a1f")
+            && s.contains("638c47b0c9dd")
+            && s.contains("0cf784b51331")
+            && s.contains("9c5feb4582ac")
+    );
 }

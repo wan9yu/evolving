@@ -262,13 +262,33 @@ fn build_ground(
     repo: &Path,
     d: DraftGround,
     sha_override: &Option<String>,
+    authority: Option<&str>,
 ) -> Result<Ground, String> {
     use crate::tick::Liveness;
     if d.claim.is_empty() {
         return Err("ground claim is empty".into());
     }
-    if d.supports.starts_with("rejected:") && (d.test_ref.is_some() || d.revisit.is_some()) {
-        return Err("a road-not-taken (rejected) ground cannot carry a check".into());
+    // A road-not-taken is closed: it never carries a human re-check (you do not schedule someone to
+    // re-confirm a non-choice). This stays a hard refusal regardless of authority.
+    if d.supports.starts_with("rejected:") && d.revisit.is_some() {
+        return Err("a road-not-taken (rejected) ground cannot carry a human re-check".into());
+    }
+    // 0.1.8 tripwire: a rejected road MAY carry a falsifiable test that trips when the closed road is
+    // re-walked — but ONLY when a human deliberately ruled the road closed (--authority user-ruled).
+    // The counter-test stays REQUIRED via the shared strict path below (no harvested rejected-road
+    // tripwire). HONESTY: this binds only a STRUCTURAL token (the test/counter-test grep a real
+    // artifact); a PROSE re-walk with no token (e.g. #1194's milestone re-assignment) has nothing to
+    // bind and STAYS surface-only — the tripwire does not and cannot catch it. An agent cannot author
+    // a gating tripwire: --authority is declared, not verified (the banked signing boundary), and the
+    // gate-path LOCK 3 excludes agent-proposed from gating.
+    if d.supports.starts_with("rejected:")
+        && d.test_ref.is_some()
+        && authority != Some("user-ruled")
+    {
+        return Err(
+            "a rejected road can carry a tripwire test only when the decision is --authority user-ruled"
+                .into(),
+        );
     }
     if d.revisit.is_some() && d.test_ref.is_some() {
         return Err("a ground cannot be both --revisit and --assume-test (R2)".into());
@@ -456,7 +476,9 @@ pub fn run(repo: &Path, decision: Option<&str>, args: &[String]) -> Result<Tick,
     let blame = resolve_blame(repo, blame_override)?;
     let mut grounds = Vec::new();
     for d in drafts {
-        grounds.push(build_ground(repo, d, &sha_override)?);
+        // authority (parsed + validated above) is decision-global; the rejected-road tripwire lift
+        // gates on it, so thread it in. It is non-hashed, so gating on it never moves a tick id.
+        grounds.push(build_ground(repo, d, &sha_override, authority.as_deref())?);
     }
     // The single hashing path: decide hands its assembled Decision to the shared append, exactly as
     // migrate does, so there is one compute_id / write_tick / R3-lint site (no per-caller fork).
@@ -593,8 +615,8 @@ mod tests {
     }
 
     #[test]
-    fn decide_should_refuse_a_check_when_the_ground_is_a_rejected_road() {
-        // given: a store and decide args attaching an --assume-test to a --reject road
+    fn decide_should_refuse_a_tripwire_on_a_rejected_road_when_authority_is_absent() {
+        // given: a store and decide args attaching a test tripwire to a --reject road, NO --authority
         let r = repo();
 
         // when: the decision is captured
@@ -621,7 +643,144 @@ mod tests {
             ]),
         );
 
-        // then: it is refused
+        // then: it is refused — a rejected-road tripwire is allowed only when --authority user-ruled
+        assert!(e.is_err());
+    }
+
+    #[test]
+    fn decide_should_refuse_a_tripwire_on_a_rejected_road_when_authority_is_agent_disposable() {
+        // given: the same tripwire but declared agent-disposable (not a human's closed-road ruling)
+        let r = repo();
+
+        // when: the decision is captured
+        let e = run(
+            &r,
+            Some("d"),
+            &s(&[
+                "--reject",
+                "pgvector: would lock our schema",
+                "--assume-test",
+                "pytest x",
+                "--counter-test",
+                "ct",
+                "--on-platform",
+                "linux-ci",
+                "--triggered-by",
+                "f",
+                "--surface",
+                "s",
+                "--verified-at-sha",
+                "d308afac1b2c3d4e5f60718293a4b5c6d7e8f901",
+                "--authority",
+                "agent-disposable",
+                "--blame",
+                "Wang Yu",
+            ]),
+        );
+
+        // then: refused — only a user-ruled closed road earns a gating tripwire
+        assert!(e.is_err());
+    }
+
+    #[test]
+    fn decide_should_accept_a_tripwire_on_a_rejected_road_when_authority_is_user_ruled() {
+        // given: a user-ruled decision binding a falsifiable tripwire to the road it closed
+        let r = repo();
+
+        // when: captured with --authority user-ruled + a full test binding on the --reject road
+        let t = run(
+            &r,
+            Some("keep Redis out"),
+            &s(&[
+                "--reject",
+                "Redis: a new infra dependency",
+                "--assume-test",
+                "! grep -q redis pyproject.toml",
+                "--counter-test",
+                "grep -q redis pyproject.toml",
+                "--on-platform",
+                "linux-ci",
+                "--triggered-by",
+                "pyproject.toml",
+                "--surface",
+                "pyproject-deps",
+                "--verified-at-sha",
+                "d308afac1b2c3d4e5f60718293a4b5c6d7e8f901",
+                "--authority",
+                "user-ruled",
+                "--blame",
+                "Wang Yu",
+            ]),
+        )
+        .expect("a user-ruled rejected-road tripwire is allowed");
+
+        // then: the closed road carries the test tripwire
+        let g = t
+            .grounds
+            .iter()
+            .find(|g| g.supports.starts_with("rejected:"))
+            .expect("a rejected road");
+        assert!(
+            matches!(g.check, Some(Check::Test { .. })),
+            "the closed road carries a tripwire"
+        );
+    }
+
+    #[test]
+    fn decide_should_refuse_a_user_ruled_rejected_road_tripwire_when_the_counter_test_is_missing() {
+        // given: a user-ruled rejected-road tripwire with NO --counter-test (no falsifiability proof)
+        let r = repo();
+
+        // when: the decision is captured
+        let e = run(
+            &r,
+            Some("keep Redis out"),
+            &s(&[
+                "--reject",
+                "Redis: a new infra dependency",
+                "--assume-test",
+                "! grep -q redis pyproject.toml",
+                "--on-platform",
+                "linux-ci",
+                "--triggered-by",
+                "pyproject.toml",
+                "--surface",
+                "pyproject-deps",
+                "--verified-at-sha",
+                "d308afac1b2c3d4e5f60718293a4b5c6d7e8f901",
+                "--authority",
+                "user-ruled",
+                "--blame",
+                "Wang Yu",
+            ]),
+        );
+
+        // then: refused — a tripwire stays falsifiable; counter-test is required even for a closed road
+        assert!(e.is_err());
+    }
+
+    #[test]
+    fn decide_should_still_refuse_a_revisit_on_a_rejected_road_even_when_user_ruled() {
+        // given: a user-ruled --reject road with a --revisit human re-check (not a test tripwire)
+        let r = repo();
+
+        // when: the decision is captured
+        let e = run(
+            &r,
+            Some("keep Redis out"),
+            &s(&[
+                "--reject",
+                "Redis: a new infra dependency",
+                "--revisit",
+                "Q3 infra review",
+                "--authority",
+                "user-ruled",
+                "--blame",
+                "Wang Yu",
+            ]),
+        );
+
+        // then: refused — a closed road is not re-confirmed by a human re-check; only a structural tripwire
         assert!(e.is_err());
     }
 

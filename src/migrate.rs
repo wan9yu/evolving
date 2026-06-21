@@ -569,6 +569,33 @@ pub fn backfill(
                 }
             }
         }
+        // A rejected-road TRIPWIRE (a Test check on a rejected: road) is a GATING capability, so the
+        // canonical door admits it under the SAME authoring rule decide/guard enforce: the decision
+        // must be authority=user-ruled (a human's deliberate closed-road ruling) AND the check must
+        // carry a counter-test (no harvested/non-falsifiable rejected-road tripwire — stricter than
+        // the general harvested gate above, which lets imported history harvest a chosen ground). This
+        // makes the user-ruled-only rule STRUCTURAL across every producer, closing the bypass where a
+        // hand-crafted canonical line slips a rejected-road check past ground_from_value's permissive
+        // parse. (verify stays permissive at rest: authority is mutable via `ev correct`, so a later
+        // re-tag must not retroactively invalidate a legitimately-authored tripwire.)
+        for g in &r.grounds {
+            if g.supports.starts_with("rejected:") {
+                if let Some(crate::tick::Check::Test { counter_test, .. }) = &g.check {
+                    if authority.as_deref() != Some("user-ruled") {
+                        return Err(format!(
+                            "source {:?}: a rejected road can carry a tripwire test only when authority=user-ruled",
+                            r.source_key
+                        ));
+                    }
+                    if counter_test.is_none() {
+                        return Err(format!(
+                            "source {:?}: a rejected-road tripwire requires a counter-test (no harvested tripwire)",
+                            r.source_key
+                        ));
+                    }
+                }
+            }
+        }
         if dry_run {
             // The id this record WOULD take at the prospective parent (no write). held_since is
             // non-hashed, so this matches the id `append` computes on a real run — only the real

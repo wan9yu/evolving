@@ -145,9 +145,15 @@ Exactly **one** of `{positional decision, --from-git}` is allowed:
 - **Empty decision** → `decision text is empty`.
 - **R2 — revisit XOR test.** A single ground cannot be both a Person re-check and a Test:
   `a ground cannot be both --revisit and --assume-test (R2)`.
-- **A rejected road carries no check.** Attaching `--revisit` or `--assume-test` to a
-  `--reject` ground →
-  `a road-not-taken (rejected) ground cannot carry a check`.
+- **Rejected roads carry no check by default; a user-ruled rejected road may carry a falsifiable
+  tripwire.** A human re-check (`--revisit`) on a `--reject` ground is **always** refused. A test
+  binding (`--assume-test`) on a `--reject` ground is refused *unless* the decision carries
+  `--authority user-ruled` (capability A — the tripwire lift), and a `--counter-test` is still
+  required (no harvested rejected-road tripwire) →
+  `a rejected road can carry a tripwire test only when the decision is --authority user-ruled`
+  (or `a road-not-taken (rejected) ground cannot carry a human re-check` for `--revisit`).
+  The tripwire binds only a **structural** token; a prose re-walk with no token (e.g. #1194's
+  milestone re-assignment) has nothing to bind and stays surface-only — it is **not** caught.
 - **No vacuous test binding.** `--assume-test` without `--counter-test` →
   `a test binding requires --counter-test (no vacuous binding)`.
 - **A test binding needs full liveness.** A test binding missing a platform, trigger, or
@@ -261,7 +267,7 @@ ev guard "<selector>" <id> [<target>] \
 | `--surface` | a surface | yes (≥1) | Liveness surfaces. Repeatable. |
 | `--verified-at-sha` | 40 lowercase hex | no | Commit the test was verified at; defaults to `git rev-parse HEAD`. |
 | `--blame` | a name | no | Author; defaults to `git config user.name`. |
-| `--authority` | `user-ruled` \| `agent-disposable` | no | A declared (non-hashed) authority tag set on the child tick, surfaced by `reopen` / `show` / `list` / `brief`. An out-of-vocabulary value is refused. |
+| `--authority` | `user-ruled` \| `agent-disposable` | no | A declared (non-hashed) authority tag set on the child tick, surfaced by `reopen` / `show` / `list` / `brief`. **Required (`user-ruled`) when binding a test to a rejected road** (capability A — the tripwire must be user-ruled). An out-of-vocabulary value is refused. |
 
 **Target resolution:** with one unbound ground, `target` may be omitted. With more than
 one, it is required — `more than one unbound ground — name the target (claim or index)`.
@@ -276,8 +282,10 @@ it is refused — `no unbound ground to guard`.
   `guard can only amend the current HEAD decision; <id> is not HEAD (<head>)`.
 - **A human re-check stays human (R2).** A Person-checked ground cannot be force-bound to a
   test → `a human-rechecked ground cannot carry a test (R2 hard error)`.
-- **A rejected road carries no check.** →
-  `a road-not-taken (rejected) ground cannot carry a test`.
+- **Rejected roads carry no test by default; a user-ruled rejected road may carry a tripwire.**
+  Binding a test to a `--reject` ground is refused *unless* the child carries `--authority
+  user-ruled` (capability A); the counter-test stays required (no harvested rejected-road tripwire) →
+  `a rejected road can carry a tripwire test only when guarded with --authority user-ruled`.
 - **Already bound.** A ground that already has a check → `ground already has a check`.
 - **No vacuous binding.** Empty `--counter-test` →
   `a test binding requires a counter-test (no vacuous binding)`.
@@ -396,6 +404,9 @@ The same refusals `ev verify` enforces at rest are applied at the door, so a mal
 never lands:
 
 - a `C` / `D` (detect-only) decision may carry **no** runnable Test check;
+- a **rejected-road Test check** (a tripwire) is allowed **only** when `authority=user-ruled`
+  **and** a `counter_test` is present — the same rule as `ev decide` / `ev guard` (capability A),
+  so the user-ruled-only rule is structural across every producer;
 - a **harvested** check (a Test with no counter-test) is allowed **only** for
   `provenance=imported` — a fresh `agent-proposed` Test binding must carry a counter-test and
   full liveness, exactly like `ev decide` / `ev guard`;
@@ -725,9 +736,12 @@ platform is attested (the cross-platform / audit default), so a platform with no
 `green`, `red`, `gray->red`, `not-run`, `stale`, `unproven`, `silently-unbound`, `exempt`,
 `memo`. Each is a fact; none outranks another (`unproven` = `ev check --run` ran the
 counter-test and it did not flip — a vacuous check). **`memo`** is the non-gating label a
-not-green verdict takes on a **`C`/`D`-jurisdiction** (detect-only) decision: the row still
-prints, naming the decision, but it can never trip `--exit-on-red` — a structural guarantee
-(see [concepts.md](concepts.md)), the sibling of `exempt`.
+not-green verdict takes in two structural cases: a **`C`/`D`-jurisdiction** (detect-only)
+decision, *or* an **`agent-proposed`** tick (capability B — LOCK 3: an agent cannot author a
+gating rule; only a named human ratifies one). In both cases the row still prints, naming the
+decision, but it can never trip `--exit-on-red` — a structural guarantee (see
+[concepts.md](concepts.md)), the sibling of `exempt`. The agent-proposed case also protects the
+tripwire: an agent-authored tripwire cannot gate.
 
 **Harvested rows.** A Test binding whose `counter_test` is **absent** (a *harvested* binding
 from `ev migrate`) is evaluated exactly as any other — a passing harvested test still reads
@@ -737,8 +751,8 @@ from `ev migrate`) is evaluated exactly as any other — a passing harvested tes
 counts the debt. Run `ev guard` to add a counter-test and prove falsifiability.
 
 **Exit code:** `0` normally; `1` only under `--exit-on-red` when any ground is not green
-(`n/a`, `exempt`, and `memo` do not count), or when there is no store / the store cannot be
-read.
+(`n/a`, `exempt`, and `memo` do not count — including any agent-proposed ground, which is mapped
+to `memo`), or when there is no store / the store cannot be read.
 
 **Output (stdout / stderr):**
 

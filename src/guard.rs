@@ -74,8 +74,21 @@ pub fn run(repo: &Path, a: GuardArgs) -> Result<Tick, String> {
     if let Some(Check::Person { .. }) = g.check {
         return Err("a human-rechecked ground cannot carry a test (R2 hard error)".into());
     }
-    if g.supports.starts_with("rejected:") {
-        return Err("a road-not-taken (rejected) ground cannot carry a test".into());
+    // Validate authority FIRST so the rejected-road tripwire gate below reads a vetted value (and an
+    // out-of-vocab authority fails loudly rather than silently failing the user-ruled comparison).
+    if let Some(val) = &a.authority {
+        crate::capture::validate_authority(val)?;
+    }
+    // 0.1.8: a rejected road (closed by a ruling) may be guarded with a falsifiable tripwire, but
+    // ONLY when the binding declares --authority user-ruled (the human's deliberate closed-road call).
+    // Mirrors capture.rs build_ground; the counter-test stays required below (no harvested tripwire).
+    // provenance is hard-stamped human-now on the child (line below), so a guard can never create an
+    // agent-proposed gating tripwire.
+    if g.supports.starts_with("rejected:") && a.authority.as_deref() != Some("user-ruled") {
+        return Err(
+            "a rejected road can carry a tripwire test only when guarded with --authority user-ruled"
+                .into(),
+        );
     }
     if g.check.is_some() {
         return Err("ground already has a check".into());
@@ -87,9 +100,6 @@ pub fn run(repo: &Path, a: GuardArgs) -> Result<Tick, String> {
         return Err(
             "a test binding requires at least one platform, triggered-by, and surface".into(),
         );
-    }
-    if let Some(val) = &a.authority {
-        crate::capture::validate_authority(val)?;
     }
     let verified_at_sha = crate::capture::resolve_sha(repo, &a.verified_at_sha)?;
     let blame = crate::capture::resolve_blame(repo, a.blame)?;
@@ -287,7 +297,7 @@ mod tests {
     }
 
     #[test]
-    fn guard_should_refuse_the_target_when_the_ground_is_a_rejected_road() {
+    fn guard_should_refuse_a_rejected_road_tripwire_when_authority_is_absent() {
         // given: a HEAD tick whose only ground is a rejected road
         let p = repo_with_unbound().0;
         let t = crate::capture::run(
@@ -300,10 +310,41 @@ mod tests {
         )
         .unwrap();
 
-        // when: that rejected ground is guarded with a test
+        // when: that rejected ground is guarded with a test but NO --authority user-ruled
         let e = run(&p, args("pytest x", &t.id, Some("y")));
 
-        // then: it is refused
+        // then: it is refused — a rejected-road tripwire needs --authority user-ruled
         assert!(e.is_err());
+    }
+
+    #[test]
+    fn guard_should_bind_a_tripwire_to_a_rejected_road_when_authority_is_user_ruled() {
+        // given: a HEAD tick whose only ground is a rejected road (closed by a human ruling)
+        let p = repo_with_unbound().0;
+        let t = crate::capture::run(
+            &p,
+            Some("d"),
+            &["--reject", "x: y", "--blame", "Wang Yu"]
+                .iter()
+                .map(|x| x.to_string())
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+
+        // when: that rejected ground is guarded with a falsifiable tripwire AND --authority user-ruled
+        let mut a = args("pytest x", &t.id, Some("y"));
+        a.authority = Some("user-ruled".into());
+        let child = run(&p, a).expect("a user-ruled rejected-road tripwire binds");
+
+        // then: a child is written and the closed road now carries a test tripwire
+        assert_eq!(child.parent_id, t.id);
+        let g = child
+            .grounds
+            .iter()
+            .find(|g| g.supports.starts_with("rejected:"))
+            .expect("a rejected road");
+        assert!(matches!(g.check, Some(Check::Test { .. })));
+        // and the child is a fresh human act (provenance human-now), so it can gate
+        assert_eq!(child.provenance, None);
     }
 }

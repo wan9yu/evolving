@@ -325,6 +325,18 @@ fn live_ctx(
     }
 }
 
+/// One printed check row, captured structurally so the print stage can render it two ways: today's
+/// exact tab-separated bytes (legacy / non-TTY / `--plain`) or the rich grammar (a colour TTY). The
+/// `class` carries the colour/glyph + the gating/green/non-gating tally bucket.
+struct CheckRow {
+    label: String,
+    class: crate::render::Class,
+    id: String,
+    decision: String,
+    claim: String,
+    detail: String,
+}
+
 pub fn check(
     repo: &Path,
     exit_on_red: bool,
@@ -332,7 +344,9 @@ pub fn check(
     platform: &str,
     offline: bool,
     attest: Vec<String>,
+    painter: crate::render::Painter,
 ) -> ExitCode {
+    use crate::render::{class_of, Class};
     use crate::verdict::{verdict_for, Verdict};
     let store = Store::at(repo);
     if !store.exists() {
@@ -432,7 +446,7 @@ pub fn check(
         Some(attest)
     };
     let ctx = live_ctx(&store, config.staleness_days, live_origin, attest);
-    let mut rows: Vec<String> = Vec::new();
+    let mut rows: Vec<CheckRow> = Vec::new();
     let mut any_not_green = false;
     // Harvested-binding honesty debt: N test bindings carry no counter-test (counter_test None) out
     // of M total test bindings. Surfaced as a trailing line so the missing falsifiability proof is
@@ -510,11 +524,14 @@ pub fn check(
                         None,
                     );
                 }
-                rows.push(format!(
-                    "{}\t{filename}\t{:?}\t({detail})",
-                    v.label(),
-                    g.claim
-                ));
+                rows.push(CheckRow {
+                    label: v.label().to_string(),
+                    class: class_of(&v),
+                    id: filename.clone(),
+                    decision: t.decision.clone(),
+                    claim: g.claim.clone(),
+                    detail,
+                });
             }
             verdicts.push((g, v));
         }
@@ -544,24 +561,63 @@ pub fn check(
         );
     }
 
+    let harvested_note = format!(
+        "harvested-unproven: {harvested_unproven} of {total_test_bindings} test bindings have no counter-test (run ev guard to add one)"
+    );
+    // under --run the verdict itself carries falsifiability (an `unproven` row is a counter-test that
+    // did not flip); without it, point at the proof step rather than implying one already happened.
+    let run_note =
+        "note: run `ev check --run` to execute each counter-test and prove its falsifiability";
     if rows.is_empty() {
         println!("no test-bound grounds to check");
-    } else {
+    } else if painter.rich {
+        // The unified grammar: verdict glyph + the verdict word as the only coloured token, the
+        // decision name bold (the headline), the full 12-hex id weighted, the claim + detail dim.
         for r in &rows {
-            println!("{r}");
-        }
-        // The harvested-binding debt: how many of the test bindings have no counter-test (so their
-        // falsifiability is unproven). Pointed at `ev guard`, which is how a counter-test is added.
-        if harvested_unproven > 0 {
             println!(
-                "harvested-unproven: {harvested_unproven} of {total_test_bindings} test bindings have no counter-test (run ev guard to add one)"
+                "{} {}  {}  {}  {}",
+                painter.verdict_glyph(r.class),
+                painter.class(&r.label, r.class),
+                painter.name(&format!("{:?}", r.decision)),
+                painter.id(&r.id),
+                painter.meta(&format!("{:?} · {}", r.claim, r.detail)),
+            );
+        }
+        // A plain COUNT (never a score): gating / green / non-gating, by meaning-class.
+        let n = |c: Class| rows.iter().filter(|r| r.class == c).count();
+        println!(
+            "{}",
+            painter.meta(&format!(
+                "{} gating · {} green · {} non-gating",
+                n(Class::Attention),
+                n(Class::Clear),
+                n(Class::Informational)
+            ))
+        );
+        // Honest debt stays at attention weight — never rendered quieter than a green (no false-green).
+        if harvested_unproven > 0 {
+            println!("{}", painter.class(&harvested_note, Class::Attention));
+        }
+        // Signpost the resurface zoom when something gates (a red invites a re-decide, not a klaxon).
+        if n(Class::Attention) > 0 {
+            println!(
+                "{}",
+                painter.meta("tip: ev why <selector> · ev reopen <id> — resurface a red")
             );
         }
         if !run {
-            // under --run the verdict itself carries falsifiability (an `unproven` row is a
-            // counter-test that did not flip); without it, point at the proof step rather than
-            // implying one already happened.
-            println!("note: run `ev check --run` to execute each counter-test and prove its falsifiability");
+            println!("{}", painter.meta(run_note));
+        }
+    } else {
+        // Legacy: today's exact bytes (a pipe / redirect / NO_COLOR / --plain / CI never drifts).
+        for r in &rows {
+            println!("{}\t{}\t{:?}\t({})", r.label, r.id, r.claim, r.detail);
+        }
+        if harvested_unproven > 0 {
+            println!("{harvested_note}");
+        }
+        if !run {
+            println!("{run_note}");
         }
     }
     if exit_on_red && any_not_green {
@@ -864,9 +920,18 @@ pub fn list(repo: &Path) -> ExitCode {
 /// `"rejected:"`). Those are the rulings a fresh agent must not re-walk, so they pin above the cap.
 /// Detectable straight from the tick — 0-network, no receipts, no git.
 fn load_bearing(t: &Tick) -> bool {
-    t.grounds
-        .iter()
-        .any(|g| g.supports.starts_with("rejected:"))
+    rejected_roads(t).next().is_some()
+}
+
+/// The roads a decision closed — its `rejected:` grounds as `(option, why)` pairs. THE single place
+/// the `rejected:` ground convention is read: `load_bearing`, `brief_json`, and both brief text forms
+/// go through it, so the load-bearing contract lives in exactly one spot.
+fn rejected_roads(t: &Tick) -> impl Iterator<Item = (&str, &str)> {
+    t.grounds.iter().filter_map(|g| {
+        g.supports
+            .strip_prefix("rejected:")
+            .map(|opt| (opt, g.claim.as_str()))
+    })
 }
 
 /// Boot-read: the live user-ruled decisions and the roads they rejected. A near-zero-cost,
@@ -893,20 +958,14 @@ fn brief_json(kept: &[(String, Tick)], total: usize, dropped_lb: usize) -> Strin
     let decisions: Vec<Value> = kept
         .iter()
         .map(|(_, t)| {
-            let rejected_roads: Vec<Value> = t
-                .grounds
-                .iter()
-                .filter_map(|g| {
-                    g.supports
-                        .strip_prefix("rejected:")
-                        .map(|option| json!({ "option": option, "claim": g.claim }))
-                })
+            let roads: Vec<Value> = rejected_roads(t)
+                .map(|(option, claim)| json!({ "option": option, "claim": claim }))
                 .collect();
             let mut d = json!({
                 "id": t.id,
                 "decision": t.decision,
                 "load_bearing": load_bearing(t),
-                "rejected_roads": rejected_roads,
+                "rejected_roads": roads,
             });
             // source_ref is genuinely optional — present only when the producer supplied one.
             if let (Some(sr), Some(obj)) = (&t.source_ref, d.as_object_mut()) {
@@ -936,7 +995,12 @@ fn brief_json(kept: &[(String, Tick)], total: usize, dropped_lb: usize) -> Strin
     )
 }
 
-pub fn brief(repo: &Path, limit: Option<usize>, json: bool) -> ExitCode {
+pub fn brief(
+    repo: &Path,
+    limit: Option<usize>,
+    json: bool,
+    painter: crate::render::Painter,
+) -> ExitCode {
     let store = Store::at(repo);
     if !store.exists() {
         eprintln!("error: no .evolving/ store here — run `ev init` first");
@@ -986,22 +1050,50 @@ pub fn brief(repo: &Path, limit: Option<usize>, json: bool) -> ExitCode {
         println!("no user-ruled decisions");
         return ExitCode::SUCCESS;
     }
-    for (_id, t) in &kept {
-        println!("{}  [user-ruled]", t.decision);
-        for g in &t.grounds {
-            if let Some(option) = g.supports.strip_prefix("rejected:") {
-                println!("  rejected {option}: {}", g.claim);
-            }
-        }
-    }
-    if total > n {
-        let dropped = total - n;
+    let footer = |dropped: usize| {
         let lb_clause = if dropped_lb > 0 {
             format!(", {dropped_lb} with rejected roads")
         } else {
             String::new()
         };
-        println!("… {dropped} more user-ruled decision(s){lb_clause} — `ev list` for all");
+        format!("… {dropped} more user-ruled decision(s){lb_clause} — `ev list` for all")
+    };
+    if painter.rich {
+        // Masthead: the count of settled rulings (the 事前 boot-read — "what's settled, don't re-walk").
+        // All brief entries are user-ruled + non-agent-proposed by brief_visible, so all solid ●.
+        println!(
+            "{} {}",
+            painter.prov_glyph(false),
+            painter.name(&format!("{total} user-ruled decisions"))
+        );
+        for (id, t) in &kept {
+            println!(
+                "{} {}  {}",
+                painter.prov_glyph(false),
+                painter.name(&format!("{:?}", t.decision)),
+                painter.id(id)
+            );
+            for (option, claim) in rejected_roads(t) {
+                println!(
+                    "    {}",
+                    painter.meta(&format!("rejected {option}: {claim}"))
+                );
+            }
+        }
+        if total > n {
+            println!("{}", painter.meta(&footer(total - n)));
+        }
+    } else {
+        // Legacy: today's exact bytes.
+        for (_id, t) in &kept {
+            println!("{}  [user-ruled]", t.decision);
+            for (option, claim) in rejected_roads(t) {
+                println!("  rejected {option}: {claim}");
+            }
+        }
+        if total > n {
+            println!("{}", footer(total - n));
+        }
     }
     ExitCode::SUCCESS
 }

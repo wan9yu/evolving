@@ -3,6 +3,12 @@ use clap::{Parser, Subcommand};
 #[derive(Parser)]
 #[command(name = "ev", version, about = "git for decisions")]
 struct Cli {
+    /// When to colour the human output: auto (a colour TTY only) · always (force, e.g. for `| less -R`) · never.
+    #[arg(long, value_enum, default_value = "auto", global = true)]
+    color: ev::render::ColorChoice,
+    /// Emit today's plain tab-separated bytes — no colour, glyphs, or aligned layout (same as a pipe).
+    #[arg(long, short = 'p', global = true)]
+    plain: bool,
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -148,12 +154,15 @@ enum Cmd {
 fn main() -> std::process::ExitCode {
     let cli = Cli::parse();
     let repo = std::env::current_dir().expect("cwd");
+    // Resolve the render decision ONCE (flags + env + stdout-is-a-TTY); commands that print decision
+    // rows take it. The machine path (--json/events/state) never receives it.
+    let painter = ev::render::Painter::resolve(cli.color, cli.plain);
     match cli.cmd {
         Cmd::Init => ev::cmd::init(&repo),
         Cmd::Show { id } => ev::cmd::show(&repo, &id),
         Cmd::List => ev::cmd::list(&repo),
         Cmd::Log => ev::cmd::log(&repo),
-        Cmd::Brief { limit, json } => ev::cmd::brief(&repo, limit, json),
+        Cmd::Brief { limit, json } => ev::cmd::brief(&repo, limit, json, painter),
         Cmd::Verify { self_test } => ev::cmd::verify_cmd(&repo, self_test),
         Cmd::Decide { decision, args } => ev::cmd::decide(&repo, decision.as_deref(), &args),
         Cmd::Guard {
@@ -188,7 +197,7 @@ fn main() -> std::process::ExitCode {
             platform,
             offline,
             attest,
-        } => ev::cmd::check(&repo, exit_on_red, run, &platform, offline, attest),
+        } => ev::cmd::check(&repo, exit_on_red, run, &platform, offline, attest, painter),
         Cmd::Migrate {
             sources,
             dry_run,

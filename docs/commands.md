@@ -11,6 +11,7 @@ sections quote the real strings.
 For the model behind these commands — Ticks, Grounds, Checks, identity, and the refusals —
 see [concepts.md](concepts.md).
 
+- [Global flags — output rendering](#global-flags--output-rendering)
 - [`ev init`](#ev-init)
 - [`ev decide`](#ev-decide)
 - [`ev guard`](#ev-guard)
@@ -24,6 +25,23 @@ see [concepts.md](concepts.md).
 - [`ev brief`](#ev-brief)
 - [`ev list`](#ev-list)
 - [`ev log`](#ev-log)
+
+---
+
+## Global flags — output rendering
+
+Two flags apply to every command (placeable anywhere on the line):
+
+| Flag | Value | Effect |
+| --- | --- | --- |
+| `--color` | `auto` (default) \| `always` \| `never` | When to render the rich human view (colour, glyphs, the unified line grammar). `auto` colours only a TTY; `always` forces it (e.g. for `\| less -R`); `never` is plain. |
+| `--plain` / `-p` | — | Force the plain output — no colour, glyphs, or aligned layout (the same bytes a pipe gets). Wins over `--color=always`. |
+
+**The two-channel contract:** the rich view appears **only** on a colour TTY (or `--color=always`). A
+pipe, a redirect, CI, `NO_COLOR`, `--color=never`, and `--plain` all emit the **plain tab-separated
+bytes** — so `| grep`, `> file`, and a CI text-scraper get stable, escape-free output. The machine path
+(`--json`, `events.jsonl`, `state.json`) is never styled. Glyphs degrade to ASCII under `EV_ASCII`;
+truecolor (vs the named-ANSI default, which adapts to the terminal theme) is opt-in via `EV_TRUECOLOR`.
 
 ---
 

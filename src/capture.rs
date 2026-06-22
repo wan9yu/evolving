@@ -553,8 +553,8 @@ pub fn propose(repo: &Path, decision: Option<&str>, args: &[String]) -> Result<T
             "ev propose records an UNBOUND proposal — {f} is not allowed here; a check + authority attach when a human runs `ev ratify`"
         ));
     }
-    // Resolve the agent identity WITHOUT ever reading git config: pass an explicit `--blame` through
-    // to the shared grammar when the caller gave none, so `resolve_blame`'s git fallback is unreachable.
+    // Inject an explicit `--blame` when none was given, so `assemble`'s `resolve_blame` takes the
+    // override branch and its git-config fallback is structurally unreachable (the rule is in the rustdoc).
     let mut args = args.to_vec();
     if !args.iter().any(|a| a == "--blame") {
         let agent_id = std::env::var("EV_AGENT_ID")
@@ -567,6 +567,10 @@ pub fn propose(repo: &Path, decision: Option<&str>, args: &[String]) -> Result<T
     let mut d = assemble(repo, decision, &args)?;
     // FORCE the trust fields — the flags cannot move these. provenance=agent-proposed makes it inert
     // (LOCK 3) and brief-invisible; authority=agent-disposable marks it the agent's until ratified.
+    // This is the one write site that sets them post-assemble (bypassing assemble's validate), so pin
+    // the literals to the closed vocabularies — a future vocab change trips the test build here.
+    debug_assert!(crate::tick::validate_provenance("agent-proposed").is_ok());
+    debug_assert!(validate_authority("agent-disposable").is_ok());
     d.provenance = Some("agent-proposed".into());
     d.authority = Some("agent-disposable".into());
     append(repo, d)

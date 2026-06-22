@@ -276,8 +276,9 @@ its source *faithfully* — a mis-parse is a producer bug `ev` cannot catch.)
 A migrate is **idempotent** — run it twice and the second pass writes nothing (records are
 deduped on the durable key derived from their `source_ref` / round token). It **keeps the
 chain**: a back-dated mid-chain insert is reported as *re-linked*, never rewritten. On this
-import path a record's **`provenance` defaults to `imported`** (history). And it **never invents
-an author** — a record with no author and no `--blame` fallback is reported as a source-only gap
+import path the convenience extractor kinds default a record's `provenance` to `imported` (history),
+while a **`canonical`** record must **declare** it (no default — backfill is `imported`, a live
+proposal is `agent-proposed`). And it **never invents an author** — a record with no author and no `--blame` fallback is reported as a source-only gap
 (R5 stays intact), not imported with a fabricated name:
 
 ```sh

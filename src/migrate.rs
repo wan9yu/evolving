@@ -206,7 +206,23 @@ pub fn canonical_records(text: &str) -> Result<Vec<MigrationRecord>, String> {
         };
         let authority = opt_tag("authority", validate_authority)?;
         let jurisdiction = opt_tag("jurisdiction", validate_jurisdiction)?;
-        let provenance = opt_tag("provenance", validate_provenance)?;
+        // REQUIRED on a canonical record: the producer always knows whether it is emitting backfill
+        // (`imported`) or a live proposal (`agent-proposed`), so it must say so. This closes the
+        // silent-failure footgun where an omitted provenance defaulted to `imported` — inert: not
+        // ratifiable, absent from `brief` AND `pending`, a record lost between proposal and ruling.
+        // The backfill EXTRACTOR kinds (gitlog / to-human / decisions-immutable / escalation) keep
+        // their inherent `imported` default — they parse documents that cannot declare provenance.
+        let provenance = match obj.get("provenance").and_then(|x| x.as_str()) {
+            Some(p) => {
+                validate_provenance(p).map_err(|e| format!("canonical line {n}: {e}"))?;
+                Some(p.to_string())
+            }
+            None => {
+                return Err(format!(
+                    "canonical line {n}: a canonical record must declare provenance (imported | agent-proposed | human-now) — a live proposal is agent-proposed; backfill is imported"
+                ))
+            }
+        };
         let source_ref = match obj.get("source_ref") {
             None => None,
             Some(rv) => {
@@ -838,7 +854,7 @@ this paragraph explains at length why redis was rejected, in prose
         // a minimal valid ev-decision-intake line (carrying a source_ref so it has a durable dedup
         // key), with room to splice in extra fields. Tests that OVERRIDE source_ref build inline.
         format!(
-            "{{\"kind\":\"ev-decision-intake\",\"decision\":\"no Redis\",\"grounds\":[],\"source_ref\":\"R1\"{extra}}}"
+            "{{\"kind\":\"ev-decision-intake\",\"decision\":\"no Redis\",\"grounds\":[],\"source_ref\":\"R1\",\"provenance\":\"imported\"{extra}}}"
         )
     }
 
@@ -921,7 +937,7 @@ this paragraph explains at length why redis was rejected, in prose
     fn canonical_reader_should_take_source_ref_verbatim_without_resniffing_tokens() {
         // given: a line whose source_ref is an opaque key and whose observe carries a DIFFERENT token
         let text = "{\"kind\":\"ev-decision-intake\",\"decision\":\"no Redis\",\"grounds\":[],\
-\"observe\":\"see R2289\",\"source_ref\":\"ticket-42\"}";
+\"observe\":\"see R2289\",\"source_ref\":\"ticket-42\",\"provenance\":\"imported\"}";
 
         // when: the canonical reader parses it
         let recs = canonical_records(text).expect("valid");
@@ -935,7 +951,7 @@ this paragraph explains at length why redis was rejected, in prose
     fn canonical_reader_should_key_a_structured_source_ref_by_its_deterministic_json() {
         // given: a line whose source_ref is a STRUCTURED object (richer than a string)
         let text = "{\"kind\":\"ev-decision-intake\",\"decision\":\"no Redis\",\"grounds\":[],\
-\"source_ref\":{\"round\":\"R1\",\"sprint\":\"S7\"}}";
+\"source_ref\":{\"round\":\"R1\",\"sprint\":\"S7\"},\"provenance\":\"imported\"}";
 
         // when: the canonical reader parses it
         let recs = canonical_records(text).expect("valid");
@@ -964,7 +980,7 @@ this paragraph explains at length why redis was rejected, in prose
     fn canonical_reader_should_reject_a_record_with_no_source_ref_and_no_observe_token() {
         // given: a canonical line with NO source_ref and an observe carrying NO round/#issue token
         let text = "{\"kind\":\"ev-decision-intake\",\"decision\":\"x\",\"grounds\":[],\
-\"observe\":\"no token here\"}";
+\"provenance\":\"imported\",\"observe\":\"no token here\"}";
 
         // when: the canonical reader parses it
         let result = canonical_records(text);
@@ -974,6 +990,22 @@ this paragraph explains at length why redis was rejected, in prose
             result.is_err(),
             "an un-keyable record must be refused at the door"
         );
+    }
+
+    #[test]
+    fn canonical_reader_should_reject_a_record_with_no_provenance() {
+        // given: a canonical record that OMITS provenance (the silent-import footgun, now closed) —
+        // it must declare backfill (imported) vs a live proposal (agent-proposed), never default.
+        let text =
+            "{\"kind\":\"ev-decision-intake\",\"decision\":\"x\",\"grounds\":[],\"source_ref\":\"R9\"}";
+
+        // when/then: it is refused at the door with a clear message
+        let result = canonical_records(text);
+        assert!(
+            result.is_err(),
+            "a canonical record must declare provenance"
+        );
+        assert!(format!("{result:?}").contains("must declare provenance"));
     }
 
     #[test]

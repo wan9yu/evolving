@@ -272,9 +272,10 @@ migrate / canonical-intake boundary. `ev decide` and `ev guard` **always author 
 unconditionally** — there is no `--provenance` flag, and the fresh-authorship path never reads
 a caller-supplied value. This is what makes the field sound: an importer can **never** launder
 a forbidden op by claiming `provenance=imported` on a freshly authored decision, because the
-fresh path can never write `imported`. `ev migrate` stamps `imported` by default (history); an
-explicit value on a canonical record wins (a live runner may emit `agent-proposed` /
-`human-now`).
+fresh path can never write `imported`. On `ev migrate`, the convenience extractor kinds stamp
+`imported` by default (history); a **`canonical`** record must **declare** its provenance
+explicitly (no default — an omitted provenance is refused), so a live runner emits `agent-proposed`
+and a backfill adapter emits `imported`.
 
 **The R5 provenance partition.** Only **one** refusal arm is partitioned by provenance: the R5
 **lexical forbidden-op lint** (`auto-close` / `auto-prune` / `self-stop` / `auto-inherit`).

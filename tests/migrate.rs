@@ -420,7 +420,7 @@ const CANONICAL_RULING: &str = "{\"kind\":\"ev-decision-intake\",\
 \"decision\":\"rate-limit lives at the edge proxy\",\
 \"grounds\":[{\"claim\":\"the edge sees every request first\",\"supports\":\"chosen\"},\
 {\"claim\":\"the app tier double-counts\",\"supports\":\"rejected:app-tier\"}],\
-\"blame\":\"Wang Yu\",\"authority\":\"user-ruled\",\"source_ref\":\"R1043\"}\n";
+\"blame\":\"Wang Yu\",\"authority\":\"user-ruled\",\"provenance\":\"imported\",\"source_ref\":\"R1043\"}\n";
 
 #[test]
 fn migrate_should_ingest_a_canonical_jsonl_source_through_the_shared_backfill() {
@@ -531,7 +531,7 @@ fn brief_should_exclude_an_agent_proposed_ruling_even_when_it_arrives_user_ruled
 fn migrate_canonical_should_report_a_source_only_gap_when_a_line_has_no_blame_and_no_fallback() {
     // given: a canonical line carrying NO blame, ingested WITHOUT a --blame fallback
     let r = repo();
-    let no_author = "{\"kind\":\"ev-decision-intake\",\"decision\":\"x\",\"grounds\":[],\"source_ref\":\"R7\"}\n";
+    let no_author = "{\"kind\":\"ev-decision-intake\",\"decision\":\"x\",\"grounds\":[],\"provenance\":\"imported\",\"source_ref\":\"R7\"}\n";
     let src = write_source(&r, "canonical", "intake.jsonl", no_author);
 
     // when: migrate ingests it with no author available
@@ -649,8 +649,10 @@ fn canonical_rejected_tripwire(extra_tags: &str, counter: &str) -> String {
 fn ingest_should_refuse_a_rejected_road_tripwire_when_authority_is_not_user_ruled() {
     // given: a canonical rejected-road tripwire carrying a counter-test but NO authority=user-ruled
     let r = repo();
-    let body =
-        canonical_rejected_tripwire("", ",\"counter_test\":\"grep -q redis pyproject.toml\"");
+    let body = canonical_rejected_tripwire(
+        ",\"provenance\":\"imported\"",
+        ",\"counter_test\":\"grep -q redis pyproject.toml\"",
+    );
     let src = write_source(&r, "canonical", "rw.jsonl", &body);
 
     // when: migrate ingests it
@@ -670,7 +672,7 @@ fn ingest_should_accept_a_rejected_road_tripwire_when_authority_is_user_ruled() 
     // given: a user-ruled canonical rejected-road tripwire carrying a counter-test
     let r = repo();
     let body = canonical_rejected_tripwire(
-        ",\"authority\":\"user-ruled\"",
+        ",\"authority\":\"user-ruled\",\"provenance\":\"imported\"",
         ",\"counter_test\":\"grep -q redis pyproject.toml\"",
     );
     let src = write_source(&r, "canonical", "rw.jsonl", &body);
@@ -728,27 +730,29 @@ fn ingest_should_refuse_a_c_jurisdiction_record_that_carries_a_test_check() {
 }
 
 #[test]
-fn migrate_canonical_should_default_provenance_to_imported_when_a_line_omits_it() {
-    // given: a canonical ruling that declares NO provenance (the migrate verb backfills history)
+fn migrate_canonical_should_refuse_a_line_that_omits_provenance() {
+    // given: a canonical ruling that declares NO provenance (the silent-import footgun — now closed).
+    // Previously this silently defaulted to `imported` (inert: not ratifiable, absent from brief AND
+    // pending). A canonical producer must now DECLARE backfill (imported) vs a live proposal
+    // (agent-proposed); only the convenience EXTRACTOR kinds keep the inherent imported default.
     let r = repo();
-    let src = write_source(&r, "canonical", "intake.jsonl", CANONICAL_RULING);
+    let no_prov = "{\"kind\":\"ev-decision-intake\",\"decision\":\"a ruling\",\"grounds\":[],\
+\"blame\":\"Wang Yu\",\"source_ref\":\"R-noprov\"}\n";
+    let src = write_source(&r, "canonical", "intake.jsonl", no_prov);
 
     // when: migrate imports it
-    assert!(run(&r, &["migrate", "--source", &src]).status.success());
+    let out = run(&r, &["migrate", "--source", &src]);
 
-    // then: the on-disk tick is stamped provenance=imported (so verify treats its text as transcribed)
-    let id = std::fs::read_dir(r.join(".evolving/ticks"))
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .map(|e| e.file_name().into_string().unwrap())
-        .find(|n| n.len() == 12)
-        .expect("one imported tick");
-    let raw = std::fs::read_to_string(r.join(".evolving/ticks").join(&id)).unwrap();
-    let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
-    assert_eq!(
-        v.get("provenance").and_then(|x| x.as_str()),
-        Some("imported"),
-        "an undeclared canonical import defaults to imported; tick was {v}"
+    // then: refused at the door (not silently defaulted), nothing written, with a clear message
+    assert!(
+        !out.status.success(),
+        "a canonical record omitting provenance must be refused, not silently imported"
+    );
+    assert_eq!(tick_count(&r), 0, "nothing is written on the refusal");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("must declare provenance"),
+        "the error names the missing provenance; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
     );
 }
 
@@ -761,7 +765,7 @@ fn reconcile_should_accept_a_canonical_source_and_report_the_capture_gap() {
 
     // and: a canonical source that ALSO declares an uncaptured ruling R9999
     let extra = "{\"kind\":\"ev-decision-intake\",\"decision\":\"a ruling never captured\",\
-\"grounds\":[],\"blame\":\"Wang Yu\",\"source_ref\":\"R9999\"}\n";
+\"grounds\":[],\"blame\":\"Wang Yu\",\"provenance\":\"imported\",\"source_ref\":\"R9999\"}\n";
     let against = write_source(
         &r,
         "canonical",
@@ -788,7 +792,7 @@ fn ingest_should_error_when_an_inline_jurisdiction_conflicts_with_the_jurisdicti
     // given: a canonical record declaring jurisdiction=C inline, and a map tagging the SAME key as D
     let r = repo();
     let body = "{\"kind\":\"ev-decision-intake\",\"decision\":\"x\",\"grounds\":[],\
-\"blame\":\"Wang Yu\",\"jurisdiction\":\"C\",\"source_ref\":\"R1043\"}\n";
+\"blame\":\"Wang Yu\",\"jurisdiction\":\"C\",\"provenance\":\"imported\",\"source_ref\":\"R1043\"}\n";
     let src = write_source(&r, "canonical", "intake.jsonl", body);
     let map = write_map(&r, "jurisdiction.map", "R1043 D\n");
 
@@ -813,7 +817,7 @@ fn ingest_should_let_an_inline_jurisdiction_agree_with_a_matching_map_entry() {
     // given: a canonical record declaring jurisdiction=C inline, and a map tagging the SAME key C too
     let r = repo();
     let body = "{\"kind\":\"ev-decision-intake\",\"decision\":\"x\",\"grounds\":[],\
-\"blame\":\"Wang Yu\",\"jurisdiction\":\"C\",\"source_ref\":\"R1043\"}\n";
+\"blame\":\"Wang Yu\",\"jurisdiction\":\"C\",\"provenance\":\"imported\",\"source_ref\":\"R1043\"}\n";
     let src = write_source(&r, "canonical", "intake.jsonl", body);
     let map = write_map(&r, "jurisdiction.map", "R1043 C\n");
 
@@ -968,8 +972,8 @@ fn migrate_should_not_silently_double_import_a_within_pass_duplicate_source_key(
     // given: TWO canonical records in ONE pass sharing source_key R555 but differing on authority
     // (the gitlog-None vs to-human-user-ruled collision the audit flagged) — neither yet in the store
     let r = repo();
-    let body = "{\"kind\":\"ev-decision-intake\",\"decision\":\"R555 ruling\",\"grounds\":[],\"blame\":\"Mac\",\"source_ref\":\"R555\"}\n\
-{\"kind\":\"ev-decision-intake\",\"decision\":\"R555 ruling\",\"grounds\":[],\"blame\":\"Mac\",\"authority\":\"user-ruled\",\"source_ref\":\"R555\"}\n";
+    let body = "{\"kind\":\"ev-decision-intake\",\"decision\":\"R555 ruling\",\"grounds\":[],\"blame\":\"Mac\",\"provenance\":\"imported\",\"source_ref\":\"R555\"}\n\
+{\"kind\":\"ev-decision-intake\",\"decision\":\"R555 ruling\",\"grounds\":[],\"blame\":\"Mac\",\"authority\":\"user-ruled\",\"provenance\":\"imported\",\"source_ref\":\"R555\"}\n";
     let src = write_source(&r, "canonical", "dup.jsonl", body);
 
     // when: migrate imports them

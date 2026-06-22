@@ -152,12 +152,14 @@ only a named human ratifies one.
 already have written down. The **primary intake** is the **Canonical Decision Intake Contract**
 (`--source canonical:<path.jsonl>`): one JSON object per line on the closed envelope
 `{kind:"ev-decision-intake", decision, observe?, grounds, blame?, authority?, jurisdiction?,
-source_ref?, provenance?}`. An adopter with a bespoke format writes a small adapter (any
+source_ref?, provenance}`. An adopter with a bespoke format writes a small adapter (any
 language) that parses *their* format and emits canonical JSONL — `ev` never sees the bespoke
 markdown — and `ev` re-validates every line through its own read-path validators on the way in
 (`ev` owns `id` / `parent_id`; the producer never supplies identity). The same JSONL a one-shot
 adapter emits is what a future live runner emits natively — same contract, two producers. On
-this path `provenance` defaults to `imported`. Four built-in convenience extractors handle
+this path **`provenance` is required** — declare `imported` for backfilled history or
+`agent-proposed` for a live proposal (no default; an omitted provenance is refused). Four built-in
+convenience extractors handle
 simple substrates: `--source <kind>:<path>` with kind ∈ `gitlog` / `to-human` /
 `decisions-immutable` / `escalation`, each harvesting **rulings** and **structured**
 roads-not-taken (`rejected: <opt>: <why>`) only — a prose reason is **never** NLP'd into a

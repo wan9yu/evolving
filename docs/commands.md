@@ -479,7 +479,7 @@ future live runner emit. The full spec — the closed envelope, the trust bounda
 gates, and writing an adapter — is in [migrating.md](migrating.md); the essentials:
 
 - **The closed envelope.** Each line's key set is exactly
-  `{kind, decision, observe?, grounds, blame?, authority?, jurisdiction?, source_ref?, provenance?}`.
+  `{kind, decision, observe?, grounds, blame?, authority?, jurisdiction?, source_ref?, provenance}`.
   `kind` MUST be the fixed string `"ev-decision-intake"`. An unknown `kind`, or **any** unknown
   envelope key, is a **hard loud failure** — the wire envelope is strict and does **not** get the
   on-disk forward-compat tolerance, so a mis-piped file cannot smuggle a field past ingest.
@@ -494,8 +494,14 @@ gates, and writing an adapter — is in [migrating.md](migrating.md); the essent
 - **`source_ref` is opaque.** Taken verbatim (a string) or carried whole (an object); `ev`
   derives only a dedup key from it and never re-sniffs `observe` for a token when `source_ref`
   is present.
-- **`provenance` defaults to `imported`.** On this import path a record that declares no
-  `provenance` is stamped `imported`; an explicit value (`agent-proposed` / `human-now`) wins.
+- **`provenance` is REQUIRED on a canonical record.** The producer always knows whether it is
+  emitting backfill (`imported`) or a live proposal (`agent-proposed` / `human-now`), so it must
+  declare it — there is **no default**, and a record that omits it is refused at the door (a
+  `canonical line <n>: a canonical record must declare provenance …` error). This closes the
+  silent-failure footgun where an omitted provenance defaulted to `imported` — inert: not
+  ratifiable, absent from `brief` AND `pending`. *(Only the convenience extractor kinds —
+  `gitlog` / `to-human` / `decisions-immutable` / `escalation` — keep an inherent `imported`
+  default, since they parse documents that cannot declare provenance.)*
 
 A worked record (one JSONL line, shown pretty):
 
@@ -594,10 +600,12 @@ means **`ev migrate` is no longer a clean "all-zeros = done" signal**: a non-zer
 count is a *correction pending*, and re-running the import will report it again until you resolve
 it with `ev correct`.
 
-On this import path a record's **`provenance` defaults to `imported`** (history) when it
-declares none; an explicit value on a canonical record wins. Fresh authorship can never reach
-here: `ev decide` / `ev guard` always stamp `human-now`, so a forbidden op can never be
-laundered as `imported` (see the provenance partition in [concepts.md](concepts.md)).
+On this import path the convenience **extractor** kinds (`gitlog` / `to-human` /
+`decisions-immutable` / `escalation`) default a record's **`provenance` to `imported`** (history)
+when it declares none; a **`canonical`** record must declare provenance explicitly (no default —
+see above). Fresh authorship can never reach here: `ev decide` / `ev guard` always stamp
+`human-now`, so a forbidden op can never be laundered as `imported` (see the provenance partition
+in [concepts.md](concepts.md)).
 
 ### Jurisdiction on import (`--jurisdiction-map <path>`)
 
@@ -692,7 +700,8 @@ derivable key, counted separately). `--against` accepts the same kinds as `--sou
 - failure (stderr): `error: <message>`.
 
 **Example** — ingest a canonical decision-intake stream emitted by an adapter (one line per
-decision; `provenance` defaults to `imported`), then re-run to confirm idempotency:
+decision, each declaring its `provenance` — `imported` for backfilled history, `agent-proposed`
+for a live proposal), then re-run to confirm idempotency:
 
 ```sh
 ev migrate --source canonical:decisions.jsonl --blame "Wang Yu"

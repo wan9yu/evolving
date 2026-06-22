@@ -51,7 +51,7 @@ single line):
 Each line's key set is **exactly**:
 
 ```
-{ kind, decision, observe?, grounds, blame?, authority?, jurisdiction?, source_ref?, provenance? }
+{ kind, decision, observe?, grounds, blame?, authority?, jurisdiction?, source_ref?, provenance }
 ```
 
 - `kind` — **required**, the fixed string `"ev-decision-intake"`. An unknown `kind`, or **any**
@@ -74,8 +74,11 @@ Each line's key set is **exactly**:
   knows the difference sets it at the edge).
 - `jurisdiction` — optional, `{A, B, C, D}`. `A`/`B` may gate; `C`/`D` are detect-only.
 - `source_ref` — optional; see [source_ref](#source_ref-the-dedup-key) below.
-- `provenance` — optional, `{imported, agent-proposed, human-now}`; see
-  [provenance](#provenance) below. Default on this import path is `imported`.
+- `provenance` — **required** on a canonical record, `{imported, agent-proposed, human-now}`; see
+  [provenance](#provenance) below. **No default** — the producer declares backfilled history
+  (`imported`) vs a live proposal (`agent-proposed`); an omitted provenance is refused at the door.
+  (Only the convenience extractor kinds default to `imported`, since they parse documents that
+  cannot declare it.)
 
 The contract carries **no `id`, no `parent_id`, no `held_since`, no `status`**. `ev` computes and
 stamps those itself at ingest (`parent_id = HEAD`; `held_since` = write-time; `status = "live"`;

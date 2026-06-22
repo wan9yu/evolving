@@ -614,6 +614,7 @@ pub fn backfill(
                 source_ref: source_ref.clone(),
                 provenance: provenance.clone(),
                 corrects: None,
+                ratifies: None,
             };
             let probe_id = compute_id(&probe);
             // Extend the running index so a later same-key record this pass routes into the skip arm.
@@ -636,8 +637,10 @@ pub fn backfill(
                 jurisdiction,
                 source_ref,
                 provenance,
-                // migrate/intake never authors a correction edge — `ev correct` is the sole writer.
+                // migrate/intake never authors a relation-overlay edge — `ev correct` and `ev ratify`
+                // are the sole writers of `corrects` / `ratifies` respectively.
                 corrects: None,
+                ratifies: None,
             },
         )?;
         // Extend the running index so a later same-key record this pass routes into the skip arm

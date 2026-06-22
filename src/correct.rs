@@ -95,6 +95,7 @@ pub fn run(repo: &Path, a: CorrectArgs) -> Result<Tick, String> {
             // so it never moves the child's id; the child is still recognizably the same decision by
             // its copied hashed payload.
             corrects: Some(target.id.clone()),
+            ratifies: None, // a correction is not a ratification
         },
     )?;
     crate::events::append(&store, "correct", Some(&child), None, None);

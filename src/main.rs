@@ -147,6 +147,16 @@ enum Cmd {
         #[arg(long)]
         blame: Option<String>,
     },
+    /// Ratify an agent proposal — mint a human-now, user-ruled child (the only propose→ratify bridge)
+    Ratify {
+        /// The agent-proposed tick id to ratify.
+        id: String,
+        /// The ratifying human (REQUIRED; never auto-filled from git).
+        #[arg(long)]
+        blame: String,
+    },
+    /// List agent proposals awaiting ratification — a pull-only view, never a notifier.
+    Pending,
     /// Reverse lookup: name the decision + ground a test selector guards.
     Why {
         /// The bound test selector to look up.
@@ -251,6 +261,8 @@ fn main() -> std::process::ExitCode {
                 blame,
             },
         ),
+        Cmd::Ratify { id, blame } => ev::cmd::ratify(&repo, &id, &blame),
+        Cmd::Pending => ev::cmd::pending(&repo, painter),
         Cmd::Why { selector } => ev::cmd::why(&repo, &selector),
         Cmd::Reopen { id } => ev::cmd::reopen(&repo, &id, painter),
     }

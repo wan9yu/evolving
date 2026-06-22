@@ -15,6 +15,8 @@ see [concepts.md](concepts.md).
 - [`ev init`](#ev-init)
 - [`ev decide`](#ev-decide)
 - [`ev propose`](#ev-propose)
+- [`ev ratify`](#ev-ratify)
+- [`ev pending`](#ev-pending)
 - [`ev guard`](#ev-guard)
 - [`ev migrate`](#ev-migrate)
 - [`ev correct`](#ev-correct)
@@ -294,6 +296,59 @@ above, plus:
 **Output (stdout):** `proposed <id> (<n> ground(s)) — agent-proposed, awaiting ratification` (or the
 `--json` envelope). **Exit:** `0` ok · `1` on a write/validation failure · refused flags fail with the
 message above.
+
+---
+
+## `ev ratify`
+
+**Synopsis:** a human ratifies an agent proposal — the **only** bridge from `agent-proposed` to a
+user-ruled ruling.
+
+```
+ev ratify <proposal-id> --blame <human>
+```
+
+**What it does:** mints a **child** tick that copies the proposal's **hashed payload** (decision /
+observe / grounds) verbatim, flips `provenance → human-now` and `authority → user-ruled`, and attaches
+the `ratifies:<proposal-id>` edge. The proposal itself is **never rewritten** — it stays immutable,
+thereafter shown "ratified by `<child>`". Same mint-a-child mechanics as [`ev correct`](#ev-correct);
+the child's id is content-addressed over the copied payload, so the proposal and its ratified child are
+recognizably the same decision (and the proposal collapses under the child in `brief` / `list` /
+`pending`).
+
+**`--blame` is REQUIRED and never auto-filled.** Ratification is the one op where a `git config` fallback
+would forge a human, so the ratifying human must be named explicitly.
+
+| Flag | Takes | Required | Effect |
+| --- | --- | --- | --- |
+| `--blame` | a human id | **yes** | The ratifying human. Never auto-filled from git. |
+
+**Refusals:** ratifying a tick that is not `agent-proposed` →
+`ev ratify only ratifies an agent proposal; tick <id> is <provenance> (nothing to ratify)`. A missing
+`--blame` is refused by the arg parser (exit `2`).
+
+**Output (stdout):** `ratified <proposal-id> → <child-id> (now user-ruled, human-now)`. **Exit:** `0` ok ·
+`1` on a write failure / no such tick / not-a-proposal.
+
+---
+
+## `ev pending`
+
+**Synopsis:** list the agent proposals awaiting ratification. A **pull-only** view — a query a human
+runs, **never** a notifier (no push, no unread, no badge).
+
+```
+ev pending
+```
+
+**What it does:** shows every live `agent-proposed` decision that has **not** yet been ratified. (A
+ratified proposal collapses under its user-ruled child, so it drops out automatically.) Decision-led,
+newest first; the `○` provenance glyph leads each row on a TTY, with a `… awaiting ratification —
+ev ratify <id> --blame <you>` footer; a pipe gets today's tab-separated bytes (id, status, decision,
+blame). Empty → `no proposals awaiting ratification`.
+
+*Sunset:* aging long-stale proposals out of the default view (to an `--all`) is a stated future
+refinement; for now every un-ratified proposal is shown.
 
 ---
 

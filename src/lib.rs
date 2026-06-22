@@ -8,6 +8,7 @@ pub mod guard;
 pub mod lint;
 pub mod liveness;
 pub mod migrate;
+pub mod ratify;
 pub mod receipt;
 pub mod render;
 pub mod runner;

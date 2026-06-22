@@ -211,9 +211,10 @@ pub struct Decision {
     pub jurisdiction: Option<String>,
     pub source_ref: Option<serde_json::Value>,
     pub provenance: Option<String>,
-    // The non-hashed relation-overlay edge: Some(target-id) when this decision CORRECTS another
-    // (set only by `ev correct`); None for a fresh decision. See Tick::corrects.
+    // Non-hashed relation-overlay edges: `corrects` (set by `ev correct`), `ratifies` (set by
+    // `ev ratify` — this human-now child ratifies an agent proposal); both None for a fresh decision.
     pub corrects: Option<String>,
+    pub ratifies: Option<String>,
 }
 
 /// THE one place a decision becomes a tick (without persisting it): R3-lint the free text, read HEAD
@@ -254,6 +255,7 @@ pub fn build(repo: &Path, d: Decision) -> Result<Tick, String> {
         source_ref: d.source_ref,
         provenance: d.provenance,
         corrects: d.corrects,
+        ratifies: d.ratifies,
     };
     t.id = compute_id(&t);
     Ok(t)
@@ -510,6 +512,7 @@ fn assemble(repo: &Path, decision: Option<&str>, args: &[String]) -> Result<Deci
         // provenance from the caller, so an importer can never launder a forbidden op as imported.
         provenance: None,
         corrects: None,
+        ratifies: None,
     })
 }
 
@@ -1129,6 +1132,7 @@ mod tests {
             source_ref: None,
             provenance: None,
             corrects: None,
+            ratifies: None,
         };
 
         // when: it is appended onto the empty store (genesis: parent_id == "")

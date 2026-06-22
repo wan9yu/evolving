@@ -180,6 +180,7 @@ mod tests {
             source_ref: None,
             provenance: None,
             corrects: None,
+            ratifies: None,
         };
         t.id = compute_id(&t);
         t

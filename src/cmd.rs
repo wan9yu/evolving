@@ -20,6 +20,26 @@ pub fn correct(repo: &Path, a: crate::correct::CorrectArgs) -> ExitCode {
     }
 }
 
+/// Ratify an agent proposal — mint a human-now, user-ruled child carrying the `ratifies` edge.
+pub fn ratify(repo: &Path, id: &str, blame: &str) -> ExitCode {
+    match crate::ratify::run(
+        repo,
+        crate::ratify::RatifyArgs {
+            id: id.to_string(),
+            blame: blame.to_string(),
+        },
+    ) {
+        Ok(t) => {
+            println!("ratified {} → {} (now user-ruled, human-now)", id, t.id);
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 /// The identity of a DECISION (not a tick): its hashed payload minus `parent_id`. The LEGACY collapse
 /// signal: ticks sharing this — in practice a pre-0.1.10 `ev correct` child and the tick it re-tags
 /// (same decision/observe/grounds, a different chain position) — are treated as one decision and
@@ -130,6 +150,9 @@ pub fn show(repo: &Path, id: &str) -> ExitCode {
                 }
                 if let Some(c) = v.get("corrects").and_then(|x| x.as_str()) {
                     println!("corrects: {c}");
+                }
+                if let Some(rt) = v.get("ratifies").and_then(|x| x.as_str()) {
+                    println!("ratifies: {rt}");
                 }
             }
             ExitCode::SUCCESS
@@ -1010,6 +1033,64 @@ pub fn list(repo: &Path, painter: crate::render::Painter) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// `ev pending` — the agent proposals awaiting ratification. A PULL-only view (a query a human runs),
+/// NEVER a notifier (no push, no unread, no badge). A proposal is pending iff it is still
+/// `agent-proposed` in the current view: `ev ratify` mints a human-now child with the same hashed
+/// payload, which collapses the proposal away (content-equality), so an un-ratified proposal is exactly
+/// one that survives `current_decisions` still agent-proposed. (Sunset/aging of long-stale proposals to
+/// an `--all` view is a stated future refinement; for now every un-ratified proposal is shown.)
+pub fn pending(repo: &Path, painter: crate::render::Painter) -> ExitCode {
+    let store = Store::at(repo);
+    if !store.exists() {
+        eprintln!("error: no .evolving/ store here — run `ev init` first");
+        return ExitCode::FAILURE;
+    }
+    let files = match store.read_all() {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("error: reading store: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let parsed: Vec<(String, Tick)> = files
+        .iter()
+        .filter_map(|(name, raw)| crate::tick::from_value(raw).ok().map(|t| (name.clone(), t)))
+        .collect();
+    let mut pend: Vec<(String, Tick)> = current_decisions(parsed)
+        .into_iter()
+        .filter(|(_, t)| t.status == "live" && t.provenance.as_deref() == Some("agent-proposed"))
+        .collect();
+    pend.sort_by(|a, b| b.1.held_since.cmp(&a.1.held_since).then(b.0.cmp(&a.0))); // newest first
+    if pend.is_empty() {
+        println!("no proposals awaiting ratification");
+        return ExitCode::SUCCESS;
+    }
+    if painter.rich {
+        // All rows are agent-proposed → the hollow ○ provenance glyph; the footer signposts the bridge.
+        for (id, t) in &pend {
+            println!(
+                "{} {}  {}  {}",
+                painter.prov_glyph(true),
+                painter.name(&format!("{:?}", t.decision)),
+                painter.id(id),
+                painter.meta(&t.blame)
+            );
+        }
+        println!(
+            "{}",
+            painter.meta(&format!(
+                "{} awaiting ratification — ev ratify <id> --blame <you>",
+                pend.len()
+            ))
+        );
+    } else {
+        for (id, t) in &pend {
+            println!("{id}\t{}\t{:?}\t{}", t.status, t.decision, t.blame);
+        }
+    }
+    ExitCode::SUCCESS
+}
+
 /// A decision is "load-bearing" iff any of its grounds closes a road (`supports` starts with
 /// `"rejected:"`). Those are the rulings a fresh agent must not re-walk, so they pin above the cap.
 /// Detectable straight from the tick — 0-network, no receipts, no git.
@@ -1220,10 +1301,11 @@ pub fn log(repo: &Path, painter: crate::render::Painter) -> ExitCode {
                 if painter.rich {
                     // Chronological lineage: the edge-verb sits in a fixed dim slot — the ledger's
                     // grammar made visible. (ratifies <id> joins once Cut D lands.)
-                    let verb = match (&t.corrects, t.provenance.as_deref()) {
-                        (Some(c), _) => format!("corrects {c}"),
-                        (None, Some("agent-proposed")) => "proposed".to_string(),
-                        (None, _) => "decided".to_string(),
+                    let verb = match (&t.corrects, &t.ratifies, t.provenance.as_deref()) {
+                        (Some(c), _, _) => format!("corrects {c}"),
+                        (_, Some(r), _) => format!("ratifies {r}"),
+                        (None, None, Some("agent-proposed")) => "proposed".to_string(),
+                        (None, None, _) => "decided".to_string(),
                     };
                     let agent = t.provenance.as_deref() == Some("agent-proposed");
                     println!(
@@ -1300,6 +1382,9 @@ pub fn reopen(repo: &Path, id: &str, painter: crate::render::Painter) -> ExitCod
         if let Some(c) = &tick.corrects {
             tags.push(format!("corrects {c}"));
         }
+        if let Some(rt) = &tick.ratifies {
+            tags.push(format!("ratifies {rt}"));
+        }
         if !tags.is_empty() {
             println!("  {}", painter.meta(&tags.join(" · ")));
         }
@@ -1319,6 +1404,9 @@ pub fn reopen(repo: &Path, id: &str, painter: crate::render::Painter) -> ExitCod
         }
         if let Some(c) = &tick.corrects {
             println!("corrects: {c}");
+        }
+        if let Some(rt) = &tick.ratifies {
+            println!("ratifies: {rt}");
         }
     }
     for g in &tick.grounds {
@@ -1409,6 +1497,7 @@ fn self_test_golden() -> ExitCode {
         source_ref: None,
         provenance: None,
         corrects: None,
+        ratifies: None,
     };
     let case1 = Tick {
         id: String::new(),
@@ -1453,6 +1542,7 @@ fn self_test_golden() -> ExitCode {
         source_ref: None,
         provenance: None,
         corrects: None,
+        ratifies: None,
     };
     // A harvested binding: case1's first ground with counter_test omitted (None). Pins that
     // omit-on-None keeps every harvested id byte-stable — moving it would mean the payload changed.

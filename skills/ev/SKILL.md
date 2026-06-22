@@ -61,13 +61,24 @@ source_ref?}], shown, total, elided, elided_load_bearing}`. Each decision carrie
 
 You record decisions, bind checks, and run the resurface gate.
 
+**Propose, don't forge — the agent door.** When the judgment is *yours* (an agent's), record it with
+**`ev propose`**, not `ev decide`. A proposal is always `agent-proposed`: inert (it never gates and never
+reaches `ev brief`), unbound, and its blame never silently becomes a human (`--blame <agent-id>`, else
+`EV_AGENT_ID`, else `agent` — never git config). A human then reviews **`ev pending`** and runs
+**`ev ratify <id> --blame <them>`**, which mints a user-ruled, human-now child carrying a `ratifies`
+edge — the **only** bridge from a proposal to a governing ruling. Reserve `ev decide` for recording a
+**human's** ruling (with their `--blame`); routing your own judgment through `propose` keeps the ledger
+from ever claiming a human decided what an agent did. (This is honest-by-construction, not
+cryptographic — an agent *could* call `decide`; the point is the right path is the easy one.)
+
 **Record a decision.** Each `--assume` opens a *chosen* ground; `--reject "<opt>: <why>"`
 records a road-not-taken. Per-ground flags (`--revisit`, `--assume-test`, `--counter-test`,
 `--on-platform`, `--triggered-by`, `--surface`) attach to the ground they follow; the
 decision-global flags (`--observe`, `--blame`, `--authority`, `--verified-at-sha`,
 `--from-git`) may appear anywhere. Set `--authority user-ruled`
-when you are capturing a **human's** ruling (so a future fresh agent sees it via `ev brief`);
-use `--authority agent-disposable` for a working call an agent may later revise. A rejected
+when you are capturing a **human's** ruling (so a future fresh agent sees it via `ev brief`); an
+agent's own working call goes through `ev propose` instead (see *Propose, don't forge* above), which is
+always `agent-disposable`. A rejected
 road may carry a **falsifiable tripwire** (a Test check that trips when the closed road is
 re-walked) **only** when the decision is `--authority user-ruled`, and a `--counter-test` is
 still required (no harvested rejected-road tripwire).

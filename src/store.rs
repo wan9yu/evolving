@@ -147,6 +147,7 @@ mod tests {
             source_ref: None,
             provenance: None,
             corrects: None,
+            ratifies: None,
         }
     }
 

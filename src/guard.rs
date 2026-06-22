@@ -138,6 +138,7 @@ pub fn run(repo: &Path, a: GuardArgs) -> Result<Tick, String> {
         // fresh human act, hard-stamped human-now (the absent default) — the launder defense.
         provenance: None,
         corrects: None,
+        ratifies: None,
     };
     child.id = compute_id(&child);
     store

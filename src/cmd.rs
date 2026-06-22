@@ -140,41 +140,52 @@ pub fn show(repo: &Path, id: &str) -> ExitCode {
         }
     }
 }
-pub fn decide(repo: &Path, decision: Option<&str>, args: &[String]) -> ExitCode {
-    // clap fills the optional positional with the first token even when it is a flag (it carries
-    // allow_hyphen_values so a leading --from-git can reach us at all). A real decision never
-    // starts with '-', so a hyphen-leading "decision" is actually a flag: re-route it into args
-    // and leave the positional empty, letting the capture flag-loop own --from-git uniformly.
-    let (decision, args): (Option<&str>, Vec<String>) = match decision {
+/// Clap fills an optional trailing positional with the first token even when it is a flag (the
+/// `allow_hyphen_values` lets a leading `--from-git` reach us), so a hyphen-leading "decision" is
+/// really a flag: re-route it into args and leave the positional empty. Shared by `decide`/`propose`.
+fn reroute_hyphen_positional(
+    decision: Option<&str>,
+    args: &[String],
+) -> (Option<String>, Vec<String>) {
+    match decision {
         Some(d) if d.starts_with('-') => {
             let mut v = vec![d.to_string()];
             v.extend_from_slice(args);
             (None, v)
         }
-        other => (other, args.to_vec()),
-    };
-    // --dry-run is a decide-level BOOLEAN flag (every other decide flag takes a value). Extract it
-    // pairing-aware: args is a flat [flag value]* list, so a "--dry-run" sitting in VALUE position
-    // (e.g. `--observe "--dry-run"`) is a legitimate value and must survive — only a standalone
-    // flag-position token toggles the preview. Walking in pairs preserves that distinction; a naive
-    // global strip would eat the value and misalign every flag after it. With --dry-run set, every
-    // validation still runs and the real id is computed, but nothing is written.
-    let mut dry_run = false;
-    let mut rest: Vec<String> = Vec::with_capacity(args.len());
+        other => (other.map(String::from), args.to_vec()),
+    }
+}
+
+/// Pull a no-value BOOLEAN flag out of a decide-style trailing-arg list (a flat `[flag value]*`
+/// stream). Pairing-aware: a token in VALUE position (e.g. `--observe "--dry-run"`) is a legitimate
+/// value and survives — only a standalone flag-position token counts. A naive global strip would eat
+/// the value and misalign every flag after it. Returns `(present, remaining_args)`. Shared by
+/// `decide` (`--dry-run`) and `propose` (`--json`).
+fn extract_bool_flag(args: &[String], flag: &str) -> (bool, Vec<String>) {
+    let mut present = false;
+    let mut rest = Vec::with_capacity(args.len());
     let mut i = 0;
     while i < args.len() {
-        if args[i] == "--dry-run" {
-            dry_run = true;
+        if args[i] == flag {
+            present = true;
             i += 1; // a no-value flag: consume just this token
             continue;
         }
         rest.push(args[i].clone()); // a value-taking flag
         if let Some(val) = args.get(i + 1) {
-            rest.push(val.clone()); // its value, kept verbatim — even if literally "--dry-run"
+            rest.push(val.clone()); // its value, kept verbatim
         }
         i += 2;
     }
-    let args = rest;
+    (present, rest)
+}
+
+pub fn decide(repo: &Path, decision: Option<&str>, args: &[String]) -> ExitCode {
+    let (decision, args) = reroute_hyphen_positional(decision, args);
+    let decision = decision.as_deref();
+    // --dry-run runs every validation + computes the real id, but writes nothing — a safe preview.
+    let (dry_run, args) = extract_bool_flag(&args, "--dry-run");
 
     let assembled = if dry_run {
         crate::capture::build_preview(repo, decision, &args)
@@ -193,6 +204,46 @@ pub fn decide(repo: &Path, decision: Option<&str>, args: &[String]) -> ExitCode 
         Ok(t) => {
             crate::events::append(&Store::at(repo), "decide", Some(&t), None, None);
             println!("recorded {} ({} ground(s))", t.id, t.grounds.len());
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// The machine sibling of `ev propose` (`--json`): the citable id + the trust fields, so the runner
+/// can record what it proposed and later cite it to `ev ratify`. A frozen, parseable envelope.
+fn propose_json(t: &Tick) -> String {
+    let payload = json!({
+        "kind": "ev-proposed",
+        "id": t.id,
+        "decision": t.decision,
+        "provenance": "agent-proposed",
+        "authority": "agent-disposable",
+        "blame": t.blame,
+    });
+    serde_json::to_string(&payload).expect("ev-proposed payload serializes")
+}
+
+pub fn propose(repo: &Path, decision: Option<&str>, args: &[String]) -> ExitCode {
+    let (decision, args) = reroute_hyphen_positional(decision, args);
+    let decision = decision.as_deref();
+    // --json is the machine sibling (the agent records the id to cite at ratify); never styled.
+    let (json_out, args) = extract_bool_flag(&args, "--json");
+    match crate::capture::propose(repo, decision, &args) {
+        Ok(t) => {
+            crate::events::append(&Store::at(repo), "propose", Some(&t), None, None);
+            if json_out {
+                println!("{}", propose_json(&t));
+            } else {
+                println!(
+                    "proposed {} ({} ground(s)) — agent-proposed, awaiting ratification",
+                    t.id,
+                    t.grounds.len()
+                );
+            }
             ExitCode::SUCCESS
         }
         Err(e) => {

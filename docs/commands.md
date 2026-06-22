@@ -14,6 +14,7 @@ see [concepts.md](concepts.md).
 - [Global flags — output rendering](#global-flags--output-rendering)
 - [`ev init`](#ev-init)
 - [`ev decide`](#ev-decide)
+- [`ev propose`](#ev-propose)
 - [`ev guard`](#ev-guard)
 - [`ev migrate`](#ev-migrate)
 - [`ev correct`](#ev-correct)
@@ -252,6 +253,47 @@ ev decide --from-git HEAD \
 # the body `Refs #<n>` lines; grounds stay hand-authored.
 # → recorded <id> (2 ground(s))
 ```
+
+---
+
+## `ev propose`
+
+**Synopsis:** record an **agent proposal** — a decision an agent suggests. It reuses `ev decide`'s
+grammar for the decision + its grounds, but is **always `agent-proposed` / `agent-disposable`**,
+**unbound**, and **inert** until a human ratifies it. The trust fields can never be flag-set — that is
+the whole point of a separate agent door.
+
+```
+ev propose "<decision>" [--observe …] [--assume …]… [--reject …]… [--jurisdiction …] [--source-ref …] [--blame <agent-id>] [--json]
+ev propose --from-git <commit> [trailing flags…]
+```
+
+**What it does:** assembles the decision exactly as `ev decide` does, then **forces**
+`provenance = agent-proposed` and `authority = agent-disposable` (no flag overrides them). The proposal
+is **inert**: it never gates (LOCK 3 maps any not-green verdict to the non-gating `memo`) and never
+reaches [`ev brief`](#ev-brief) (the boot-read excludes `agent-proposed`) until a human ratifies it.
+
+**Blame never reads git.** Because an agent typically runs under the human's git identity, `ev propose`
+resolves its author **without** the `git config` fallback: `--blame <id>` if given, else the
+`EV_AGENT_ID` environment variable (the runner's declared agent), else the literal `agent`. A proposal's
+author is therefore never silently a human.
+
+**Unbound — refused flags.** A check and `authority` attach only when a human ratifies, so `ev propose`
+refuses `--assume-test`, `--counter-test`, `--on-platform`, `--triggered-by`, `--surface`,
+`--verified-at-sha`, `--revisit`, and `--authority` with
+`ev propose records an UNBOUND proposal — <flag> is not allowed here …`.
+
+**Flags:** the decision-level + ground flags of [`ev decide`](#ev-decide) *except* the refused ones
+above, plus:
+
+| Flag | Takes | Effect |
+| --- | --- | --- |
+| `--blame` | an agent id | The proposing agent's identity. If omitted: `EV_AGENT_ID`, else `agent`. Never git config. |
+| `--json` | flag | Emit `{"kind":"ev-proposed","id":…,"provenance":"agent-proposed","authority":"agent-disposable","blame":…}` — the citable envelope a runner records to cite when a human ratifies it. |
+
+**Output (stdout):** `proposed <id> (<n> ground(s)) — agent-proposed, awaiting ratification` (or the
+`--json` envelope). **Exit:** `0` ok · `1` on a write/validation failure · refused flags fail with the
+message above.
 
 ---
 

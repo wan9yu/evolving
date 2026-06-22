@@ -524,6 +524,54 @@ pub fn build_preview(repo: &Path, decision: Option<&str>, args: &[String]) -> Re
     build(repo, assemble(repo, decision, args)?)
 }
 
+/// `ev propose` — the AGENT door. It reuses `ev decide`'s grammar for the decision + its grounds, but:
+///   * it is ALWAYS `provenance = agent-proposed` / `authority = agent-disposable` — the flags cannot
+///     override the trust fields (that is the whole point; an agent can never author a gating ruling),
+///   * it is UNBOUND — a check + authority land only when a human runs `ev ratify`, so the binding /
+///     authority flags are refused up front with a clear error,
+///   * blame NEVER falls through to `git config` (the gateway hole — an agent runs under the human's
+///     git identity): `--blame` if given, else `EV_AGENT_ID` (the runner's declared agent), else the
+///     generic literal `"agent"`. The proposal's author is therefore never silently the human.
+///
+/// `agent-proposed` is inert at the gate (LOCK 3) and excluded from `brief` (the §五 guarantee) until a
+/// named human ratifies it.
+pub fn propose(repo: &Path, decision: Option<&str>, args: &[String]) -> Result<Tick, String> {
+    // A proposal is unbound + agent-authored: the binding flags (and human-only `--authority`) belong
+    // to ratification, not here. Refuse them with a clear message rather than silently overriding.
+    const FORBIDDEN: &[&str] = &[
+        "--assume-test",
+        "--counter-test",
+        "--on-platform",
+        "--triggered-by",
+        "--surface",
+        "--verified-at-sha",
+        "--revisit",
+        "--authority",
+    ];
+    if let Some(f) = args.iter().find(|a| FORBIDDEN.contains(&a.as_str())) {
+        return Err(format!(
+            "ev propose records an UNBOUND proposal — {f} is not allowed here; a check + authority attach when a human runs `ev ratify`"
+        ));
+    }
+    // Resolve the agent identity WITHOUT ever reading git config: pass an explicit `--blame` through
+    // to the shared grammar when the caller gave none, so `resolve_blame`'s git fallback is unreachable.
+    let mut args = args.to_vec();
+    if !args.iter().any(|a| a == "--blame") {
+        let agent_id = std::env::var("EV_AGENT_ID")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "agent".to_string());
+        args.push("--blame".into());
+        args.push(agent_id);
+    }
+    let mut d = assemble(repo, decision, &args)?;
+    // FORCE the trust fields — the flags cannot move these. provenance=agent-proposed makes it inert
+    // (LOCK 3) and brief-invisible; authority=agent-disposable marks it the agent's until ratified.
+    d.provenance = Some("agent-proposed".into());
+    d.authority = Some("agent-disposable".into());
+    append(repo, d)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

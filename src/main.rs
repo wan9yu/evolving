@@ -47,6 +47,14 @@ enum Cmd {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Record an AGENT proposal — always agent-proposed, unbound, inert until a human runs `ev ratify`
+    Propose {
+        /// The proposed decision text; or omit it and pass --from-git <commit> to seed from a commit.
+        #[arg(allow_hyphen_values = true)]
+        decision: Option<String>,
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     /// Attach an existing test to a decision's ground (writes a new child)
     Guard {
         selector: String,
@@ -165,6 +173,7 @@ fn main() -> std::process::ExitCode {
         Cmd::Brief { limit, json } => ev::cmd::brief(&repo, limit, json, painter),
         Cmd::Verify { self_test } => ev::cmd::verify_cmd(&repo, self_test),
         Cmd::Decide { decision, args } => ev::cmd::decide(&repo, decision.as_deref(), &args),
+        Cmd::Propose { decision, args } => ev::cmd::propose(&repo, decision.as_deref(), &args),
         Cmd::Guard {
             selector,
             id,

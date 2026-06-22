@@ -84,6 +84,7 @@ is a stream of trailing flags parsed **left-to-right** (see the grammar below).
 | `--jurisdiction` | `A` \| `B` \| `C` \| `D` | no | A declared (non-hashed) jurisdiction tag. `A`/`B` may gate; `C`/`D` are **detect-only** — structurally ungateable (see [concepts.md](concepts.md)). Surfaced by `show` / `list` / `reopen`. An out-of-vocabulary value is refused. |
 | `--source-ref` | a key | no | A declared (non-hashed), **opaque source identity** ev never interprets — a non-empty string (e.g. `R2289`, `#555`, an issue ref) carried verbatim. ev derives only a dedup/reconcile key from it; used by `ev migrate` to dedup + reconcile a backfill. Surfaced by `show` / `list` / `reopen`. Non-empty if given. (The canonical intake also accepts a structured object — see [`ev migrate`](#ev-migrate); on this interactive path it is a plain string.) |
 | `--observe` | a string | no | Sets the decision's `observe` field (the situation being observed). |
+| `--dry-run` | — | no | Assemble + validate the decision and compute its real id, but **write nothing** (no tick, no event, no `HEAD` move) — a safe preview before the immutable append. Prints `would record <id> (<n> ground(s)) — dry run, nothing written`; the id matches what a real `ev decide` then records. |
 | `--blame` | a name | no* | The author on the hook. *If omitted, falls back to `git config user.name`; one of the two must resolve to a non-empty name.* |
 | `--verified-at-sha` | 40 lowercase hex | no | The commit a **test** binding was last verified at. If omitted, defaults to `git rev-parse HEAD`. Only used by test bindings. |
 | `--reject` | `"<option>: <why>"` | no | Opens a **road-not-taken** ground: `supports = rejected:<option>`, `claim = <why>`. Splits on the first `:`; both sides must be non-empty. |
@@ -111,8 +112,10 @@ The trailing flags are walked in order and bound to **the most recently opened g
    + at least one `--triggered-by` + at least one `--surface` (and a `verified_at_sha`,
    resolved from `--verified-at-sha` or `git rev-parse HEAD`) make the ground's check a
    **Test**.
-5. `--observe`, `--blame`, `--verified-at-sha`, `--authority`, `--jurisdiction`, and
-   `--source-ref` are decision-level, not per-ground.
+5. `--observe`, `--blame`, `--verified-at-sha`, `--authority`, `--jurisdiction`,
+   `--source-ref`, and `--dry-run` are decision-level, not per-ground. (`--dry-run` may sit
+   anywhere in the stream; a literal `--dry-run` in value position — e.g. `--observe "--dry-run"`
+   — is kept as the value, not read as the flag.)
 
 If a per-ground flag appears before any `--assume` / `--reject`, it is refused:
 `<flag> has no preceding --assume/--reject ground`. A missing value is refused with
@@ -720,6 +723,13 @@ flat verdict per ground — facts, never a score or a rank. Optionally run the b
 ```
 ev check [--run] [--platform <p>] [--exit-on-red] [--offline] [--attest <p1,p2,…>]
 ```
+
+Like [`ev brief`](#ev-brief) / [`ev list`](#ev-list), check first **collapses each corrective
+lineage to its current state** (an [`ev correct`](#ev-correct) child supersedes the stale tick it
+re-tags) and evaluates only the current live decisions. So a correction that **demotes** a
+decision — to `agent-proposed`, or away from `user-ruled` — takes effect at the gate, and a
+superseded tick neither prints a duplicate row nor gates. The superseded tick stays reachable
+via [`ev log`](#ev-log) / [`ev show`](#ev-show).
 
 **Flags:**
 

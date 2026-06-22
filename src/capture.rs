@@ -216,12 +216,12 @@ pub struct Decision {
     pub corrects: Option<String>,
 }
 
-/// THE one place a decision becomes a tick: R3-lint the free text, read HEAD as the parent, stamp
-/// `held_since`, build the Tick, compute its content-addressed id, and write+advance HEAD. `ev decide`
-/// and `ev migrate` BOTH funnel through here so there is a single hashing path — a golden id can only
-/// move if this function moves (guarded by golden_vectors + the capture/migrate tests). The caller is
-/// responsible for having already resolved blame and validated the grounds.
-pub fn append(repo: &Path, d: Decision) -> Result<Tick, String> {
+/// THE one place a decision becomes a tick (without persisting it): R3-lint the free text, read HEAD
+/// as the parent, stamp `held_since`, build the Tick, and compute its content-addressed id. Both the
+/// real `append` and the `--dry-run` preview funnel through here, so the id a dry run shows is exactly
+/// the id a real append mints — a golden id can only move if THIS function moves (guarded by
+/// golden_vectors + the capture/migrate tests). The caller resolved blame and validated the grounds.
+pub fn build(repo: &Path, d: Decision) -> Result<Tick, String> {
     for field in std::iter::once(d.decision.clone())
         .chain(std::iter::once(d.observe.clone()))
         .chain(t_grounds_text(&d.grounds))
@@ -256,7 +256,15 @@ pub fn append(repo: &Path, d: Decision) -> Result<Tick, String> {
         corrects: d.corrects,
     };
     t.id = compute_id(&t);
-    store
+    Ok(t)
+}
+
+/// THE one place a decision becomes a PERSISTED tick: `build` it, then write+advance HEAD. `ev decide`
+/// and `ev migrate` BOTH funnel through here so there is a single write path; `--dry-run` calls `build`
+/// directly and never reaches this writer.
+pub fn append(repo: &Path, d: Decision) -> Result<Tick, String> {
+    let t = build(repo, d)?;
+    Store::at(repo)
         .write_tick(&t)
         .map_err(|e| format!("writing tick: {e}"))?;
     Ok(t)
@@ -352,7 +360,11 @@ fn build_ground(
     })
 }
 
-pub fn run(repo: &Path, decision: Option<&str>, args: &[String]) -> Result<Tick, String> {
+/// Walk the trailing args into a validated `Decision` (the flag loop → grounds, resolving --from-git,
+/// blame, and each ground). Shared by `run` (which appends it) and `build_preview` (--dry-run, which
+/// builds it but never writes). Keeping assembly separate from the write means --dry-run runs every
+/// validation a real append would, with zero risk of a stray persist.
+fn assemble(repo: &Path, decision: Option<&str>, args: &[String]) -> Result<Decision, String> {
     let mut observe = String::new();
     let mut blame_override: Option<String> = None;
     let mut sha_override: Option<String> = None;
@@ -484,24 +496,32 @@ pub fn run(repo: &Path, decision: Option<&str>, args: &[String]) -> Result<Tick,
         // gates on it, so thread it in. It is non-hashed, so gating on it never moves a tick id.
         grounds.push(build_ground(repo, d, &sha_override, authority.as_deref())?);
     }
-    // The single hashing path: decide hands its assembled Decision to the shared append, exactly as
-    // migrate does, so there is one compute_id / write_tick / R3-lint site (no per-caller fork).
-    append(
-        repo,
-        Decision {
-            observe,
-            decision: decision.to_string(),
-            grounds,
-            blame,
-            authority,
-            jurisdiction,
-            source_ref,
-            // Fresh authorship is hard-stamped human-now (the absent default); decide takes no
-            // provenance from the caller, so an importer can never launder a forbidden op as imported.
-            provenance: None,
-            corrects: None,
-        },
-    )
+    // The single hashing path: decide hands its assembled Decision to the shared build/append, exactly
+    // as migrate does, so there is one compute_id / write_tick / R3-lint site (no per-caller fork).
+    Ok(Decision {
+        observe,
+        decision: decision.to_string(),
+        grounds,
+        blame,
+        authority,
+        jurisdiction,
+        source_ref,
+        // Fresh authorship is hard-stamped human-now (the absent default); decide takes no
+        // provenance from the caller, so an importer can never launder a forbidden op as imported.
+        provenance: None,
+        corrects: None,
+    })
+}
+
+/// `ev decide` — assemble the decision and append it to the ledger.
+pub fn run(repo: &Path, decision: Option<&str>, args: &[String]) -> Result<Tick, String> {
+    append(repo, assemble(repo, decision, args)?)
+}
+
+/// `ev decide --dry-run` — assemble + build the tick (so every validation fires and the real id is
+/// computed) but never write it. The preview shows exactly what a real append would produce.
+pub fn build_preview(repo: &Path, decision: Option<&str>, args: &[String]) -> Result<Tick, String> {
+    build(repo, assemble(repo, decision, args)?)
 }
 
 #[cfg(test)]

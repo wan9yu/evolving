@@ -57,6 +57,21 @@ fn init_should_create_the_store_and_stay_idempotent_when_run_twice() {
 }
 
 #[test]
+fn migrate_help_should_list_canonical_as_a_source_kind() {
+    // given/when: the migrate subcommand help
+    let out = ev().args(["migrate", "--help"]).output().unwrap();
+
+    // then: it advertises the `canonical` intake kind — the format-neutral primary producer that
+    // extract_source has long accepted but the --source help text omitted (a doc bug).
+    assert!(out.status.success());
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        s.contains("canonical"),
+        "migrate --help must list the canonical source kind; help was:\n{s}"
+    );
+}
+
+#[test]
 fn verify_should_reproduce_the_golden_vectors_when_run_in_self_test_mode() {
     // given: the verify command in self-test mode
 

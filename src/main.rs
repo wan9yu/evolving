@@ -82,8 +82,8 @@ enum Cmd {
     },
     /// Backfill an existing decision history into the ledger (multi-source, idempotent).
     Migrate {
-        /// A source to import, as `<kind>:<path>` — kind ∈ {gitlog, to-human, decisions-immutable,
-        /// escalation}. Repeatable; sources are imported in deterministic source_key order.
+        /// A source to import, as `<kind>:<path>` — kind ∈ {canonical, gitlog, to-human,
+        /// decisions-immutable, escalation}. Repeatable; imported in deterministic source_key order.
         #[arg(long = "source")]
         sources: Vec<String>,
         /// Parse + report what WOULD import without writing any tick.

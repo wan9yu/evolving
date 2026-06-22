@@ -153,7 +153,43 @@ pub fn decide(repo: &Path, decision: Option<&str>, args: &[String]) -> ExitCode 
         }
         other => (other, args.to_vec()),
     };
-    match crate::capture::run(repo, decision, &args) {
+    // --dry-run is a decide-level BOOLEAN flag (every other decide flag takes a value). Extract it
+    // pairing-aware: args is a flat [flag value]* list, so a "--dry-run" sitting in VALUE position
+    // (e.g. `--observe "--dry-run"`) is a legitimate value and must survive — only a standalone
+    // flag-position token toggles the preview. Walking in pairs preserves that distinction; a naive
+    // global strip would eat the value and misalign every flag after it. With --dry-run set, every
+    // validation still runs and the real id is computed, but nothing is written.
+    let mut dry_run = false;
+    let mut rest: Vec<String> = Vec::with_capacity(args.len());
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == "--dry-run" {
+            dry_run = true;
+            i += 1; // a no-value flag: consume just this token
+            continue;
+        }
+        rest.push(args[i].clone()); // a value-taking flag
+        if let Some(val) = args.get(i + 1) {
+            rest.push(val.clone()); // its value, kept verbatim — even if literally "--dry-run"
+        }
+        i += 2;
+    }
+    let args = rest;
+
+    let assembled = if dry_run {
+        crate::capture::build_preview(repo, decision, &args)
+    } else {
+        crate::capture::run(repo, decision, &args)
+    };
+    match assembled {
+        Ok(t) if dry_run => {
+            println!(
+                "would record {} ({} ground(s)) — dry run, nothing written",
+                t.id,
+                t.grounds.len()
+            );
+            ExitCode::SUCCESS
+        }
         Ok(t) => {
             crate::events::append(&Store::at(repo), "decide", Some(&t), None, None);
             println!("recorded {} ({} ground(s))", t.id, t.grounds.len());
@@ -312,17 +348,26 @@ pub fn check(
     };
     let config = crate::config::read(&store);
 
+    // Collapse each corrective lineage to its current state, then keep only the live ones — exactly as
+    // brief/list do. A correction that supersedes (or demotes) a decision then takes effect at the
+    // GATE: a stale corrected tick is not-at-head, so it neither runs, prints, nor gates (it stays
+    // reachable via `ev log` / `ev show`). Parsing once here also removes check's old double-parse
+    // (the --run pass and the verdict loop each re-parsed every file). Unparsable ticks are skipped —
+    // `ev verify` owns schema errors, the same contract the per-tick loop had.
+    let current: Vec<(String, Tick)> = current_decisions(
+        files
+            .iter()
+            .filter_map(|(name, raw)| crate::tick::from_value(raw).ok().map(|t| (name.clone(), t)))
+            .collect(),
+    )
+    .into_iter()
+    .filter(|(_, t)| t.status == "live")
+    .collect();
+
     // --run pass: for every live Test-bound ground that declares this platform, run the
     // bound ref locally and append a receipt for it (one local run = one platform receipt).
     if run {
-        for (_filename, raw) in &files {
-            let t = match crate::tick::from_value(raw) {
-                Ok(t) => t,
-                Err(_) => continue,
-            };
-            if t.status != "live" {
-                continue;
-            }
+        for (_filename, t) in &current {
             for g in &t.grounds {
                 if let Some(Check::Test {
                     reference,
@@ -395,14 +440,7 @@ pub fn check(
     let mut total_test_bindings = 0usize;
     let mut harvested_unproven = 0usize;
 
-    for (filename, raw) in &files {
-        let t = match crate::tick::from_value(raw) {
-            Ok(t) => t,
-            Err(_) => continue, // ev verify owns schema errors; check skips unparsable ticks
-        };
-        if t.status != "live" {
-            continue;
-        }
+    for (filename, t) in &current {
         let mut verdicts = Vec::with_capacity(t.grounds.len());
         for g in &t.grounds {
             // Receipts are read only for Test-bound grounds; person/unbound need none.
@@ -467,7 +505,7 @@ pub fn check(
                     crate::events::append(
                         &store,
                         "harvested",
-                        Some(&t),
+                        Some(t),
                         Some(&v.event_label()),
                         None,
                     );
@@ -491,7 +529,7 @@ pub fn check(
             crate::events::append(
                 &store,
                 "check",
-                Some(&t),
+                Some(t),
                 Some(&label),
                 masked_stale.as_deref(),
             );

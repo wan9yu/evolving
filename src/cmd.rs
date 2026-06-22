@@ -866,7 +866,7 @@ pub fn why(repo: &Path, selector: &str) -> ExitCode {
 }
 
 /// List every decision in the ledger: id, status, decision (sorted by id, deterministic).
-pub fn list(repo: &Path) -> ExitCode {
+pub fn list(repo: &Path, painter: crate::render::Painter) -> ExitCode {
     let store = Store::at(repo);
     if !store.exists() {
         eprintln!("error: no .evolving/ store here — run `ev init` first");
@@ -879,39 +879,82 @@ pub fn list(repo: &Path) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    // One pre-rendered line per tick, keyed by id so the output is deterministic. The bookkeeping
-    // tags (authority, jurisdiction, source_ref) are appended inline when present — same one-line shape as show.
-    // Collapse each corrective lineage to its current state (an `ev correct` child supersedes the
-    // stale tick it re-tags); unparseable ticks are always shown (verify flags them) since they have
-    // no decision identity to supersede.
+    // Parse once. Collapse each corrective lineage to its current state (an `ev correct` child
+    // supersedes the stale tick it re-tags); unparseable ticks are always shown (verify flags them)
+    // since they have no decision identity to supersede.
     let mut parsed: Vec<(String, Tick)> = Vec::new();
-    let mut rows: Vec<String> = Vec::new();
+    let mut unparseable: Vec<String> = Vec::new();
     for (name, raw) in &files {
         match crate::tick::from_value(raw) {
             Ok(t) => parsed.push((name.clone(), t)),
-            Err(_) => rows.push(format!("{name}\t?\t\"<unparseable>\"")),
+            Err(_) => unparseable.push(name.clone()),
         }
     }
-    for (name, t) in current_decisions(parsed) {
-        let mut l = format!("{name}\t{}\t{:?}", t.status, t.decision);
-        if let Some(a) = &t.authority {
-            l.push_str(&format!("\tauthority={a}"));
-        }
-        if let Some(j) = &t.jurisdiction {
-            l.push_str(&format!("\tjurisdiction={j}"));
-        }
-        if let Some(r) = &t.source_ref {
-            l.push_str(&format!("\tsource_ref={}", render_source_ref(r)));
-        }
-        rows.push(l);
-    }
-    rows.sort();
-    if rows.is_empty() {
+    let current = current_decisions(parsed);
+    if current.is_empty() && unparseable.is_empty() {
         println!("no decisions yet");
         return ExitCode::SUCCESS;
     }
-    for line in &rows {
-        println!("{line}");
+    if painter.rich {
+        // Decision-led: provenance glyph + bold name + weighted id + dim meta (status + tags), by id.
+        let mut entries: Vec<(String, String)> = Vec::new();
+        for name in &unparseable {
+            entries.push((
+                name.clone(),
+                painter.meta(&format!("? {name} <unparseable>")),
+            ));
+        }
+        for (name, t) in &current {
+            let mut meta = t.status.clone();
+            if let Some(a) = &t.authority {
+                meta.push_str(&format!(" · authority={a}"));
+            }
+            if let Some(j) = &t.jurisdiction {
+                meta.push_str(&format!(" · jurisdiction={j}"));
+            }
+            if let Some(r) = &t.source_ref {
+                meta.push_str(&format!(" · source_ref={}", render_source_ref(r)));
+            }
+            let agent = t.provenance.as_deref() == Some("agent-proposed");
+            entries.push((
+                name.clone(),
+                format!(
+                    "{} {}  {}  {}",
+                    painter.prov_glyph(agent),
+                    painter.name(&format!("{:?}", t.decision)),
+                    painter.id(name),
+                    painter.meta(&meta)
+                ),
+            ));
+        }
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        for (_, line) in &entries {
+            println!("{line}");
+        }
+    } else {
+        // Legacy: today's exact bytes — one tab-separated line per tick, sorted by the rendered line
+        // (which begins with the id). Bookkeeping tags appended inline when present (same shape as show).
+        let mut rows: Vec<String> = Vec::new();
+        for name in &unparseable {
+            rows.push(format!("{name}\t?\t\"<unparseable>\""));
+        }
+        for (name, t) in &current {
+            let mut l = format!("{name}\t{}\t{:?}", t.status, t.decision);
+            if let Some(a) = &t.authority {
+                l.push_str(&format!("\tauthority={a}"));
+            }
+            if let Some(j) = &t.jurisdiction {
+                l.push_str(&format!("\tjurisdiction={j}"));
+            }
+            if let Some(r) = &t.source_ref {
+                l.push_str(&format!("\tsource_ref={}", render_source_ref(r)));
+            }
+            rows.push(l);
+        }
+        rows.sort();
+        for line in &rows {
+            println!("{line}");
+        }
     }
     ExitCode::SUCCESS
 }
@@ -1099,7 +1142,7 @@ pub fn brief(
 }
 
 /// Show the decision lineage from HEAD back to genesis (newest first).
-pub fn log(repo: &Path) -> ExitCode {
+pub fn log(repo: &Path, painter: crate::render::Painter) -> ExitCode {
     let store = Store::at(repo);
     if !store.exists() {
         eprintln!("error: no .evolving/ store here — run `ev init` first");
@@ -1123,7 +1166,26 @@ pub fn log(repo: &Path) -> ExitCode {
         }
         match store.read_tick(&id) {
             Ok(Some(t)) => {
-                println!("{}\t{}\t{:?}", t.id, t.status, t.decision);
+                if painter.rich {
+                    // Chronological lineage: the edge-verb sits in a fixed dim slot — the ledger's
+                    // grammar made visible. (ratifies <id> joins once Cut D lands.)
+                    let verb = match (&t.corrects, t.provenance.as_deref()) {
+                        (Some(c), _) => format!("corrects {c}"),
+                        (None, Some("agent-proposed")) => "proposed".to_string(),
+                        (None, _) => "decided".to_string(),
+                    };
+                    let agent = t.provenance.as_deref() == Some("agent-proposed");
+                    println!(
+                        "{} {}  {}  {}  {}",
+                        painter.prov_glyph(agent),
+                        painter.meta(&verb),
+                        painter.name(&format!("{:?}", t.decision)),
+                        painter.id(&t.id),
+                        painter.meta(&t.blame)
+                    );
+                } else {
+                    println!("{}\t{}\t{:?}", t.id, t.status, t.decision);
+                }
                 id = t.parent_id;
             }
             Ok(None) => {
@@ -1139,7 +1201,8 @@ pub fn log(repo: &Path) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-pub fn reopen(repo: &Path, id: &str) -> ExitCode {
+pub fn reopen(repo: &Path, id: &str, painter: crate::render::Painter) -> ExitCode {
+    use crate::render::{class_of, Class};
     let store = Store::at(repo);
     let tick = match store.read_tick(id) {
         Ok(Some(t)) => t,
@@ -1157,21 +1220,55 @@ pub fn reopen(repo: &Path, id: &str) -> ExitCode {
     let ctx = live_ctx(&store, config.staleness_days, live_origin, None);
 
     crate::events::append(&store, "reopen", Some(&tick), None, None);
-    println!("decision {}: {:?}", tick.id, tick.decision);
-    if !tick.observe.is_empty() {
-        println!("observe: {:?}", tick.observe);
-    }
-    if let Some(a) = &tick.authority {
-        println!("authority: {a}");
-    }
-    if let Some(j) = &tick.jurisdiction {
-        println!("jurisdiction: {j}");
-    }
-    if let Some(r) = &tick.source_ref {
-        println!("source_ref: {}", render_source_ref(r));
-    }
-    if let Some(c) = &tick.corrects {
-        println!("corrects: {c}");
+    // The decision headline — provenance is a DECISION-level mark, shown ONCE here (per-ground rows
+    // below carry only their own verdict, never a provenance glyph — the two axes never blur).
+    let agent = tick.provenance.as_deref() == Some("agent-proposed");
+    if painter.rich {
+        println!(
+            "{} {}  {}",
+            painter.prov_glyph(agent),
+            painter.name(&format!("{:?}", tick.decision)),
+            painter.id(&tick.id)
+        );
+        if !tick.observe.is_empty() {
+            println!(
+                "  {}",
+                painter.meta(&format!("observe: {:?}", tick.observe))
+            );
+        }
+        let mut tags = Vec::new();
+        if let Some(a) = &tick.authority {
+            tags.push(format!("authority={a}"));
+        }
+        if let Some(j) = &tick.jurisdiction {
+            tags.push(format!("jurisdiction={j}"));
+        }
+        if let Some(r) = &tick.source_ref {
+            tags.push(format!("source_ref={}", render_source_ref(r)));
+        }
+        if let Some(c) = &tick.corrects {
+            tags.push(format!("corrects {c}"));
+        }
+        if !tags.is_empty() {
+            println!("  {}", painter.meta(&tags.join(" · ")));
+        }
+    } else {
+        println!("decision {}: {:?}", tick.id, tick.decision);
+        if !tick.observe.is_empty() {
+            println!("observe: {:?}", tick.observe);
+        }
+        if let Some(a) = &tick.authority {
+            println!("authority: {a}");
+        }
+        if let Some(j) = &tick.jurisdiction {
+            println!("jurisdiction: {j}");
+        }
+        if let Some(r) = &tick.source_ref {
+            println!("source_ref: {}", render_source_ref(r));
+        }
+        if let Some(c) = &tick.corrects {
+            println!("corrects: {c}");
+        }
     }
     for g in &tick.grounds {
         match &g.check {
@@ -1185,16 +1282,47 @@ pub fn reopen(repo: &Path, id: &str) -> ExitCode {
                 let v = crate::verdict::verdict_for(g, &receipts, &ctx, ts);
                 let now = v.label();
                 let short = &verified_at_sha[..verified_at_sha.len().min(8)];
-                println!(
-                    "  [{}] {:?} — test {:?} frozen@{short} now: {now}",
-                    g.supports, g.claim, reference
-                );
+                if painter.rich {
+                    let class = class_of(&v);
+                    println!(
+                        "  {} {}  [{}] {}  {}",
+                        painter.verdict_glyph(class),
+                        painter.class(now, class),
+                        g.supports,
+                        painter.name(&format!("{:?}", g.claim)),
+                        painter.meta(&format!("test {reference:?} frozen@{short}"))
+                    );
+                } else {
+                    println!(
+                        "  [{}] {:?} — test {:?} frozen@{short} now: {now}",
+                        g.supports, g.claim, reference
+                    );
+                }
             }
             Some(Check::Person { reference }) => {
-                println!("  [{}] {:?} — person {:?}", g.supports, g.claim, reference);
+                if painter.rich {
+                    println!(
+                        "  {} [{}] {}  {}",
+                        painter.verdict_glyph(Class::Informational),
+                        g.supports,
+                        painter.name(&format!("{:?}", g.claim)),
+                        painter.meta(&format!("person {reference:?}"))
+                    );
+                } else {
+                    println!("  [{}] {:?} — person {:?}", g.supports, g.claim, reference);
+                }
             }
             None => {
-                println!("  [{}] {:?}", g.supports, g.claim);
+                if painter.rich {
+                    println!(
+                        "  {} [{}] {}",
+                        painter.verdict_glyph(Class::Informational),
+                        g.supports,
+                        painter.name(&format!("{:?}", g.claim))
+                    );
+                } else {
+                    println!("  [{}] {:?}", g.supports, g.claim);
+                }
             }
         }
     }

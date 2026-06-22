@@ -174,3 +174,103 @@ fn brief_should_render_masthead_and_provenance_glyph_under_color_always() {
         "a pipe carries no provenance glyph; was {p:?}"
     );
 }
+
+#[test]
+fn list_should_lead_with_a_provenance_glyph_under_color_always_and_stay_tabbed_on_a_pipe() {
+    // given: a decision in the ledger
+    let r = repo();
+    decide_user_ruled(&r);
+
+    // when rich: the decision-led row leads with the human provenance glyph + shows the name
+    let rich = run(&r, &["list", "--color", "always"]);
+    let s = String::from_utf8_lossy(&rich.stdout);
+    assert!(
+        s.contains('●'),
+        "rich list leads each decision with a provenance glyph; was {s:?}"
+    );
+    assert!(
+        s.contains("freeze the schema for v2"),
+        "rich list shows the decision name; was {s:?}"
+    );
+
+    // when piped: today's tab-separated bytes, no glyph
+    let piped = run(&r, &["list"]);
+    let p = String::from_utf8_lossy(&piped.stdout);
+    assert!(
+        p.contains('\t'),
+        "a pipe gets tab-separated bytes; was {p:?}"
+    );
+    assert!(!p.contains('●'), "a pipe carries no glyph; was {p:?}");
+}
+
+#[test]
+fn log_should_show_the_edge_verb_and_glyph_under_color_always_and_stay_tabbed_on_a_pipe() {
+    // given: a decision in the lineage
+    let r = repo();
+    decide_user_ruled(&r);
+
+    // when rich: the lineage row carries the edge-verb slot + the provenance glyph
+    let rich = run(&r, &["log", "--color", "always"]);
+    let s = String::from_utf8_lossy(&rich.stdout);
+    assert!(
+        s.contains('●'),
+        "rich log leads with a provenance glyph; was {s:?}"
+    );
+    assert!(
+        s.contains("decided"),
+        "rich log shows the edge-verb slot (decided); was {s:?}"
+    );
+
+    // when piped: today's tab-separated lineage, no glyph
+    let piped = run(&r, &["log"]);
+    let p = String::from_utf8_lossy(&piped.stdout);
+    assert!(
+        p.contains('\t') && !p.contains('●'),
+        "a pipe stays tab-separated with no glyph; was {p:?}"
+    );
+}
+
+#[test]
+fn reopen_should_render_a_provenance_headline_under_color_always_and_stay_plain_on_a_pipe() {
+    // given: a recorded decision (capture its id)
+    let r = repo();
+    let out = run(
+        &r,
+        &[
+            "decide",
+            "freeze the schema for v2",
+            "--authority",
+            "user-ruled",
+            "--reject",
+            "v3-now: risky",
+            "--blame",
+            "You",
+        ],
+    );
+    assert!(out.status.success());
+    let id = String::from_utf8_lossy(&out.stdout)
+        .split_whitespace()
+        .nth(1)
+        .unwrap()
+        .to_string();
+
+    // when rich: the decision headline leads with the provenance glyph (shown ONCE, decision-level)
+    let rich = run(&r, &["reopen", &id, "--color", "always"]);
+    let s = String::from_utf8_lossy(&rich.stdout);
+    assert!(
+        s.contains('●'),
+        "rich reopen leads the headline with a provenance glyph; was {s:?}"
+    );
+    assert!(
+        s.contains("freeze the schema for v2"),
+        "rich reopen shows the decision name; was {s:?}"
+    );
+
+    // when piped: today's exact `decision <id>: …` form, no glyph
+    let piped = run(&r, &["reopen", &id]);
+    let p = String::from_utf8_lossy(&piped.stdout);
+    assert!(
+        p.contains("decision ") && !p.contains('●'),
+        "a pipe gets today's 'decision <id>:' form with no glyph; was {p:?}"
+    );
+}

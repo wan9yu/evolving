@@ -160,8 +160,8 @@ fn main() -> std::process::ExitCode {
     match cli.cmd {
         Cmd::Init => ev::cmd::init(&repo),
         Cmd::Show { id } => ev::cmd::show(&repo, &id),
-        Cmd::List => ev::cmd::list(&repo),
-        Cmd::Log => ev::cmd::log(&repo),
+        Cmd::List => ev::cmd::list(&repo, painter),
+        Cmd::Log => ev::cmd::log(&repo, painter),
         Cmd::Brief { limit, json } => ev::cmd::brief(&repo, limit, json, painter),
         Cmd::Verify { self_test } => ev::cmd::verify_cmd(&repo, self_test),
         Cmd::Decide { decision, args } => ev::cmd::decide(&repo, decision.as_deref(), &args),
@@ -243,6 +243,6 @@ fn main() -> std::process::ExitCode {
             },
         ),
         Cmd::Why { selector } => ev::cmd::why(&repo, &selector),
-        Cmd::Reopen { id } => ev::cmd::reopen(&repo, &id),
+        Cmd::Reopen { id } => ev::cmd::reopen(&repo, &id, painter),
     }
 }

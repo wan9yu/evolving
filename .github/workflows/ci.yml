@@ -65,15 +65,18 @@ jobs:
       # post-upload index refresh — e.g. an HTTP2 framing error downloading config.json), and a
       # re-run hits "already exists". Treat an already-published version as success so a transient
       # blip never blocks the GitHub Release + binaries below; any OTHER error still fails the job.
+      # The stderr capture lives in $RUNNER_TEMP, NOT the worktree: a publish.err written beside the
+      # crate would make `cargo publish`'s own clean-tree check fail ("files not yet committed").
       - name: Publish to crates.io
         run: |
-          if cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }} 2>publish.err; then
-            cat publish.err >&2
-          elif grep -q "already exists" publish.err; then
-            cat publish.err >&2
+          err="$RUNNER_TEMP/publish.err"
+          if cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }} 2>"$err"; then
+            cat "$err" >&2
+          elif grep -q "already exists" "$err"; then
+            cat "$err" >&2
             echo "note: ${GITHUB_REF_NAME} is already on crates.io — treating as success (idempotent re-run / post-upload transient)."
           else
-            cat publish.err >&2; exit 1
+            cat "$err" >&2; exit 1
           fi
       # The published tag becomes a GitHub Release — the single source of truth for
       # what each version shipped. Notes are generated from the commits since the

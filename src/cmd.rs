@@ -256,7 +256,20 @@ pub fn propose(repo: &Path, decision: Option<&str>, args: &[String]) -> ExitCode
     // --json is the machine sibling (the agent records the id to cite at ratify); never styled.
     let (json_out, args) = extract_bool_flag(&args, "--json");
     match crate::capture::propose(repo, decision, &args) {
-        Ok(t) => {
+        Ok((t, deduped)) => {
+            if deduped {
+                // Idempotent no-op: this source_ref already names a pending proposal — do not emit a
+                // second event or pile up a duplicate (keeps the pending queue triageable).
+                if json_out {
+                    println!("{}", propose_json(&t));
+                } else {
+                    println!(
+                        "already proposed {} for this source_ref — no-op (awaiting ratification)",
+                        t.id
+                    );
+                }
+                return ExitCode::SUCCESS;
+            }
             crate::events::append(&Store::at(repo), "propose", Some(&t), None, None);
             if json_out {
                 println!("{}", propose_json(&t));
@@ -1104,12 +1117,19 @@ pub fn pending(repo: &Path, painter: crate::render::Painter) -> ExitCode {
     if painter.rich {
         // All rows are agent-proposed → the hollow ○ provenance glyph; the footer signposts the bridge.
         for (id, t) in &pend {
+            // Triage context: blame · source_ref · held_since — so a piling queue is scannable at a
+            // glance (the dogfood friction was a pending view that hid these). Rich only; plain unchanged.
+            let sr = t
+                .source_ref
+                .as_ref()
+                .map(|s| format!(" · {}", render_source_ref(s)))
+                .unwrap_or_default();
             println!(
                 "{} {}  {}  {}",
                 painter.prov_glyph(true),
                 painter.name(&format!("{:?}", t.decision)),
                 painter.id(id),
-                painter.meta(&t.blame)
+                painter.meta(&format!("{}{} · {}", t.blame, sr, t.held_since))
             );
         }
         println!(

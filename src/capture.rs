@@ -549,7 +549,11 @@ pub fn build_preview(repo: &Path, decision: Option<&str>, args: &[String]) -> Re
 ///
 /// `agent-proposed` is inert at the gate (LOCK 3) and excluded from `brief` (the §五 guarantee) until a
 /// named human ratifies it.
-pub fn propose(repo: &Path, decision: Option<&str>, args: &[String]) -> Result<Tick, String> {
+pub fn propose(
+    repo: &Path,
+    decision: Option<&str>,
+    args: &[String],
+) -> Result<(Tick, bool), String> {
     // A proposal is unbound + agent-authored: the binding flags (and human-only `--authority`) belong
     // to ratification, not here. Refuse them with a clear message rather than silently overriding.
     const FORBIDDEN: &[&str] = &[
@@ -587,7 +591,33 @@ pub fn propose(repo: &Path, decision: Option<&str>, args: &[String]) -> Result<T
     debug_assert!(validate_authority("agent-disposable").is_ok());
     d.provenance = Some("agent-proposed".into());
     d.authority = Some("agent-disposable".into());
-    append(repo, d)
+    // Idempotency: if this source_ref already names a live agent-proposed proposal, return THAT one
+    // instead of piling up a duplicate (the un-triaged pending pile the dogfood hit). Only on an
+    // explicit source_ref — without a producer key there is no stable identity to dedup on. Returns
+    // `true` to tell the caller this was a no-op (no new tick, no event). Match `ev pending`'s set:
+    // live + agent-proposed (a ratified proposal is superseded by its human-now child, but a repeat
+    // source_ref is still a duplicate not worth a second pile entry).
+    if let Some(sr) = &d.source_ref {
+        let key = crate::tick::source_ref_key(sr);
+        if let Ok(files) = Store::at(repo).read_all() {
+            if let Some(t) = files
+                .iter()
+                .filter_map(|(_, raw)| crate::tick::from_value(raw).ok())
+                .find(|t| {
+                    t.status == "live"
+                        && t.provenance.as_deref() == Some("agent-proposed")
+                        && t.source_ref
+                            .as_ref()
+                            .map(crate::tick::source_ref_key)
+                            .as_deref()
+                            == Some(key.as_str())
+                })
+            {
+                return Ok((t, true));
+            }
+        }
+    }
+    append(repo, d).map(|t| (t, false))
 }
 
 #[cfg(test)]

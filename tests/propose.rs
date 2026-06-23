@@ -180,3 +180,90 @@ fn propose_should_round_trip_clean_through_verify() {
         "a proposed tick must verify clean"
     );
 }
+
+#[test]
+fn propose_should_be_idempotent_on_a_repeated_source_ref() {
+    // given: a proposal carrying an explicit source_ref (the runner's round / work-unit key)
+    let r = repo();
+    let first = run(
+        &r,
+        &[
+            "propose",
+            "the cache is write-through",
+            "--assume",
+            "writes hit the DB first",
+            "--source-ref",
+            "round-7",
+        ],
+    );
+    assert!(first.status.success());
+
+    // when: the SAME source_ref is proposed again (a memoryless agent re-proposing the round, even with
+    // reworded text)
+    let second = run(
+        &r,
+        &[
+            "propose",
+            "the cache is write-through (reworded)",
+            "--assume",
+            "writes hit the DB first",
+            "--source-ref",
+            "round-7",
+        ],
+    );
+
+    // then: it is a no-op — the source_ref already names a pending proposal, so no duplicate piles up,
+    // and `ev pending` still shows exactly one
+    assert!(second.status.success());
+    assert!(
+        String::from_utf8_lossy(&second.stdout)
+            .to_lowercase()
+            .contains("already proposed"),
+        "the repeat should report an idempotent no-op; was {:?}",
+        String::from_utf8_lossy(&second.stdout)
+    );
+    let pend = run(&r, &["pending"]);
+    let proposals = String::from_utf8_lossy(&pend.stdout)
+        .lines()
+        .filter(|l| l.contains("live"))
+        .count();
+    assert_eq!(
+        proposals,
+        1,
+        "exactly one proposal should remain for the source_ref (idempotent); pending:\n{}",
+        String::from_utf8_lossy(&pend.stdout)
+    );
+}
+
+#[test]
+fn pending_should_surface_the_source_ref_for_triage_on_the_rich_row() {
+    // given: a proposal with a source_ref in the (un-triaged) pending queue
+    let r = repo();
+    run(
+        &r,
+        &[
+            "propose",
+            "the cache is write-through",
+            "--assume",
+            "c",
+            "--source-ref",
+            "round-7",
+        ],
+    );
+
+    // when: `ev pending` renders for a human (rich path; the plain/scriptable path stays byte-stable)
+    let out = ev()
+        .args(["pending", "--color", "always"])
+        .env_remove("EV_AGENT_ID")
+        .current_dir(&r)
+        .output()
+        .unwrap();
+
+    // then: the row surfaces the source_ref so a piling queue is scannable (the dogfood friction was a
+    // pending view that hid held_since/source_ref)
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        s.contains("round-7"),
+        "the rich pending row should surface the source_ref for triage; was {s:?}"
+    );
+}

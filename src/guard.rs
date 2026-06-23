@@ -1,6 +1,5 @@
 //! `ev guard "<selector>" <id> [<ground>]` — attach an existing test to a ground as a
 //! data check (after the fact). Because `check` is hashed, this writes a NEW CHILD.
-use crate::canonical::compute_id;
 use crate::store::Store;
 use crate::tick::{Check, Ground, Liveness, Tick};
 use std::path::Path;
@@ -119,17 +118,14 @@ pub fn run(repo: &Path, a: GuardArgs) -> Result<Tick, String> {
             },
         }),
     };
-    let held_since = time::OffsetDateTime::now_utc()
-        .format(&time::format_description::well_known::Rfc3339)
-        .map_err(|e| format!("timestamp: {e}"))?;
-    let mut child = Tick {
-        id: String::new(),
-        parent_id: parent.id.clone(),
+    // One write primitive: build the Decision and funnel through capture::append (the same hash/write
+    // path as decide/migrate) — no second compute_id/write_tick site, no gate bypass. parent_id,
+    // held_since and status are stamped by build(); guard is HEAD-only so build()'s read_head() == the
+    // parent, keeping the child's hashed payload {decision,observe,grounds,parent_id} byte-identical.
+    let d = crate::capture::Decision {
         observe: parent.observe.clone(),
         decision: parent.decision.clone(),
         grounds,
-        status: "live".into(),
-        held_since,
         blame,
         authority: a.authority,
         jurisdiction: parent.jurisdiction.clone(), // a sibling tag of the decision; inherited by the child
@@ -140,11 +136,7 @@ pub fn run(repo: &Path, a: GuardArgs) -> Result<Tick, String> {
         corrects: None,
         ratifies: None,
     };
-    child.id = compute_id(&child);
-    store
-        .write_tick(&child)
-        .map_err(|e| format!("writing tick: {e}"))?;
-    Ok(child)
+    crate::capture::append(repo, d)
 }
 
 #[cfg(test)]
@@ -348,5 +340,24 @@ mod tests {
         assert!(matches!(g.check, Some(Check::Test { .. })));
         // and the child is a fresh human act (provenance human-now), so it can gate
         assert_eq!(child.provenance, None);
+    }
+
+    #[test]
+    fn guard_should_mint_a_byte_stable_child_id_when_binding_a_fixed_ground() {
+        // BYTE-IDENTITY LOCK for the guard→append refactor (0.1.18/p2): the child's content-addressed
+        // id is a function of the hashed payload {decision, observe, grounds, parent_id} ONLY. Routing
+        // guard through capture::append must NOT move this id. The value below is captured from the
+        // PRE-refactor build and must remain unchanged after it.
+        let (p, id) = repo_with_unbound();
+        let child = run(
+            &p,
+            args(
+                "pytest tests/test_schema_frozen.py",
+                &id,
+                Some("schema stays frozen"),
+            ),
+        )
+        .expect("ok");
+        assert_eq!(child.id, "afe05cc36684");
     }
 }

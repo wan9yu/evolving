@@ -24,11 +24,24 @@ pub fn append(
     if let Some(o) = e.as_object_mut() {
         if let Some(t) = tick {
             o.insert("tick_id".into(), Value::String(t.id.clone()));
+            // parent_id + the relation-overlay edges (corrects/ratifies) are the HEED-edge: they let the
+            // metrics harness join a heed (a correction/ratification) back to the decision whose check
+            // went red — turning re-litigation-prevented into a real count. Non-hashed; emitted only
+            // when present, so existing event lines are unchanged.
+            if !t.parent_id.is_empty() {
+                o.insert("parent_id".into(), Value::String(t.parent_id.clone()));
+            }
             if let Some(sr) = &t.source_ref {
                 o.insert("source_ref".into(), Value::String(source_ref_key(sr)));
             }
             if let Some(age) = age_bucket(&t.held_since, now.unix_timestamp()) {
                 o.insert("age".into(), Value::String(age.into()));
+            }
+            if let Some(c) = &t.corrects {
+                o.insert("corrects".into(), Value::String(c.clone()));
+            }
+            if let Some(r) = &t.ratifies {
+                o.insert("ratifies".into(), Value::String(r.clone()));
             }
         }
         if let Some(v) = verdict {
@@ -38,17 +51,39 @@ pub fn append(
             o.insert("masked_stale".into(), Value::String(m.into()));
         }
     }
+    write_line(store, &e);
+}
+
+/// Append one COST/metrics summary event: `{ts, op, ...fields}`. The validation harness joins these
+/// against the per-decision catch events to compute NET effect (catch benefit MINUS injected cost) —
+/// e.g. the `brief` boot-read injection size, the `check-run` wall-time. Additive (a new op line); same
+/// best-effort, non-hashed, gitignored cache as `append`.
+pub fn append_cost(store: &Store, op: &str, fields: &[(&str, Value)]) {
+    let ts = OffsetDateTime::now_utc()
+        .format(&Rfc3339)
+        .unwrap_or_default();
+    let mut e = json!({ "ts": ts, "op": op });
+    if let Some(o) = e.as_object_mut() {
+        for (k, v) in fields {
+            o.insert((*k).to_string(), v.clone());
+        }
+    }
+    write_line(store, &e);
+}
+
+/// Best-effort write of one JSON line to results/events.jsonl. A write failure never fails the command
+/// (the log is a droppable, gitignored cache — deleting it never changes a tick id).
+fn write_line(store: &Store, e: &Value) {
     let dir = store.root.join("results");
     if std::fs::create_dir_all(&dir).is_err() {
         return;
     }
-    // Best-effort: a write failure never fails the command (the log is a droppable, gitignored cache).
     if let Ok(mut f) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(dir.join("events.jsonl"))
     {
-        let _ = writeln!(f, "{}", serde_json::to_string(&e).unwrap_or_default());
+        let _ = writeln!(f, "{}", serde_json::to_string(e).unwrap_or_default());
     }
 }
 

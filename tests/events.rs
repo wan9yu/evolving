@@ -207,3 +207,88 @@ fn check_should_emit_one_event_per_tick_not_per_bound_ground() {
         "expected one check event per tick, got {checks}; log:\n{log}"
     );
 }
+
+#[test]
+fn brief_should_append_a_brief_event_with_the_injection_cost_when_run() {
+    // given: a user-ruled decision (brief surfaces only user-ruled, non-agent-proposed)
+    let r = repo();
+    ev().args([
+        "decide",
+        "freeze the schema",
+        "--assume",
+        "a reason",
+        "--authority",
+        "user-ruled",
+        "--blame",
+        "Wang Yu",
+    ])
+    .current_dir(&r)
+    .output()
+    .unwrap();
+
+    // when: the agent boot-read runs
+    ev().args(["brief", "--json"])
+        .current_dir(&r)
+        .output()
+        .unwrap();
+
+    // then: a brief event records the injection cost (decisions injected + brief_bytes) — the COST half
+    // of net-effect that the validation harness joins against the per-decision catch events
+    let log = std::fs::read_to_string(r.join(".evolving/results/events.jsonl")).unwrap();
+    assert!(
+        log.lines().any(|l| l.contains("\"op\":\"brief\"")
+            && l.contains("\"decisions\":")
+            && l.contains("\"brief_bytes\":")),
+        "expected a brief cost event; log:\n{log}"
+    );
+}
+
+#[test]
+fn check_should_append_a_check_run_summary_with_wall_ms_when_evaluated() {
+    // given: a decision with a test-bound ground
+    let r = repo();
+    let parent = decide(&r, "no Redis");
+    guard(&r, &parent);
+
+    // when: check evaluates
+    ev().arg("check").current_dir(&r).output().unwrap();
+
+    // then: a check-run summary carries the latency + scale (the cost half), distinct from the per-tick
+    // check events (the catch half)
+    let log = std::fs::read_to_string(r.join(".evolving/results/events.jsonl")).unwrap();
+    assert!(
+        log.lines().any(|l| l.contains("\"op\":\"check-run\"")
+            && l.contains("\"wall_ms\":")
+            && l.contains("\"decisions\":")),
+        "expected a check-run summary event; log:\n{log}"
+    );
+}
+
+#[test]
+fn correct_event_should_carry_the_corrects_heed_edge_when_a_decision_is_corrected() {
+    // given: a recorded decision
+    let r = repo();
+    let id = decide(&r, "use Postgres");
+
+    // when: a human corrects it (sets a jurisdiction tag) — mints a corrective child
+    let out = ev()
+        .args(["correct", &id, "--jurisdiction", "A", "--blame", "Wang Yu"])
+        .current_dir(&r)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "correct: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // then: the correct event carries the `corrects` heed-edge — joining a heed back to the decision
+    // whose check went red, so the harness can count re-litigation-prevented
+    let log = std::fs::read_to_string(r.join(".evolving/results/events.jsonl")).unwrap();
+    assert!(
+        log.lines()
+            .any(|l| l.contains("\"op\":\"correct\"")
+                && l.contains(&format!("\"corrects\":\"{id}\""))),
+        "expected the correct event to carry corrects={id}; log:\n{log}"
+    );
+}

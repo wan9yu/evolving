@@ -435,6 +435,8 @@ pub fn check(
         }
     };
     let config = crate::config::read(&store);
+    // Time the whole check — the COST side of net-effect (the latency ev adds to the agent loop).
+    let started = std::time::Instant::now();
 
     // Collapse each corrective lineage to its current state, then keep only the live ones — exactly as
     // brief/list do. A correction that supersedes (or demotes) a decision then takes effect at the
@@ -700,6 +702,16 @@ pub fn check(
             println!("{run_note}");
         }
     }
+    // The check-run COST summary (wall-time + how many decisions were evaluated), distinct from the
+    // per-tick `check` catch events above — together the harness gets the gate's net-effect.
+    crate::events::append_cost(
+        &store,
+        "check-run",
+        &[
+            ("wall_ms", (started.elapsed().as_millis() as u64).into()),
+            ("decisions", (current.len() as u64).into()),
+        ],
+    );
     if exit_on_red && any_not_green {
         return ExitCode::FAILURE;
     }
@@ -1224,7 +1236,18 @@ pub fn brief(
 
     // --json always emits one valid object (even when empty) — a parsing consumer never sees prose.
     if json {
-        print!("{}", brief_json(&kept, total, dropped_lb));
+        // The agent boot-read injection: record its COST (rulings injected + bytes) so the validation
+        // harness can weigh it against the per-decision catch — the net-effect denominator.
+        let out = brief_json(&kept, total, dropped_lb);
+        crate::events::append_cost(
+            &store,
+            "brief",
+            &[
+                ("decisions", (kept.len() as u64).into()),
+                ("brief_bytes", (out.len() as u64).into()),
+            ],
+        );
+        print!("{out}");
         return ExitCode::SUCCESS;
     }
     if kept.is_empty() {

@@ -541,10 +541,14 @@ pub fn check(
             // verdict_for returns NotApplicable for any non-Test ground.
             let ts = triggered_since(repo, g, &receipts);
             let mut v = verdict_for(g, &receipts, &ctx, ts);
-            // LOCK 1 (gate-time, structural): a C/D-jurisdiction (detect-only) decision is
-            // structurally ungateable — map ANY not-green verdict to the non-gating Memo BEFORE the
-            // any_not_green writer below, so it can never flip --exit-on-red. Remapping every
-            // not-green at once is more robust than threading Memo through each gate site.
+            // LOCK 1 (gate-time, LEGACY DEFENSE): a C/D-jurisdiction (detect-only) decision never
+            // gates. As of 0.1.19 a C/D decision carrying a Test is refused at creation by
+            // capture::build() (so it can no longer be authored) — but ev is immutable, and a C/D+Test
+            // tick written before that door persists forever. This maps ANY not-green verdict on such a
+            // legacy tick to the non-gating Memo BEFORE the any_not_green writer below, so it can never
+            // flip --exit-on-red. (Unlike LOCK 3 below — which guards a legitimately-creatable object —
+            // LOCK 1 now only defends pre-0.1.19 legacy data; it becomes deletable once no such tick
+            // can exist in any ledger.)
             if matches!(t.jurisdiction.as_deref(), Some("C") | Some("D"))
                 && !matches!(v, Verdict::Green | Verdict::NotApplicable | Verdict::Exempt)
             {
@@ -555,8 +559,10 @@ pub fn check(
             // not-green to the non-gating Memo, the gate analogue of brief_visible excluding
             // agent-proposed from the boot-read (defense-in-depth: even if such a tick reaches the
             // gate, it cannot fire it; and it also protects the new rejected-road tripwire — an
-            // agent-authored tripwire cannot gate). LOCK 1 and LOCK 3 both map to Memo, so order is
-            // irrelevant to the outcome (a tick caught by LOCK 1 is already Memo and skips here).
+            // agent-authored tripwire cannot gate). LOCK 3 is IRREDUCIBLE — an agent-proposed tick
+            // carrying a Test is legitimately creatable, so the gate is its only line of defense
+            // (whereas LOCK 1 above is now legacy-only). Both map to Memo, so order is irrelevant to
+            // the outcome (a tick caught by LOCK 1 is already Memo and skips here).
             if t.provenance.as_deref() == Some("agent-proposed")
                 && !matches!(
                     v,

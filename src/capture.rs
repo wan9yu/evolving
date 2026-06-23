@@ -223,6 +223,17 @@ pub struct Decision {
 /// the id a real append mints — a golden id can only move if THIS function moves (guarded by
 /// golden_vectors + the capture/migrate tests). The caller resolved blame and validated the grounds.
 pub fn build(repo: &Path, d: Decision) -> Result<Tick, String> {
+    // A detect-only (C/D) decision never gates, so it may carry no runnable Test. Refuse it at THIS
+    // shared write primitive — the one door decide/migrate/guard/ratify and every --dry-run preview
+    // funnel through — so the create-side now AGREES with verify/migrate/correct instead of minting a
+    // tick they reject. Same shared predicate the at-rest verify (LOCK 2) and the ingest gates use.
+    if crate::tick::detect_only_carries_test(d.jurisdiction.as_deref(), &d.grounds) {
+        return Err(
+            "a detect-only (C/D) jurisdiction cannot carry a runnable test check — a detect-only \
+             decision never gates, so it holds no test binding"
+                .into(),
+        );
+    }
     for field in std::iter::once(d.decision.clone())
         .chain(std::iter::once(d.observe.clone()))
         .chain(t_grounds_text(&d.grounds))
@@ -1143,6 +1154,49 @@ mod tests {
         assert_eq!(t.id, "e2b337f53a1f");
         assert_eq!(t.parent_id, "");
         assert_eq!(Store::at(&r).read_head().unwrap(), t.id);
+    }
+
+    #[test]
+    fn build_should_refuse_a_detect_only_decision_that_carries_a_runnable_test() {
+        // given: a C-jurisdiction (detect-only) decision whose ground carries a runnable Test — the
+        // contradiction 0.1.19 closes. detect-only never gates, so it may hold no test binding; the
+        // shared write primitive build() is the one door that makes decide AGREE with verify/migrate.
+        let r = repo();
+        let d = Decision {
+            observe: "o".into(),
+            decision: "import the gateway ruling (detect-only)".into(),
+            grounds: vec![Ground {
+                claim: "the imported invariant holds".into(),
+                supports: "chosen".into(),
+                check: Some(Check::Test {
+                    reference: "pytest x".into(),
+                    verified_at_sha: "d308afac1b2c3d4e5f60718293a4b5c6d7e8f901".into(),
+                    counter_test: Some("pytest x::counter".into()),
+                    liveness: crate::tick::Liveness {
+                        platforms: vec!["local".into()],
+                        triggered_by: vec!["f".into()],
+                        surfaces: vec!["s".into()],
+                    },
+                }),
+            }],
+            blame: "Wang Yu".into(),
+            authority: None,
+            jurisdiction: Some("C".into()),
+            source_ref: None,
+            provenance: None,
+            corrects: None,
+            ratifies: None,
+        };
+
+        // when: it is built
+        let e = build(&r, d);
+
+        // then: refused at the door — so decide/guard/ratify can never mint what verify rejects
+        assert!(
+            e.is_err(),
+            "build must refuse a detect-only (C/D) decision carrying a test"
+        );
+        assert!(e.unwrap_err().contains("detect-only"));
     }
 
     #[test]

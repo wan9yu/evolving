@@ -119,9 +119,10 @@ pub fn run(repo: &Path, a: GuardArgs) -> Result<Tick, String> {
         }),
     };
     // One write primitive: build the Decision and funnel through capture::append (the same hash/write
-    // path as decide/migrate) — no second compute_id/write_tick site, no gate bypass. parent_id,
-    // held_since and status are stamped by build(); guard is HEAD-only so build()'s read_head() == the
-    // parent, keeping the child's hashed payload {decision,observe,grounds,parent_id} byte-identical.
+    // path as decide/migrate) — no second compute_id/write_tick site. guard therefore INHERITS build()'s
+    // structural gates: a guard on a detect-only (C/D) parent is refused at build() rather than minting
+    // a C/D+Test child. parent_id, held_since and status are stamped by build(); guard is HEAD-only so
+    // build()'s read_head() == the parent, keeping the child's hashed payload byte-identical.
     let d = crate::capture::Decision {
         observe: parent.observe.clone(),
         decision: parent.decision.clone(),
@@ -143,7 +144,8 @@ pub fn run(repo: &Path, a: GuardArgs) -> Result<Tick, String> {
 mod tests {
     use super::*;
 
-    fn repo_with_unbound() -> (std::path::PathBuf, String) {
+    // A fresh temp repo with an initialized store (no decision yet). Shared by the helpers below.
+    fn fresh_repo() -> std::path::PathBuf {
         use std::sync::atomic::{AtomicU64, Ordering};
         static N: AtomicU64 = AtomicU64::new(0);
         let p = std::env::temp_dir().join(format!(
@@ -154,6 +156,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&p);
         std::fs::create_dir_all(&p).unwrap();
         Store::at(&p).init().unwrap();
+        p
+    }
+
+    fn repo_with_unbound() -> (std::path::PathBuf, String) {
+        let p = fresh_repo();
         let args: Vec<String> = [
             "--assume",
             "schema stays frozen",
@@ -359,5 +366,37 @@ mod tests {
         )
         .expect("ok");
         assert_eq!(child.id, "afe05cc36684");
+    }
+
+    #[test]
+    fn guard_should_refuse_binding_a_test_to_a_detect_only_c_tagged_decision() {
+        // given: a HEAD decision tagged C (detect-only) with an unbound ground
+        let p = fresh_repo();
+        let t = crate::capture::run(
+            &p,
+            Some("import the detect-only ruling"),
+            &[
+                "--jurisdiction",
+                "C",
+                "--assume",
+                "the invariant holds",
+                "--blame",
+                "Wang Yu",
+            ]
+            .iter()
+            .map(|x| x.to_string())
+            .collect::<Vec<_>>(),
+        )
+        .unwrap();
+
+        // when: a test is guarded onto its ground (which would mint a C + Test child)
+        let e = run(&p, args("pytest x", &t.id, Some("the invariant holds")));
+
+        // then: refused — guard inherits build()'s detect-only gate, so it cannot mint what verify rejects
+        assert!(
+            e.is_err(),
+            "guard must refuse binding a test to a detect-only C-tagged decision"
+        );
+        assert!(e.unwrap_err().contains("detect-only"));
     }
 }

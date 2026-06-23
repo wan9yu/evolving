@@ -409,6 +409,9 @@ struct CheckRow {
     decision: String,
     claim: String,
     detail: String,
+    // When a not-green verdict was suppressed to Memo (LOCK 1 detect-only / LOCK 3 agent-proposed), why
+    // — surfaced on the rich human row so a suppressed red is never mute. None on a normal row.
+    memo_reason: Option<String>,
 }
 
 pub fn check(
@@ -543,6 +546,9 @@ pub fn check(
             // verdict_for returns NotApplicable for any non-Test ground.
             let ts = triggered_since(repo, g, &receipts);
             let mut v = verdict_for(g, &receipts, &ctx, ts);
+            // Why a not-green verdict is suppressed to Memo (LOCK 1 detect-only / LOCK 3 agent-proposed),
+            // captured for the rich human row — the plain/scriptable path is byte-stable, only rich uses it.
+            let mut memo_reason: Option<String> = None;
             // LOCK 1 (gate-time, LEGACY DEFENSE): a C/D-jurisdiction (detect-only) decision never
             // gates. As of 0.1.19 a C/D decision carrying a Test is refused at creation by
             // capture::build() (so it can no longer be authored) — but ev is immutable, and a C/D+Test
@@ -554,6 +560,10 @@ pub fn check(
             if matches!(t.jurisdiction.as_deref(), Some("C") | Some("D"))
                 && !matches!(v, Verdict::Green | Verdict::NotApplicable | Verdict::Exempt)
             {
+                memo_reason = Some(format!(
+                    "would read {}; detect-only (C/D), never gates",
+                    v.label()
+                ));
                 v = Verdict::Memo;
             }
             // LOCK 3 (gate-time, governance): an agent-PROPOSED tick must never flip --exit-on-red —
@@ -571,6 +581,10 @@ pub fn check(
                     Verdict::Green | Verdict::NotApplicable | Verdict::Exempt | Verdict::Memo
                 )
             {
+                memo_reason = Some(format!(
+                    "would read {}; agent-proposed, never gates",
+                    v.label()
+                ));
                 v = Verdict::Memo;
             }
             if !matches!(
@@ -613,6 +627,7 @@ pub fn check(
                     decision: t.decision.clone(),
                     claim: g.claim.clone(),
                     detail,
+                    memo_reason,
                 });
             }
             verdicts.push((g, v));
@@ -656,13 +671,16 @@ pub fn check(
         // The unified grammar: verdict glyph + the verdict word as the only coloured token, the
         // decision name bold (the headline), the full 12-hex id weighted, the claim + detail dim.
         for r in &rows {
+            // A suppressed-red memo names WHY (detect-only / agent-proposed) instead of a mute receipt
+            // time — never a false-green about a fact the gate is ignoring. (Rich only; plain unchanged.)
+            let detail = r.memo_reason.as_deref().unwrap_or(&r.detail);
             println!(
                 "{} {}  {}  {}  {}",
                 painter.verdict_glyph(r.class),
                 painter.class(&r.label, r.class),
                 painter.name(&format!("{:?}", r.decision)),
                 painter.id(&r.id),
-                painter.meta(&format!("{:?} · {}", r.claim, r.detail)),
+                painter.meta(&format!("{:?} · {}", r.claim, detail)),
             );
         }
         // A plain COUNT (never a score): gating / green / non-gating, by meaning-class.

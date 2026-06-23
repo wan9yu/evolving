@@ -268,3 +268,29 @@ fn list_should_render_the_jurisdiction_when_a_decision_is_tagged() {
         String::from_utf8_lossy(&out.stdout)
     );
 }
+
+#[test]
+#[allow(non_snake_case)]
+fn check_should_name_the_suppression_reason_on_a_legacy_C_tagged_memo_row() {
+    // given: a legacy C-tagged decision carrying a red test (LOCK 1 suppresses its red to a memo)
+    let (r, head) = git_repo();
+    let id = decide_untagged_with_test(&r, &head);
+    inject_jurisdiction(&r, &id, "C");
+
+    // when: the HUMAN (rich) check renders it (--color always forces the rich path; the plain/scripted
+    // path stays byte-stable and is unchanged by this fix)
+    let out = ev()
+        .args(["check", "--run", "--platform", "local", "--color", "always"])
+        .current_dir(&r)
+        .output()
+        .unwrap();
+
+    // then: the memo row is NOT mute — it names WHY the red was suppressed (detect-only), instead of a
+    // bare memo with a receipt time. A suppressed red that reads as a quiet memo is a no-false-green
+    // surface-honesty gap (and it would bias the heed-behavior the validation harness measures).
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("detect-only"),
+        "the rich memo row should name the suppression reason; got:\n{stdout}"
+    );
+}

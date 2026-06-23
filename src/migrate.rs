@@ -206,23 +206,19 @@ pub fn canonical_records(text: &str) -> Result<Vec<MigrationRecord>, String> {
         };
         let authority = opt_tag("authority", validate_authority)?;
         let jurisdiction = opt_tag("jurisdiction", validate_jurisdiction)?;
-        // REQUIRED on a canonical record: the producer always knows whether it is emitting backfill
-        // (`imported`) or a live proposal (`agent-proposed`), so it must say so. This closes the
-        // silent-failure footgun where an omitted provenance defaulted to `imported` — inert: not
-        // ratifiable, absent from `brief` AND `pending`, a record lost between proposal and ruling.
-        // The backfill EXTRACTOR kinds (gitlog / to-human / decisions-immutable / escalation) keep
-        // their inherent `imported` default — they parse documents that cannot declare provenance.
-        let provenance = match obj.get("provenance").and_then(|x| x.as_str()) {
-            Some(p) => {
-                validate_provenance(p).map_err(|e| format!("canonical line {n}: {e}"))?;
-                Some(p.to_string())
-            }
-            None => {
-                return Err(format!(
-                    "canonical line {n}: a canonical record must declare provenance (imported | agent-proposed | human-now) — a live proposal is agent-proposed; backfill is imported"
-                ))
-            }
-        };
+        // REQUIRED on a canonical record: reuse opt_tag's present-and-validate path (as authority /
+        // jurisdiction do), then REQUIRE the value. The producer always knows whether it is emitting
+        // backfill (`imported`) or a live proposal (`agent-proposed`), so it must say so — an omitted
+        // provenance is refused, never silently defaulted to inert `imported` (the silent-loss footgun:
+        // not ratifiable, absent from `brief` AND `pending`). The backfill EXTRACTOR kinds (gitlog /
+        // to-human / decisions-immutable / escalation) keep their inherent `imported` default
+        // downstream — they parse documents that cannot declare provenance.
+        let provenance = opt_tag("provenance", validate_provenance)?;
+        if provenance.is_none() {
+            return Err(format!(
+                "canonical line {n}: a canonical record must declare provenance (imported | agent-proposed | human-now) — a live proposal is agent-proposed; backfill is imported"
+            ));
+        }
         let source_ref = match obj.get("source_ref") {
             None => None,
             Some(rv) => {

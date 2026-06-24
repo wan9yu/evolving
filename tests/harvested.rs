@@ -117,8 +117,20 @@ fn check_should_annotate_a_harvested_row_when_counter_test_is_absent() {
         "row not annotated as harvested: {stdout}"
     );
     assert!(
-        stdout.contains("harvested-unproven: 1 of 1 test bindings have no counter-test (run ev guard to add one)"),
+        stdout.contains("harvested-unproven: 1 of 1 test bindings have no counter-test"),
         "missing/incorrect debt line: {stdout}"
+    );
+    // the hint "(run ev guard to add one)" is gone: ev guard errors on an already-bound ground, so it
+    // pointed at a command that necessarily fails for this case — keep the fact, drop the dead pointer.
+    assert!(
+        !stdout.contains("run ev guard"),
+        "the debt line must not point at ev guard (it errors on an already-bound ground): {stdout}"
+    );
+    // all bindings are harvested (no counter-test to prove), so the --run nudge promises a fresh receipt
+    // — NOT "execute each counter-test", which would be an empty promise here
+    assert!(
+        stdout.contains("record a fresh receipt"),
+        "the run nudge should offer a receipt refresh when there is no counter-test to prove: {stdout}"
     );
     // and: a `harvested` op event is appended for it
     let log = std::fs::read_to_string(r.join(".evolving/results/events.jsonl")).unwrap();

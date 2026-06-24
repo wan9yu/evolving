@@ -244,6 +244,51 @@ fn brief_should_append_a_brief_event_with_the_injection_cost_when_run() {
 }
 
 #[test]
+fn brief_should_record_a_decomposable_cost_without_json() {
+    // given: a user-ruled decision carrying a runnable test binding (a catch-ELIGIBLE decision)
+    let r = repo();
+    ev().args([
+        "decide",
+        "freeze the schema",
+        "--assume",
+        "the migration is reversible",
+        "--assume-test",
+        "tests/schema_check",
+        "--counter-test",
+        "pytest tests/schema.py",
+        "--on-platform",
+        "local",
+        "--triggered-by",
+        "src/schema.py",
+        "--surface",
+        "schema",
+        "--verified-at-sha",
+        "0000000000000000000000000000000000000000",
+        "--authority",
+        "user-ruled",
+        "--blame",
+        "Wang Yu",
+    ])
+    .current_dir(&r)
+    .output()
+    .unwrap();
+
+    // when: the boot-read runs WITHOUT --json (the human/agent path — cost used to be trapped in --json)
+    ev().args(["brief"]).current_dir(&r).output().unwrap();
+
+    // then: the cost event fires anyway (C7), and decomposes the injected set into the test-bindable
+    // subset (C9) so the harness can attribute brief cost to the catch-eligible decisions (not charge
+    // a non-test-bindable ruling as if it could ever be caught)
+    let log = std::fs::read_to_string(r.join(".evolving/results/events.jsonl")).unwrap();
+    assert!(
+        log.lines().any(|l| l.contains("\"op\":\"brief\"")
+            && l.contains("\"testbindable\":1")
+            && l.contains("\"brief_bytes\":")),
+        "plain `ev brief` should record a decomposable cost event; log:\n{log}"
+    );
+}
+
+#[test]
 fn check_should_append_a_check_run_summary_with_wall_ms_when_evaluated() {
     // given: a decision with a test-bound ground
     let r = repo();

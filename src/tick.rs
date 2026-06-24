@@ -135,10 +135,15 @@ pub(crate) fn source_ref_key(v: &Value) -> String {
 /// holds no runnable test binding" refusal — enforced both at the migrate ingest boundary (refuse at
 /// the door) and at-rest by `verify` (LOCK 2). One definition so the two sites can never drift.
 pub(crate) fn detect_only_carries_test(jurisdiction: Option<&str>, grounds: &[Ground]) -> bool {
-    matches!(jurisdiction, Some("C") | Some("D"))
-        && grounds
-            .iter()
-            .any(|g| matches!(g.check, Some(Check::Test { .. })))
+    matches!(jurisdiction, Some("C") | Some("D")) && has_test_check(grounds)
+}
+
+/// Whether any ground carries a runnable Test check — i.e. the decision is test-bound (catch-eligible).
+/// One definition so the gate (LOCK 2), the migrate boundary, and the brief cost decomposition never drift.
+pub(crate) fn has_test_check(grounds: &[Ground]) -> bool {
+    grounds
+        .iter()
+        .any(|g| matches!(g.check, Some(Check::Test { .. })))
 }
 
 pub(crate) fn only_keys(

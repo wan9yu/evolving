@@ -99,9 +99,18 @@ fn write_line(store: &Store, e: &Value) {
 /// thresholds it into prior-decision vs just-written; it leaks no precision the tick does not carry.
 fn age_bucket(held_since: &str, now_unix: i64) -> Option<&'static str> {
     let then = OffsetDateTime::parse(held_since, &Rfc3339).ok()?;
-    let days = (now_unix - then.unix_timestamp()) / 86_400;
-    Some(if days < 1 {
+    let secs = now_unix - then.unix_timestamp();
+    let days = secs / 86_400;
+    // Sub-day rungs split what used to all collapse to "fresh": a decision made earlier the SAME day is
+    // a prior decision, not just-written. Without the split, the prior-decision catch-rate goes 0/0 on
+    // any same-day run (e.g. a ~120-commit/day agent). `held_since` carries the precision; the old 1-day
+    // floor threw it away. Existing day+ labels are unchanged, so older harness reads still parse.
+    Some(if secs < 300 {
         "fresh"
+    } else if secs < 3_600 {
+        "minutes"
+    } else if secs < 86_400 {
+        "hours"
     } else if days < 7 {
         "days"
     } else if days < 30 {
@@ -133,7 +142,7 @@ mod tests {
         let d = 86_400;
         // given/then: each side of every day-bucket boundary maps to the right coarse label
         assert_eq!(age_bucket(&held(0), NOW), Some("fresh"));
-        assert_eq!(age_bucket(&held(23 * h), NOW), Some("fresh"));
+        assert_eq!(age_bucket(&held(23 * h), NOW), Some("hours"));
         assert_eq!(age_bucket(&held(25 * h), NOW), Some("days"));
         assert_eq!(age_bucket(&held(6 * d), NOW), Some("days"));
         assert_eq!(age_bucket(&held(8 * d), NOW), Some("weeks"));
@@ -141,6 +150,17 @@ mod tests {
         assert_eq!(age_bucket(&held(31 * d), NOW), Some("months"));
         assert_eq!(age_bucket(&held(364 * d), NOW), Some("months"));
         assert_eq!(age_bucket(&held(366 * d), NOW), Some("year+"));
+    }
+
+    #[test]
+    fn age_bucket_should_resolve_within_the_day() {
+        // a decision made EARLIER the same day is a prior decision, not just-written — the sub-day
+        // rungs must distinguish it, else a same-day run's prior-decision catch-rate is 0/0 (all "fresh")
+        let m = 60;
+        let h = 3_600;
+        assert_eq!(age_bucket(&held(2 * m), NOW), Some("fresh")); // <=5 min — written this round
+        assert_eq!(age_bucket(&held(30 * m), NOW), Some("minutes")); // a few rounds back, same session
+        assert_eq!(age_bucket(&held(5 * h), NOW), Some("hours")); // earlier today — a prior decision
     }
 
     #[test]

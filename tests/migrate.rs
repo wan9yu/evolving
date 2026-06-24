@@ -296,9 +296,12 @@ fn migrate_should_tag_an_imported_decision_from_the_jurisdiction_map() {
         .and_then(|line| line.split('\t').next())
         .expect("a row with the tagged decision");
     let show = run(&r, &["show", id]);
-    assert!(
-        String::from_utf8_lossy(&show.stdout).contains("jurisdiction: C"),
-        "show did not render jurisdiction: {}",
+    let v: serde_json::Value =
+        serde_json::from_slice(&show.stdout).expect("ev show emits pure JSON");
+    assert_eq!(
+        v["jurisdiction"],
+        "C",
+        "show did not carry the imported jurisdiction in the JSON: {}",
         String::from_utf8_lossy(&show.stdout)
     );
 }

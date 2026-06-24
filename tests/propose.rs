@@ -178,12 +178,20 @@ fn propose_help_should_list_the_real_grammar_not_just_args() {
     let out = ev().args(["propose", "--help"]).output().unwrap();
     assert!(out.status.success());
     let s = String::from_utf8_lossy(&out.stdout);
-    for flag in ["--assume", "--reject", "--source-ref"] {
+    // every real trailing flag is discoverable — including --json, which used to be crammed onto the
+    // --from-git line (misleading it as only-with-from-git)
+    for flag in ["--assume", "--reject", "--source-ref", "--json"] {
         assert!(
             s.contains(flag),
             "ev propose --help must list its real grammar ({flag}); help was:\n{s}"
         );
     }
+    // the REFUSED note is honest about WHERE a check binds: ratify only raises authority; a check binds
+    // via `ev guard` — never "a check attaches at ev ratify" (the prior wording was wrong)
+    assert!(
+        s.contains("ev guard") && !s.contains("a check + authority attach only at"),
+        "the REFUSED note must name `ev guard` as the binding path, not claim a check attaches at ratify:\n{s}"
+    );
 }
 
 #[test]

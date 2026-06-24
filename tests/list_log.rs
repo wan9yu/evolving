@@ -161,7 +161,11 @@ fn check_should_point_to_run_to_prove_falsifiability_when_not_run() {
     // when: check runs
     let out = ev().arg("check").current_dir(&r).output().unwrap();
 
-    // then: it points the reader at --run to prove falsifiability (the counter-test runs there)
+    // then: it points the reader at --run to prove falsifiability (a counter-test is declared, so the
+    // note offers the falsifiability proof — not just a receipt refresh)
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("prove its falsifiability"));
+    assert!(
+        stdout.contains("falsifiability"),
+        "expected the falsifiability nudge: {stdout}"
+    );
 }

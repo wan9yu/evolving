@@ -106,6 +106,14 @@ fn correct_should_record_a_corrects_backlink_to_the_target_and_surface_it() {
         ],
     );
     assert!(out.status.success());
+    // a correction copies the parent's grounds verbatim — restating "(N ground(s))" would be a
+    // zero-entropy echo of the parent, and breaks the cross-command rule that a count appears only at
+    // CREATION (decide/propose), never on an amendment (guard/ratify/correct).
+    assert!(
+        !String::from_utf8_lossy(&out.stdout).contains("ground(s)"),
+        "correct must not restate the inherited ground count: {:?}",
+        String::from_utf8_lossy(&out.stdout)
+    );
     let child = String::from_utf8_lossy(&out.stdout)
         .split_whitespace()
         .nth(1)
@@ -121,11 +129,14 @@ fn correct_should_record_a_corrects_backlink_to_the_target_and_surface_it() {
         "the child records which tick it corrects"
     );
 
-    // and: `ev show` surfaces the edge so the correction is traceable
+    // and: `ev show` carries the edge so the correction is traceable (pure JSON — the corrects field
+    // lives in the tick, not a bolted-on label:value line)
     let show = run(&r, &["show", &child]);
-    assert!(
-        String::from_utf8_lossy(&show.stdout).contains(&format!("corrects: {id}")),
-        "show must surface the corrects edge"
+    let v: serde_json::Value =
+        serde_json::from_slice(&show.stdout).expect("ev show emits pure JSON");
+    assert_eq!(
+        v["corrects"], id,
+        "show must carry the corrects edge in the JSON"
     );
 }
 

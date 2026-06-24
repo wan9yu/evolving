@@ -48,8 +48,11 @@ enum Cmd {
   --revisit <when>            a human re-check ground (repeatable)
   --observe <text>            the situation observed
   --blame <who>               author override (else git config user.name)
-  --authority <user-ruled|agent-disposable>   --jurisdiction <A|B|C|D>
-  --source-ref <key>          opaque producer key    --from-git <commit>    --dry-run"#
+  --authority <user-ruled|agent-disposable>   the ruling's standing
+  --jurisdiction <A|B|C|D>    the decision class (C/D = detect-only, never gates)
+  --source-ref <key>          an opaque producer / work-unit key
+  --from-git <commit>         seed the decision text from a commit envelope
+  --dry-run                   validate and print; write nothing"#
     )]
     Decide {
         /// The decision text; omit it and pass --from-git <commit> to seed from a commit envelope.
@@ -64,10 +67,12 @@ enum Cmd {
         after_help = r#"GRAMMAR (walked from the trailing args, left to right — not listed above):
   --assume "<claim>"          a ground the proposal rests on (repeatable)
   --reject "<option>: <why>"  a road not taken (repeatable)
-  --source-ref <key>          the producer's round/work-unit key — a repeat of the same key is an idempotent no-op
+  --source-ref <key>          the producer's round/work-unit key — a repeat is an idempotent no-op
   --blame <who>               author override (else $EV_AGENT_ID, else "agent")
-  --from-git <commit>         seed the decision text from a commit    --json   the citable id envelope
-REFUSED here (a proposal is unbound — a check + authority attach only at `ev ratify`):
+  --from-git <commit>         seed the decision text from a commit envelope
+  --json                      emit the citable id envelope (to cite at `ev ratify`)
+REFUSED here (a proposal is unbound and agent-authored — `ev ratify` raises its authority to user-ruled;
+a check binds later via `ev guard`):
   --assume-test  --counter-test  --on-platform  --triggered-by  --surface  --verified-at-sha  --revisit  --authority"#
     )]
     Propose {

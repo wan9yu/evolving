@@ -10,7 +10,9 @@ use std::process::ExitCode;
 pub fn correct(repo: &Path, a: crate::correct::CorrectArgs) -> ExitCode {
     match crate::correct::run(repo, a) {
         Ok(t) => {
-            println!("corrected {} ({} ground(s))", t.id, t.grounds.len());
+            // No "(N ground(s))": a correction copies the parent's grounds verbatim, so the count is a
+            // zero-entropy echo. A count belongs only at CREATION (decide/propose), not an amendment.
+            println!("corrected {}", t.id);
             ExitCode::SUCCESS
         }
         Err(e) => {
@@ -135,26 +137,11 @@ pub fn show(repo: &Path, id: &str) -> ExitCode {
     }
     match std::fs::read_to_string(&path) {
         Ok(text) => {
-            // print as-is (the on-disk pretty JSON: hashed payload + bookkeeping).
+            // The raw on-disk tick, verbatim — PURE JSON, so `ev show <id> | jq` is clean. (The
+            // authority/jurisdiction/source_ref/corrects/ratifies fields were once re-printed below as
+            // label:value lines; that duplicated the JSON, broke a jq pipe, and surfaced an arbitrary
+            // subset. A human-readable single-tick view is a separate concern from this machine dump.)
             println!("{text}");
-            // surface the declared authority on its own line when present (boot-time read).
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
-                if let Some(a) = v.get("authority").and_then(|x| x.as_str()) {
-                    println!("authority: {a}");
-                }
-                if let Some(j) = v.get("jurisdiction").and_then(|x| x.as_str()) {
-                    println!("jurisdiction: {j}");
-                }
-                if let Some(r) = v.get("source_ref") {
-                    println!("source_ref: {}", render_source_ref(r));
-                }
-                if let Some(c) = v.get("corrects").and_then(|x| x.as_str()) {
-                    println!("corrects: {c}");
-                }
-                if let Some(rt) = v.get("ratifies").and_then(|x| x.as_str()) {
-                    println!("ratifies: {rt}");
-                }
-            }
             ExitCode::SUCCESS
         }
         Err(e) => {
@@ -687,12 +674,16 @@ pub fn check(
     }
 
     let harvested_note = format!(
-        "harvested-unproven: {harvested_unproven} of {total_test_bindings} test bindings have no counter-test (run ev guard to add one)"
+        "harvested-unproven: {harvested_unproven} of {total_test_bindings} test bindings have no counter-test"
     );
-    // under --run the verdict itself carries falsifiability (an `unproven` row is a counter-test that
-    // did not flip); without it, point at the proof step rather than implying one already happened.
-    let run_note =
-        "note: run `ev check --run` to execute each counter-test and prove its falsifiability";
+    // The --run nudge adapts to what --run would actually do for THIS set: with a declared counter-test
+    // it proves falsifiability; with all bindings harvested it only re-runs the check + records a fresh
+    // receipt (promising "execute each counter-test" when there is none would be an empty promise).
+    let run_note = if total_test_bindings > harvested_unproven {
+        "note: run `ev check --run` to re-run each bound check and prove each declared counter-test's falsifiability"
+    } else {
+        "note: run `ev check --run` to re-run each bound check and record a fresh receipt"
+    };
     if rows.is_empty() {
         println!("no test-bound grounds to check");
     } else if painter.rich {
@@ -1287,19 +1278,30 @@ pub fn brief(
     let dropped_lb = kept[n..].iter().filter(|(_, t)| lb(t)).count();
     kept.truncate(n);
 
+    // The agent boot-read injection: record its COST so the validation harness can weigh it against
+    // the per-decision catch (the net-effect denominator). Emitted on EVERY brief — not just --json —
+    // and DECOMPOSED: `testbindable` is the catch-eligible subset (a non-test-bindable ruling can never
+    // produce a catch, so it must not be charged as if it could); `total`/`elided` give injection
+    // coverage past --limit. Additive, best-effort, gitignored 埋点 — no hashed payload is touched.
+    let out = brief_json(&kept, total, dropped_lb);
+    let testbindable = kept
+        .iter()
+        .filter(|(_, t)| crate::tick::has_test_check(&t.grounds))
+        .count();
+    crate::events::append_cost(
+        &store,
+        "brief",
+        &[
+            ("decisions", (kept.len() as u64).into()),
+            ("brief_bytes", (out.len() as u64).into()),
+            ("testbindable", (testbindable as u64).into()),
+            ("total", (total as u64).into()),
+            ("elided", ((total - kept.len()) as u64).into()),
+        ],
+    );
+
     // --json always emits one valid object (even when empty) — a parsing consumer never sees prose.
     if json {
-        // The agent boot-read injection: record its COST (rulings injected + bytes) so the validation
-        // harness can weigh it against the per-decision catch — the net-effect denominator.
-        let out = brief_json(&kept, total, dropped_lb);
-        crate::events::append_cost(
-            &store,
-            "brief",
-            &[
-                ("decisions", (kept.len() as u64).into()),
-                ("brief_bytes", (out.len() as u64).into()),
-            ],
-        );
         print!("{out}");
         return ExitCode::SUCCESS;
     }

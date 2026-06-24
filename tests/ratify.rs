@@ -184,8 +184,10 @@ fn ratify_round_trips_clean_through_verify_and_show_surfaces_the_edge() {
         "the ratified chain must verify clean"
     );
     let show = run(&r, &["show", &child]);
-    assert!(
-        String::from_utf8_lossy(&show.stdout).contains(&format!("ratifies: {pid}")),
-        "show surfaces the ratifies edge"
+    let v: serde_json::Value =
+        serde_json::from_slice(&show.stdout).expect("ev show emits pure JSON");
+    assert_eq!(
+        v["ratifies"], pid,
+        "show must carry the ratifies edge in the JSON"
     );
 }

@@ -171,6 +171,22 @@ fn propose_json_should_emit_the_citable_envelope() {
 }
 
 #[test]
+fn propose_help_should_list_the_real_grammar_not_just_args() {
+    // the dogfood hit this: `--help` showed only [ARGS]..., hiding --assume/--reject/--source-ref —
+    // the flags that make propose useful — so a memoryless agent guessed syntax and minted a junk tick.
+    // The command must say exactly what it does (the correspondence / no-false-promise surface honesty).
+    let out = ev().args(["propose", "--help"]).output().unwrap();
+    assert!(out.status.success());
+    let s = String::from_utf8_lossy(&out.stdout);
+    for flag in ["--assume", "--reject", "--source-ref"] {
+        assert!(
+            s.contains(flag),
+            "ev propose --help must list its real grammar ({flag}); help was:\n{s}"
+        );
+    }
+}
+
+#[test]
 fn propose_should_round_trip_clean_through_verify() {
     // a proposed tick is a first-class tick on the chain — it must verify clean
     let r = repo();

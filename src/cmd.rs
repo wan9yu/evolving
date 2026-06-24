@@ -225,7 +225,7 @@ pub fn decide(repo: &Path, decision: Option<&str>, args: &[String]) -> ExitCode 
             ExitCode::SUCCESS
         }
         Ok(t) => {
-            crate::events::append(&Store::at(repo), "decide", Some(&t), None, None);
+            crate::events::append(&Store::at(repo), "decide", Some(&t), None, None, None);
             println!("recorded {} ({} ground(s))", t.id, t.grounds.len());
             ExitCode::SUCCESS
         }
@@ -270,7 +270,7 @@ pub fn propose(repo: &Path, decision: Option<&str>, args: &[String]) -> ExitCode
                 }
                 return ExitCode::SUCCESS;
             }
-            crate::events::append(&Store::at(repo), "propose", Some(&t), None, None);
+            crate::events::append(&Store::at(repo), "propose", Some(&t), None, None, None);
             if json_out {
                 println!("{}", propose_json(&t));
             } else {
@@ -292,7 +292,7 @@ pub fn propose(repo: &Path, decision: Option<&str>, args: &[String]) -> ExitCode
 pub fn guard(repo: &Path, a: crate::guard::GuardArgs) -> ExitCode {
     match crate::guard::run(repo, a) {
         Ok(t) => {
-            crate::events::append(&Store::at(repo), "guard", Some(&t), None, None);
+            crate::events::append(&Store::at(repo), "guard", Some(&t), None, None, None);
             println!("bound; wrote child {}", t.id);
             ExitCode::SUCCESS
         }
@@ -548,6 +548,10 @@ pub fn check(
 
     for (filename, t) in &current {
         let mut verdicts = Vec::with_capacity(t.grounds.len());
+        // The pre-remap verdicts LOCK 1/3 suppress to memo (test-bound only — non-Test grounds are
+        // NotApplicable, never remapped), rolled up for the check event's suppressed_from field so the
+        // harness can tell a suppressed-red catch from a benign memo.
+        let mut suppressed: Vec<Verdict> = Vec::new();
         for g in &t.grounds {
             // Receipts are read only for Test-bound grounds; person/unbound need none.
             let receipts = match &g.check {
@@ -577,6 +581,7 @@ pub fn check(
                     "would read {}; detect-only (C/D), never gates",
                     v.label()
                 ));
+                suppressed.push(v.clone());
                 v = Verdict::Memo;
             }
             // LOCK 3 (gate-time, governance): an agent-PROPOSED tick must never flip --exit-on-red —
@@ -598,6 +603,7 @@ pub fn check(
                     "would read {}; agent-proposed, never gates",
                     v.label()
                 ));
+                suppressed.push(v.clone());
                 v = Verdict::Memo;
             }
             if !matches!(
@@ -631,6 +637,7 @@ pub fn check(
                         Some(t),
                         Some(&v.event_label()),
                         None,
+                        None,
                     );
                 }
                 rows.push(CheckRow {
@@ -653,12 +660,20 @@ pub fn check(
             .map(|(_, v)| v)
             .collect();
         if let Some((label, masked_stale)) = roll_up_check(&test_verdicts) {
+            // suppressed_from: the worst pre-remap verdict LOCK 1/3 suppressed to memo — computed only
+            // when a suppression happened. Additive — `label` (the verdict field) stays "memo" unchanged.
+            let suppressed_from = if suppressed.is_empty() {
+                None
+            } else {
+                roll_up_check(&suppressed.iter().collect::<Vec<_>>()).map(|(l, _)| l)
+            };
             crate::events::append(
                 &store,
                 "check",
                 Some(t),
                 Some(&label),
                 masked_stale.as_deref(),
+                suppressed_from.as_deref(),
             );
         }
         // The per-host verdict-cache read contract for this tick (a hook reads it without shelling check).
@@ -923,7 +938,7 @@ pub fn migrate(repo: &Path, a: MigrateArgs) -> ExitCode {
     ) {
         Ok(s) => {
             if !a.dry_run {
-                crate::events::append(&Store::at(repo), "migrate", None, None, None);
+                crate::events::append(&Store::at(repo), "migrate", None, None, None, None);
             }
             println!(
                 "{}imported {}, skipped {}, re-linked {}, {} source-only gap(s){}",
@@ -1419,7 +1434,7 @@ pub fn reopen(repo: &Path, id: &str, painter: crate::render::Painter) -> ExitCod
     let live_origin = crate::staleness::resolve(repo, &store, &config.staleness_ref, true);
     let ctx = live_ctx(&store, config.staleness_days, live_origin, None);
 
-    crate::events::append(&store, "reopen", Some(&tick), None, None);
+    crate::events::append(&store, "reopen", Some(&tick), None, None, None);
     // The decision headline — provenance is a DECISION-level mark, shown ONCE here (per-ground rows
     // below carry only their own verdict, never a provenance glyph — the two axes never blur).
     let agent = tick.provenance.as_deref() == Some("agent-proposed");

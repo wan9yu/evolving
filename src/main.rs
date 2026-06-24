@@ -39,6 +39,18 @@ enum Cmd {
         self_test: bool,
     },
     /// Record a decision (with grounds + roads-not-taken)
+    #[command(
+        after_help = r#"GRAMMAR (walked from the trailing args, left to right — not listed above):
+  --assume "<claim>"          a ground (repeatable). Bind a runnable test to the latest ground with
+                              --assume-test <ref> --counter-test <cmd> --on-platform <p>
+                              --triggered-by <path> --surface <s> --verified-at-sha <sha>
+  --reject "<option>: <why>"  a road not taken (repeatable)
+  --revisit <when>            a human re-check ground (repeatable)
+  --observe <text>            the situation observed
+  --blame <who>               author override (else git config user.name)
+  --authority <user-ruled|agent-disposable>   --jurisdiction <A|B|C|D>
+  --source-ref <key>          opaque producer key    --from-git <commit>    --dry-run"#
+    )]
     Decide {
         /// The decision text; omit it and pass --from-git <commit> to seed from a commit envelope.
         /// allow_hyphen_values lets a leading --from-git reach us; cmd::decide re-routes it into args.
@@ -48,6 +60,16 @@ enum Cmd {
         args: Vec<String>,
     },
     /// Record an AGENT proposal — always agent-proposed, unbound, inert until a human runs `ev ratify`
+    #[command(
+        after_help = r#"GRAMMAR (walked from the trailing args, left to right — not listed above):
+  --assume "<claim>"          a ground the proposal rests on (repeatable)
+  --reject "<option>: <why>"  a road not taken (repeatable)
+  --source-ref <key>          the producer's round/work-unit key — a repeat of the same key is an idempotent no-op
+  --blame <who>               author override (else $EV_AGENT_ID, else "agent")
+  --from-git <commit>         seed the decision text from a commit    --json   the citable id envelope
+REFUSED here (a proposal is unbound — a check + authority attach only at `ev ratify`):
+  --assume-test  --counter-test  --on-platform  --triggered-by  --surface  --verified-at-sha  --revisit  --authority"#
+    )]
     Propose {
         /// The proposed decision text; or omit it and pass --from-git <commit> to seed from a commit.
         #[arg(allow_hyphen_values = true)]

@@ -98,6 +98,6 @@ pub fn run(repo: &Path, a: CorrectArgs) -> Result<Tick, String> {
             ratifies: None, // a correction is not a ratification
         },
     )?;
-    crate::events::append(&store, "correct", Some(&child), None, None);
+    crate::events::append(&store, "correct", Some(&child), None, None, None);
     Ok(child)
 }

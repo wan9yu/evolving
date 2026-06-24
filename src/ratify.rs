@@ -63,6 +63,6 @@ pub fn run(repo: &Path, a: RatifyArgs) -> Result<Tick, String> {
             ratifies: Some(target.id.clone()),
         },
     )?;
-    crate::events::append(&store, "ratify", Some(&child), None, None);
+    crate::events::append(&store, "ratify", Some(&child), None, None, None);
     Ok(child)
 }

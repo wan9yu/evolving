@@ -17,6 +17,7 @@ pub fn append(
     tick: Option<&Tick>,
     verdict: Option<&str>,
     masked_stale: Option<&str>,
+    suppressed_from: Option<&str>,
 ) {
     let now = OffsetDateTime::now_utc();
     let ts = now.format(&Rfc3339).unwrap_or_default();
@@ -49,6 +50,12 @@ pub fn append(
         }
         if let Some(m) = masked_stale {
             o.insert("masked_stale".into(), Value::String(m.into()));
+        }
+        // The pre-remap verdict when a not-green was suppressed to memo (LOCK 1 detect-only / LOCK 3
+        // agent-proposed). Additive: `verdict` stays "memo" unchanged; this lets the metrics harness
+        // tell a suppressed-red CATCH from a benign memo. Absent on a non-suppressed event.
+        if let Some(s) = suppressed_from {
+            o.insert("suppressed_from".into(), Value::String(s.into()));
         }
     }
     write_line(store, &e);

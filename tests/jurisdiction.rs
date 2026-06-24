@@ -271,6 +271,31 @@ fn list_should_render_the_jurisdiction_when_a_decision_is_tagged() {
 
 #[test]
 #[allow(non_snake_case)]
+fn check_event_should_carry_suppressed_from_when_a_legacy_C_tagged_red_is_memod() {
+    // given: a legacy C-tagged decision carrying a red test (LOCK 1 suppresses it to a non-gating memo)
+    let (r, head) = git_repo();
+    let id = decide_untagged_with_test(&r, &head);
+    inject_jurisdiction(&r, &id, "C");
+
+    // when: check evaluates (the red runs, then is remapped to memo)
+    ev().args(["check", "--run", "--platform", "local"])
+        .current_dir(&r)
+        .output()
+        .unwrap();
+
+    // then: the per-tick check EVENT (machine path) names the suppressed verdict — so the validation
+    // harness can tell a suppressed-red catch from a benign memo (the events stream stays additive:
+    // verdict stays "memo", a new suppressed_from field carries the pre-remap fact)
+    let log = std::fs::read_to_string(r.join(".evolving/results/events.jsonl")).unwrap();
+    assert!(
+        log.lines()
+            .any(|l| l.contains("\"op\":\"check\"") && l.contains("\"suppressed_from\":\"red\"")),
+        "the memo'd check event should carry suppressed_from=red; log:\n{log}"
+    );
+}
+
+#[test]
+#[allow(non_snake_case)]
 fn check_should_name_the_suppression_reason_on_a_legacy_C_tagged_memo_row() {
     // given: a legacy C-tagged decision carrying a red test (LOCK 1 suppresses its red to a memo)
     let (r, head) = git_repo();

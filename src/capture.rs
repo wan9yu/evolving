@@ -122,13 +122,7 @@ fn subject_role(subject: &str) -> Option<&'static str> {
 fn subject_refs(subject: &str) -> Vec<String> {
     subject
         .split_whitespace()
-        .filter(|tok| {
-            let rest = tok
-                .strip_prefix('#')
-                .or_else(|| tok.strip_prefix('R'))
-                .or_else(|| tok.strip_prefix('r'));
-            matches!(rest, Some(d) if !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit()))
-        })
+        .filter(|tok| crate::tick::is_round_or_issue_token(tok))
         .map(|t| t.to_string())
         .collect()
 }

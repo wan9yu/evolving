@@ -152,6 +152,16 @@ pub(crate) fn has_test_check(grounds: &[Ground]) -> bool {
         .any(|g| matches!(g.check, Some(Check::Test { .. })))
 }
 
+/// Whether `tok` is a `#<digits>` / `R<digits>` / `r<digits>` provenance token (an issue or round id).
+/// One vocabulary so capture.rs (`subject_refs`) and migrate.rs (`first_round_or_issue_token`) never drift.
+pub(crate) fn is_round_or_issue_token(tok: &str) -> bool {
+    let rest = tok
+        .strip_prefix('#')
+        .or_else(|| tok.strip_prefix('R'))
+        .or_else(|| tok.strip_prefix('r'));
+    matches!(rest, Some(d) if !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit()))
+}
+
 pub(crate) fn only_keys(
     obj: &Map<String, Value>,
     allowed: &[&str],

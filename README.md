@@ -14,7 +14,7 @@ Your agents make decisions faster than anyone can track — *build our own retri
 
 Months later the reason quietly moves — a dependency changes behavior, a constraint that made the call correct lifts, the test that proved the claim stops running. The decision is still in force, still shaping the codebase, but the ground beneath it is gone. So a fresh agent re-derives a call you already settled, or builds on a premise that quietly died — and you, the human on the hook, find out late, if at all.
 
-`ev` is the layer that closes that gap. It records a human-authored decision *and the grounds it rests on* as an immutable, content-addressed chain, binds a falsifiable check to each ground, and **resurfaces the decision when that check goes red — at your next `ev check`, no watcher to run.** It deals in facts, not verdicts: no scores, no ranks, no auto-judgements — just an honest record of what was decided, why, who is on the hook, and whether the check guarding each reason is still alive. Under the hood it's *git for decisions*; agents propose, a human ratifies and stays on the hook.
+`ev` is the layer that closes that gap. It records a human-authored decision *and the grounds it rests on* as an immutable, content-addressed chain, binds a falsifiable check to a ground, and **resurfaces the decision when that check goes red — at your next `ev check`, no watcher to run.** It deals in facts, not verdicts: no scores, no ranks, no auto-judgements — just an honest record of what was decided, why, who is on the hook, and whether the check guarding each reason is still alive. Under the hood it's *git for decisions*; agents propose, a human ratifies and stays on the hook.
 
 A single self-contained Rust binary. No network, no daemon. The store is a local `.evolving/` directory — content-addressed and append-only.
 
@@ -129,6 +129,7 @@ ev reopen <id>
 - **It does not claim tamper-resistance of offline test outcomes.** `ev` records that a test was bound and the commit it was verified at, but it cannot prove an offline test result was honest. That is a documented boundary, not a guarantee.
 - **It fires on changes recorded in git** — a bound check going red, or a commit touching a declared trigger. It does **not** detect external-state drift: a UI click, an org or config change, or an upstream-API behavior change that leaves no git commit will not trigger `ev`. A check that can only fail on external state belongs on a timer, not bound to a trigger.
 - **It detects; it does not prevent.** `ev` is decision memory that resurfaces a broken assumption, not an environment sentinel that stops one from happening.
+- **It assumes a single writer per store.** `ev` takes no lock when it appends a tick and advances `HEAD`, so two `ev` processes writing the same store concurrently can fork the chain or race the pointer. This is bounded and recoverable — content-addressing prevents corruption — but serialize your writers if you script `ev`.
 
 ## Documentation
 

@@ -81,6 +81,19 @@ fn current_decisions(mut ticks: Vec<(String, Tick)>) -> Vec<(String, Tick)> {
         .collect()
 }
 
+/// Parse the raw store files into the current decisions — every parseable tick, collapsed through
+/// `current_decisions` (corrective lineages superseded). The shared front of check / pending / brief;
+/// each then applies its own status / provenance / visibility filter. (`list` keeps unparseable files,
+/// so it parses the long way separately.)
+fn parse_current(files: &[(String, Value)]) -> Vec<(String, Tick)> {
+    current_decisions(
+        files
+            .iter()
+            .filter_map(|(name, raw)| crate::tick::from_value(raw).ok().map(|t| (name.clone(), t)))
+            .collect(),
+    )
+}
+
 /// Render an opaque `source_ref` for human display: a bare string verbatim, an object as its
 /// deterministic compact JSON. ev only renders it — it never interprets the contents. Kept distinct
 /// from `tick::source_ref_key` (which derives the dedup/join key): they coincide today but are
@@ -454,15 +467,10 @@ pub fn check(
     // reachable via `ev log` / `ev show`). Parsing once here also removes check's old double-parse
     // (the --run pass and the verdict loop each re-parsed every file). Unparsable ticks are skipped —
     // `ev verify` owns schema errors, the same contract the per-tick loop had.
-    let current: Vec<(String, Tick)> = current_decisions(
-        files
-            .iter()
-            .filter_map(|(name, raw)| crate::tick::from_value(raw).ok().map(|t| (name.clone(), t)))
-            .collect(),
-    )
-    .into_iter()
-    .filter(|(_, t)| t.status == "live")
-    .collect();
+    let current: Vec<(String, Tick)> = parse_current(&files)
+        .into_iter()
+        .filter(|(_, t)| t.status == "live")
+        .collect();
 
     // --run pass: for every live Test-bound ground that declares this platform, run the
     // bound ref locally and append a receipt for it (one local run = one platform receipt).
@@ -1116,11 +1124,7 @@ pub fn pending(repo: &Path, source_ref: Option<&str>, painter: crate::render::Pa
             return ExitCode::FAILURE;
         }
     };
-    let parsed: Vec<(String, Tick)> = files
-        .iter()
-        .filter_map(|(name, raw)| crate::tick::from_value(raw).ok().map(|t| (name.clone(), t)))
-        .collect();
-    let mut pend: Vec<(String, Tick)> = current_decisions(parsed)
+    let mut pend: Vec<(String, Tick)> = parse_current(&files)
         .into_iter()
         .filter(|(_, t)| t.status == "live" && t.provenance.as_deref() == Some("agent-proposed"))
         .collect();
@@ -1268,13 +1272,9 @@ pub fn brief(
     };
     // The flag overrides config; 0 (here or in config) means "show all".
     let limit = limit.unwrap_or(crate::config::read(&store).brief_limit);
-    // Collapse each corrective lineage to its current state BEFORE filtering, so an `ev correct` that
-    // (de)promotes authority is honored — then keep only the live, user-ruled, non-agent-proposed ones.
-    let all: Vec<(String, Tick)> = files
-        .iter()
-        .filter_map(|(name, raw)| crate::tick::from_value(raw).ok().map(|t| (name.clone(), t)))
-        .collect();
-    let mut kept: Vec<(String, Tick)> = current_decisions(all)
+    // parse_current collapses each corrective lineage to its current state BEFORE filtering, so an
+    // `ev correct` that (de)promotes authority is honored — then keep only the brief-visible ones.
+    let mut kept: Vec<(String, Tick)> = parse_current(&files)
         .into_iter()
         .filter(|(_, t)| brief_visible(t))
         .collect();

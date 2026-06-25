@@ -45,13 +45,7 @@ pub struct MigrationRecord {
 /// `subject_refs` vocabulary in capture.rs but returns the FIRST `R<n>`/`#<n>` as a stable key.
 fn first_round_or_issue_token(text: &str) -> Option<String> {
     text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '#'))
-        .find(|tok| {
-            let rest = tok
-                .strip_prefix('#')
-                .or_else(|| tok.strip_prefix('R'))
-                .or_else(|| tok.strip_prefix('r'));
-            matches!(rest, Some(d) if !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit()))
-        })
+        .find(|tok| crate::tick::is_round_or_issue_token(tok))
         .map(|t| t.to_string())
 }
 

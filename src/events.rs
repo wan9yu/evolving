@@ -25,7 +25,7 @@ pub fn append(
     if let Some(o) = e.as_object_mut() {
         if let Some(t) = tick {
             o.insert("tick_id".into(), Value::String(t.id.clone()));
-            // parent_id + the relation-overlay edges (corrects/ratifies) are the HEED-edge: they let the
+            // parent_id + the relation-overlay edges (supersedes/ratifies) are the HEED-edge: they let the
             // metrics harness join a heed (a correction/ratification) back to the decision whose check
             // went red — turning re-litigation-prevented into a real count. Non-hashed; emitted only
             // when present, so existing event lines are unchanged.
@@ -38,8 +38,8 @@ pub fn append(
             if let Some(age) = age_bucket(&t.held_since, now.unix_timestamp()) {
                 o.insert("age".into(), Value::String(age.into()));
             }
-            if let Some(c) = &t.corrects {
-                o.insert("corrects".into(), Value::String(c.clone()));
+            if let Some(c) = &t.supersedes {
+                o.insert("supersedes".into(), Value::String(c.clone()));
             }
             if let Some(r) = &t.ratifies {
                 o.insert("ratifies".into(), Value::String(r.clone()));

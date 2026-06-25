@@ -17,7 +17,7 @@ fn book(parent: &str, observe: &str, decision: &str, grounds: Vec<Ground>) -> Ti
         jurisdiction: None,
         source_ref: None,
         provenance: None,
-        corrects: None,
+        supersedes: None,
         ratifies: None,
     }
 }

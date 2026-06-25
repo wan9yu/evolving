@@ -179,7 +179,7 @@ mod tests {
             jurisdiction: None,
             source_ref: None,
             provenance: None,
-            corrects: None,
+            supersedes: None,
             ratifies: None,
         };
         t.id = compute_id(&t);

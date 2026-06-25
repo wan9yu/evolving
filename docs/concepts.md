@@ -45,18 +45,18 @@ forging a new identity:
   `{imported, agent-proposed, human-now}`, excluded from the hash; written only when set,
   **absent ⇒ `human-now`**. It records **how** the decision entered the ledger (see
   *Provenance* below). Vocab-validated; an out-of-vocabulary value is refused.
-- `corrects` / `ratifies` — the **two relation-overlay edges**, each (when set) the 12-hex id of the
-  tick this one points at. `corrects` (written by [`ev correct`](commands.md#ev-correct)) names the
+- `supersedes` / `ratifies` — the **two relation-overlay edges**, each (when set) the 12-hex id of the
+  tick this one points at. `supersedes` (written by [`ev supersede`](commands.md#ev-supersede)) names the
   tick this one supersedes; `ratifies` (written by [`ev ratify`](commands.md#ev-ratify)) names the
   agent proposal this human-now child ratifies. Both are non-hashed, so they never move the `id`; the
-  brief/list collapse reads `corrects` to supersede the corrected tick precisely. These are the **two
+  brief/list collapse reads `supersedes` to drop the superseded tick precisely. These are the **two
   specific, adopter-driven bridges** — the general case-law graph (governed-by / case-of / arbitrary
   typed edges) is deliberately not built, and a machine-fence test pins that the overlay edges are
   **exactly these two**, so a third can only be added deliberately.
 
 On disk a tick is stored as pretty JSON containing the hashed payload keys **plus** the
 bookkeeping keys at top level (`id`, `status`, `held_since`, `blame`, and — when set —
-`authority`, `jurisdiction`, `source_ref`, `provenance`, `corrects`, `ratifies`). `ev show` prints that file as-is.
+`authority`, `jurisdiction`, `source_ref`, `provenance`, `supersedes`, `ratifies`). `ev show` prints that file as-is.
 The genesis tick on disk looks like:
 
 ```json
@@ -84,12 +84,12 @@ same id pinned in the *Identity* table below). The `held_since` is shown as a pl
 real one is an RFC3339 time stamped at write time.
 
 Because `blame`, `status`, `held_since`, `authority`, `jurisdiction`, `source_ref`,
-`provenance`, and `corrects` sit outside the hash, blanking `blame` on disk does **not** change the
+`provenance`, and `supersedes` sit outside the hash, blanking `blame` on disk does **not** change the
 `id` — which is exactly why `ev verify` checks `blame` separately (R5). Equally, tagging a
-`jurisdiction`, a `source_ref`, a `provenance`, or a `corrects` edge on a decision leaves its `id`
+`jurisdiction`, a `source_ref`, a `provenance`, or a `supersedes` edge on a decision leaves its `id`
 untouched: these are declared bookkeeping, never part of the decision's identity. (The non-hashed
-`corrects` edge is what lets a correction be recorded as an *overlay* on top of the immutable chain
-without rewriting — or re-identifying — the tick it corrects.)
+`supersedes` edge is what lets a supersession be recorded as an *overlay* on top of the immutable chain
+without rewriting — or re-identifying — the tick it supersedes.)
 
 ### `source_ref` is the adopter's concept, carried opaquely
 
@@ -223,11 +223,12 @@ mutating the tick it targets. `HEAD` tracks the latest tick; `ev guard` can only
 current `HEAD`.
 
 Even a **non-hashed** tag (`authority` / `jurisdiction` / `provenance`) is never rewritten in
-place. A stale tag is fixed with **`ev correct`** (see [commands.md](commands.md#ev-correct)),
-which appends a corrective **child** that copies the target's hashed payload verbatim and carries
-the corrected tag — consistent with the same append-only law. The stale tick stays as honest
-history; `ev brief` and `ev list` collapse the corrective lineage to its **current** state, so the
-corrected child surfaces while `ev log` still shows the full lineage.
+place. A prior ruling is replaced with **`ev supersede`** (see [commands.md](commands.md#ev-supersede)),
+which appends a **child** carrying the `supersedes` edge — either a **re-tag** (copies the target's
+hashed payload verbatim, fixes a standing tag) or an **overturn** (a fresh ruling with its own grounds)
+— consistent with the same append-only law. The superseded tick stays as honest history; `ev brief` and
+`ev list` collapse the lineage to its **current** state, so the current ruling surfaces while `ev log`
+still shows the full lineage and `ev reopen <id>` marks an overturned ruling "superseded by".
 
 ## Jurisdiction — and the C/D *structurally ungateable* guarantee
 

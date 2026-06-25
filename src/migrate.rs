@@ -619,7 +619,7 @@ pub fn backfill(
                 jurisdiction: jurisdiction.clone(),
                 source_ref: source_ref.clone(),
                 provenance: provenance.clone(),
-                corrects: None,
+                supersedes: None,
                 ratifies: None,
             };
             let probe_id = compute_id(&probe);
@@ -644,8 +644,8 @@ pub fn backfill(
                 source_ref,
                 provenance,
                 // migrate/intake never authors a relation-overlay edge — `ev correct` and `ev ratify`
-                // are the sole writers of `corrects` / `ratifies` respectively.
-                corrects: None,
+                // are the sole writers of `supersedes` / `ratifies` respectively.
+                supersedes: None,
                 ratifies: None,
             },
         )?;

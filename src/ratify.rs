@@ -59,7 +59,7 @@ pub fn run(repo: &Path, a: RatifyArgs) -> Result<Tick, String> {
             jurisdiction: target.jurisdiction.clone(),
             source_ref: target.source_ref.clone(),
             provenance: None, // absent = human-now (same representation as ev decide)
-            corrects: None,
+            supersedes: None,
             ratifies: Some(target.id.clone()),
         },
     )?;

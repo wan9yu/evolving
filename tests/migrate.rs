@@ -891,7 +891,7 @@ fn single_tick_id(repo: &std::path::Path) -> String {
 }
 
 #[test]
-fn migrate_should_report_a_discrepancy_when_a_re_import_corrects_a_tag_but_never_apply_it() {
+fn migrate_should_report_a_discrepancy_when_a_re_import_supersedes_a_tag_but_never_apply_it() {
     // given: a store holding #247/#1458 imported with authority OMITTED (the gateway stale tick)
     let r = repo();
     let p1 = write_source(&r, "canonical", "p1.jsonl", RULING_NO_AUTH);

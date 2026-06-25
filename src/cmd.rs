@@ -6,13 +6,37 @@ use serde_json::{json, Value};
 use std::path::Path;
 use std::process::ExitCode;
 
-/// Append a corrective child that fixes a stale non-hashed tag, then report the new child id.
-pub fn correct(repo: &Path, a: crate::correct::CorrectArgs) -> ExitCode {
-    match crate::correct::run(repo, a) {
+/// Supersede a prior ruling: re-tag its standing (id + tags, no new ruling) or overturn it (id + a new
+/// ruling + `--assume` why). Both append a child carrying the `supersedes` edge; report the child id.
+pub fn supersede(repo: &Path, id: &str, decision: Option<&str>, args: &[String]) -> ExitCode {
+    // A leading flag in the decision slot means "no new ruling" (re-tag) — reroute it into args.
+    let (decision, args) = reroute_hyphen_positional(decision, args);
+    let result = match decision.as_deref() {
+        // no new ruling → RE-TAG the target's standing in place (copy payload + tag + edge)
+        None => match parse_retag(id, &args) {
+            Ok(a) => crate::supersede::retag(repo, a),
+            Err(e) => {
+                eprintln!("error: {e}");
+                return ExitCode::FAILURE;
+            }
+        },
+        // a new ruling → OVERTURN (a fresh decision replaces the prior ruling, carrying the edge)
+        Some(text) => crate::capture::overturn(repo, text, &args, id),
+    };
+    match result {
         Ok(t) => {
-            // No "(N ground(s))": a correction copies the parent's grounds verbatim, so the count is a
-            // zero-entropy echo. A count belongs only at CREATION (decide/propose), not an amendment.
-            println!("corrected {}", t.id);
+            crate::events::append(&Store::at(repo), "supersede", Some(&t), None, None, None);
+            // A re-tag copies the parent's grounds verbatim, so "(N ground(s))" would be a zero-entropy
+            // echo (a count belongs only at CREATION); an overturn IS a creation, so it carries one.
+            if decision.is_none() {
+                println!("re-tagged {} (supersedes {id})", t.id);
+            } else {
+                println!(
+                    "recorded {} ({} ground(s)) — supersedes {id}",
+                    t.id,
+                    t.grounds.len()
+                );
+            }
             ExitCode::SUCCESS
         }
         Err(e) => {
@@ -20,6 +44,42 @@ pub fn correct(repo: &Path, a: crate::correct::CorrectArgs) -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// Walk the re-tag args (`ev supersede <id>` with no new ruling): only the four non-hashed tags +
+/// blame. An unexpected token is rejected loudly — a stray positional means the caller meant to
+/// overturn (and forgot the ruling) or mistyped a flag.
+fn parse_retag(id: &str, args: &[String]) -> Result<crate::supersede::RetagArgs, String> {
+    fn val(args: &[String], i: usize, flag: &str) -> Result<String, String> {
+        args.get(i + 1)
+            .cloned()
+            .ok_or_else(|| format!("{flag} needs a value"))
+    }
+    let mut a = crate::supersede::RetagArgs {
+        id: id.to_string(),
+        authority: None,
+        jurisdiction: None,
+        provenance: None,
+        blame: None,
+    };
+    let mut i = 0;
+    while i < args.len() {
+        let flag = args[i].as_str();
+        match flag {
+            "--authority" => a.authority = Some(val(args, i, flag)?),
+            "--jurisdiction" => a.jurisdiction = Some(val(args, i, flag)?),
+            "--provenance" => a.provenance = Some(val(args, i, flag)?),
+            "--blame" => a.blame = Some(val(args, i, flag)?),
+            other => {
+                return Err(format!(
+                    "ev supersede: unexpected argument {other:?} — re-tag accepts \
+                     --authority / --jurisdiction / --provenance / --blame; pass a new ruling text to overturn"
+                ))
+            }
+        }
+        i += 2;
+    }
+    Ok(a)
 }
 
 /// Ratify an agent proposal — mint a human-now, user-ruled child carrying the `ratifies` edge.
@@ -45,9 +105,9 @@ pub fn ratify(repo: &Path, id: &str, blame: &str) -> ExitCode {
 /// The identity of a DECISION (not a tick): its hashed payload minus `parent_id`. The LEGACY collapse
 /// signal: ticks sharing this — in practice a pre-0.1.10 `ev correct` child and the tick it re-tags
 /// (same decision/observe/grounds, a different chain position) — are treated as one decision and
-/// collapsed to the latest. Content equality is a weaker signal than the explicit `corrects` edge
+/// collapsed to the latest. Content equality is a weaker signal than the explicit `supersedes` edge
 /// (two genuinely-independent decisions with byte-identical decision/observe/grounds also share it);
-/// since 0.1.10 a correction carries an explicit `corrects:<id>` edge, and the edge supersedes first —
+/// since 0.1.10 a correction carries an explicit `supersedes:<id>` edge, and the edge supersedes first —
 /// content-equality remains only as the fallback that keeps legacy (edge-less) corrections collapsing.
 fn decision_identity(t: &Tick) -> String {
     let mut v = crate::canonical::hashed_value(t);
@@ -58,18 +118,18 @@ fn decision_identity(t: &Tick) -> String {
 }
 
 /// Collapse a corrective lineage to its CURRENT state. Two signals, in order:
-/// 1. The explicit `corrects:<id>` relation-overlay edge (0.1.10+): a tick whose id is named by some
-///    other tick's `corrects` is SUPERSEDED — dropped precisely, regardless of content. (No cycles:
-///    `corrects` only ever points backward to an older tick — append-only + content-addressed.)
+/// 1. The explicit `supersedes:<id>` relation-overlay edge (0.1.10+): a tick whose id is named by some
+///    other tick's `supersedes` is SUPERSEDED — dropped precisely, regardless of content. (No cycles:
+///    `supersedes` only ever points backward to an older tick — append-only + content-addressed.)
 /// 2. Legacy content-equality fallback: among the survivors, keep only the latest (by `held_since`,
 ///    then id) per `decision_identity` — so pre-0.1.10 corrective children (no edge) still collapse.
 ///
 /// A decision that was never corrected is its own sole entry.
 fn current_decisions(mut ticks: Vec<(String, Tick)>) -> Vec<(String, Tick)> {
-    // every id named by a `corrects` edge — explicitly superseded by a correction
+    // every id named by a `supersedes` edge — explicitly superseded by a correction
     let corrected: std::collections::HashSet<String> = ticks
         .iter()
-        .filter_map(|(_, t)| t.corrects.clone())
+        .filter_map(|(_, t)| t.supersedes.clone())
         .collect();
     // latest-first, so the FIRST seen per decision identity is the current one
     ticks.sort_by(|a, b| b.1.held_since.cmp(&a.1.held_since).then(b.0.cmp(&a.0)));
@@ -81,17 +141,31 @@ fn current_decisions(mut ticks: Vec<(String, Tick)>) -> Vec<(String, Tick)> {
         .collect()
 }
 
+/// Parse the raw store files into ticks — every parseable tick, NOT collapsed (a superseded tick is
+/// still present). The shared parse step under `parse_current` and the reopen supersession scan.
+fn parse_all(files: &[(String, Value)]) -> Vec<(String, Tick)> {
+    files
+        .iter()
+        .filter_map(|(name, raw)| crate::tick::from_value(raw).ok().map(|t| (name.clone(), t)))
+        .collect()
+}
+
 /// Parse the raw store files into the current decisions — every parseable tick, collapsed through
-/// `current_decisions` (corrective lineages superseded). The shared front of check / pending / brief;
+/// `current_decisions` (superseded lineages dropped). The shared front of check / pending / brief;
 /// each then applies its own status / provenance / visibility filter. (`list` keeps unparseable files,
 /// so it parses the long way separately.)
 fn parse_current(files: &[(String, Value)]) -> Vec<(String, Tick)> {
-    current_decisions(
-        files
-            .iter()
-            .filter_map(|(name, raw)| crate::tick::from_value(raw).ok().map(|t| (name.clone(), t)))
-            .collect(),
-    )
+    current_decisions(parse_all(files))
+}
+
+/// The most recent child carrying `supersedes:<id>` (a re-tag or an overturn), if any. An immutable
+/// tick has no forward pointer, so a superseded ruling's staleness is computed by this forward scan.
+fn superseding_child(ticks: &[(String, Tick)], id: &str) -> Option<String> {
+    ticks
+        .iter()
+        .filter(|(_, t)| t.supersedes.as_deref() == Some(id))
+        .max_by(|a, b| a.1.held_since.cmp(&b.1.held_since).then(a.0.cmp(&b.0)))
+        .map(|(name, _)| name.clone())
 }
 
 /// Render an opaque `source_ref` for human display: a bare string verbatim, an object as its
@@ -158,7 +232,7 @@ pub fn show(repo: &Path, id: &str) -> ExitCode {
     match std::fs::read_to_string(&path) {
         Ok(text) => {
             // The raw on-disk tick, verbatim — PURE JSON, so `ev show <id> | jq` is clean. (The
-            // authority/jurisdiction/source_ref/corrects/ratifies fields were once re-printed below as
+            // authority/jurisdiction/source_ref/supersedes/ratifies fields were once re-printed below as
             // label:value lines; that duplicated the JSON, broke a jq pipe, and surfaced an arbitrary
             // subset. A human-readable single-tick view is a separate concern from this machine dump.)
             println!("{text}");
@@ -1401,8 +1475,8 @@ pub fn log(repo: &Path, painter: crate::render::Painter) -> ExitCode {
                 if painter.rich {
                     // Chronological lineage: the edge-verb sits in a fixed dim slot — the ledger's
                     // grammar made visible. (ratifies <id> joins once Cut D lands.)
-                    let verb = match (&t.corrects, &t.ratifies, t.provenance.as_deref()) {
-                        (Some(c), _, _) => format!("corrects {c}"),
+                    let verb = match (&t.supersedes, &t.ratifies, t.provenance.as_deref()) {
+                        (Some(c), _, _) => format!("supersedes {c}"),
                         (_, Some(r), _) => format!("ratifies {r}"),
                         (None, None, Some("agent-proposed")) => "proposed".to_string(),
                         (None, None, _) => "decided".to_string(),
@@ -1448,6 +1522,11 @@ pub fn reopen(repo: &Path, id: &str, painter: crate::render::Painter) -> ExitCod
             return ExitCode::FAILURE;
         }
     };
+    // Has a later ruling superseded this one? (Forward scan — an immutable tick has no forward pointer.)
+    let superseded_by: Option<String> = store
+        .read_all()
+        .ok()
+        .and_then(|files| superseding_child(&parse_all(&files), id));
     let config = crate::config::read(&store);
     let live_origin = crate::staleness::resolve(repo, &store, &config.staleness_ref, true);
     let ctx = live_ctx(&store, config.staleness_days, live_origin, None);
@@ -1479,11 +1558,14 @@ pub fn reopen(repo: &Path, id: &str, painter: crate::render::Painter) -> ExitCod
         if let Some(r) = &tick.source_ref {
             tags.push(format!("source_ref={}", render_source_ref(r)));
         }
-        if let Some(c) = &tick.corrects {
-            tags.push(format!("corrects {c}"));
+        if let Some(c) = &tick.supersedes {
+            tags.push(format!("supersedes {c}"));
         }
         if let Some(rt) = &tick.ratifies {
             tags.push(format!("ratifies {rt}"));
+        }
+        if let Some(s) = &superseded_by {
+            tags.push(format!("superseded by {s}"));
         }
         if !tags.is_empty() {
             println!("  {}", painter.meta(&tags.join(" · ")));
@@ -1502,11 +1584,14 @@ pub fn reopen(repo: &Path, id: &str, painter: crate::render::Painter) -> ExitCod
         if let Some(r) = &tick.source_ref {
             println!("source_ref: {}", render_source_ref(r));
         }
-        if let Some(c) = &tick.corrects {
-            println!("corrects: {c}");
+        if let Some(c) = &tick.supersedes {
+            println!("supersedes: {c}");
         }
         if let Some(rt) = &tick.ratifies {
             println!("ratifies: {rt}");
+        }
+        if let Some(s) = &superseded_by {
+            println!("superseded by: {s}");
         }
     }
     for g in &tick.grounds {
@@ -1596,7 +1681,7 @@ fn self_test_golden() -> ExitCode {
         jurisdiction: None,
         source_ref: None,
         provenance: None,
-        corrects: None,
+        supersedes: None,
         ratifies: None,
     };
     let case1 = Tick {
@@ -1641,7 +1726,7 @@ fn self_test_golden() -> ExitCode {
         jurisdiction: None,
         source_ref: None,
         provenance: None,
-        corrects: None,
+        supersedes: None,
         ratifies: None,
     };
     // A harvested binding: case1's first ground with counter_test omitted (None). Pins that

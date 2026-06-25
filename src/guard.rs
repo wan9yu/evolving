@@ -134,7 +134,7 @@ pub fn run(repo: &Path, a: GuardArgs) -> Result<Tick, String> {
         // NOT inherited: provenance is a property of the authorship ACT, not the decision. A guard is a
         // fresh human act, hard-stamped human-now (the absent default) — the launder defense.
         provenance: None,
-        corrects: None,
+        supersedes: None,
         ratifies: None,
     };
     crate::capture::append(repo, d)

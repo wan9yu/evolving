@@ -75,12 +75,12 @@ fn check_should_not_gate_on_a_corrected_tick_when_the_correction_demotes_it_to_n
         "the bound not-run decision must gate before any correction"
     );
 
-    // when: a human corrects its provenance to agent-proposed — LOCK 3 makes an agent-proposed tick
-    // structurally non-gating — minting a child that supersedes the original via a `corrects` edge
+    // when: a human supersedes its provenance to agent-proposed — LOCK 3 makes an agent-proposed tick
+    // structurally non-gating — minting a child that supersedes the original via a `supersedes` edge
     assert!(run(
         &r,
         &[
-            "correct",
+            "supersede",
             &id,
             "--provenance",
             "agent-proposed",
@@ -110,7 +110,7 @@ fn check_should_show_a_corrected_decision_once_not_once_per_lineage_tick() {
     assert!(run(
         &r,
         &[
-            "correct",
+            "supersede",
             &id,
             "--authority",
             "agent-disposable",

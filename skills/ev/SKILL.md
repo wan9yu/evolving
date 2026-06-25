@@ -200,22 +200,21 @@ proven` and prints a `harvested-unproven: N of M …` debt line. **The way out i
 add a `--counter-test` and the binding becomes proven. Do not present a harvested green as a
 proven one.
 
-**Correct a stale non-hashed tag** (`authority` / `jurisdiction` / `provenance`) on an existing
-decision with `ev correct <id> [--authority <v>] [--jurisdiction <v>] [--provenance <v>] --blame
-"<name>"`. Under append-only immutability it never rewrites the target — it appends a corrective
-**child** that copies the target's hashed payload verbatim, carries the corrected tag, and records an
-explicit **`corrects:<target-id>` edge** (non-hashed — `ev`'s first and only relation overlay; the
-general case-law graph is not built). `ev brief` / `ev list` collapse via that edge to surface the
-child (the stale parent stays in `ev log`; `ev show` / `ev reopen` print the `corrects:` edge so the
-correction is traceable). At least one tag is
-required; a no-op is refused (`nothing to correct`); an override wins, an unspecified tag inherits.
-This is the remedy when **`ev migrate` reports a discrepancy** — a re-import whose resolved tags
-differ from the stored tick is surfaced loudly (`… N discrepancy(ies) — see above`, never silently
-skipped) precisely so a corrected ruling is not invisibly dropped; resolve it with `ev correct`,
-not by editing a tick:
+**Supersede a prior ruling** with `ev supersede`. Under append-only immutability it never rewrites the
+target — it appends a **child** carrying an explicit **`supersedes:<target-id>` edge** (non-hashed —
+one of `ev`'s **two** relation overlays, with `ratifies`; the general case-law graph is not built). Two
+branches: **re-tag** `ev supersede <id> [--authority <v>] [--jurisdiction <v>] [--provenance <v>] --blame
+"<name>"` copies the target's hashed payload verbatim and fixes a standing tag (at least one tag
+required; a no-op is refused — `nothing to re-tag`); **overturn** `ev supersede <id> "<new ruling>"
+--assume "<why the prior ruling no longer holds>"` records a fresh decision that replaces the prior one
+(a reason is required). The superseded tick leaves every current view; `ev reopen <id>` marks an
+overturned ruling **"superseded by"**, and the stale parent stays in `ev log`. Re-tag is also the remedy
+when **`ev migrate` reports a discrepancy** — a re-import whose resolved tags differ from the stored
+tick is surfaced loudly (`… N discrepancy(ies) — see above`, never silently skipped); resolve it with
+`ev supersede`, not by editing a tick:
 
 ```sh
-ev correct <id> --authority user-ruled --blame "<the human accountable>"   # a ruling imported as an open item now surfaces in `ev brief`
+ev supersede <id> --authority user-ruled --blame "<the human accountable>"   # a ruling imported as an open item now surfaces in `ev brief`
 ```
 
 **Import a ruling to *watch*, not to *fail on*** — tag it `--jurisdiction C` (or `D`) on `ev decide`,

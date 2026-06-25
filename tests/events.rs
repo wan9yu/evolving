@@ -310,30 +310,36 @@ fn check_should_append_a_check_run_summary_with_wall_ms_when_evaluated() {
 }
 
 #[test]
-fn correct_event_should_carry_the_corrects_heed_edge_when_a_decision_is_corrected() {
+fn supersede_event_should_carry_the_supersedes_heed_edge_when_a_decision_is_superseded() {
     // given: a recorded decision
     let r = repo();
     let id = decide(&r, "use Postgres");
 
-    // when: a human corrects it (sets a jurisdiction tag) — mints a corrective child
+    // when: a human supersedes it (re-tags a jurisdiction) — mints a child carrying the edge
     let out = ev()
-        .args(["correct", &id, "--jurisdiction", "A", "--blame", "Wang Yu"])
+        .args([
+            "supersede",
+            &id,
+            "--jurisdiction",
+            "A",
+            "--blame",
+            "Wang Yu",
+        ])
         .current_dir(&r)
         .output()
         .unwrap();
     assert!(
         out.status.success(),
-        "correct: {}",
+        "supersede: {}",
         String::from_utf8_lossy(&out.stderr)
     );
 
-    // then: the correct event carries the `corrects` heed-edge — joining a heed back to the decision
+    // then: the supersede event carries the `supersedes` heed-edge — joining a heed back to the decision
     // whose check went red, so the harness can count re-litigation-prevented
     let log = std::fs::read_to_string(r.join(".evolving/results/events.jsonl")).unwrap();
     assert!(
-        log.lines()
-            .any(|l| l.contains("\"op\":\"correct\"")
-                && l.contains(&format!("\"corrects\":\"{id}\""))),
-        "expected the correct event to carry corrects={id}; log:\n{log}"
+        log.lines().any(|l| l.contains("\"op\":\"supersede\"")
+            && l.contains(&format!("\"supersedes\":\"{id}\""))),
+        "expected the supersede event to carry supersedes={id}; log:\n{log}"
     );
 }

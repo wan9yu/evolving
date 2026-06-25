@@ -4,7 +4,7 @@
 rest on as an immutable, content-addressed *tick chain*, binds a test-check or a human
 re-check to each ground, and audits that chain against a fixed set of refusals.
 
-These docs cover the `ev` command surface: `init`, `decide`, `guard`, `migrate`, `correct`,
+These docs cover the `ev` command surface: `init`, `decide`, `guard`, `migrate`, `supersede`,
 `check`, `why`, `reopen`, `show`, `brief`, `list`, `log`, `verify`.
 
 - **[usage.md](usage.md)** — a task-oriented guide: the common workflows ("I just made a

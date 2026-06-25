@@ -15,8 +15,8 @@ pub struct Tick {
     pub jurisdiction: Option<String>, // bookkeeping (declared ∈ {A,B,C,D}, not hashed); C/D = detect-only
     pub source_ref: Option<Value>, // bookkeeping (opaque producer-supplied source identity — a string or object, not hashed); ev derives a dedup key, never interprets it
     pub provenance: Option<String>, // bookkeeping (declared ∈ {imported,agent-proposed,human-now}, not hashed); absent = human-now
-    pub corrects: Option<String>, // bookkeeping (non-hashed): a relation-overlay edge — this tick CORRECTS the tick with this id (written by `ev correct`).
-    pub ratifies: Option<String>, // bookkeeping (non-hashed): a relation-overlay edge — this (human-now) tick RATIFIES the agent proposal with this id (written by `ev ratify`). The SECOND overlay edge; corrects + ratifies are the two specific, adopter-driven bridges — the general case-law graph is deliberately not built.
+    pub supersedes: Option<String>, // bookkeeping (non-hashed): a relation-overlay edge — this tick SUPERSEDES the tick with this id (written by `ev supersede`: a re-tag of its standing, or an overturn by a new ruling).
+    pub ratifies: Option<String>, // bookkeeping (non-hashed): a relation-overlay edge — this (human-now) tick RATIFIES the agent proposal with this id (written by `ev ratify`). The SECOND overlay edge; supersedes + ratifies are the two specific, adopter-driven bridges — the general case-law graph is deliberately not built.
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -69,8 +69,8 @@ pub fn full_value(t: &Tick) -> Value {
         if let Some(p) = &t.provenance {
             map.insert("provenance".into(), Value::String(p.clone()));
         }
-        if let Some(c) = &t.corrects {
-            map.insert("corrects".into(), Value::String(c.clone()));
+        if let Some(c) = &t.supersedes {
+            map.insert("supersedes".into(), Value::String(c.clone()));
         }
         if let Some(r) = &t.ratifies {
             map.insert("ratifies".into(), Value::String(r.clone()));
@@ -316,11 +316,11 @@ pub(crate) const KNOWN_NON_HASHED_KEYS: &[&str] = &[
     "jurisdiction",
     "source_ref",
     "provenance",
-    "corrects",
+    "supersedes",
     "ratifies",
 ];
 
-/// Validate a relation-overlay back-link (`corrects` / `ratifies`): it must be a tick id — exactly 12
+/// Validate a relation-overlay back-link (`supersedes` / `ratifies`): it must be a tick id — exactly 12
 /// lowercase hex. (ev only ever writes a real target id via `ev correct` / `ev ratify`; the check
 /// catches a hand-edited/typo'd reference.)
 pub(crate) fn validate_edge_id(field: &str, val: &str) -> Result<(), String> {
@@ -406,10 +406,10 @@ pub fn from_value(v: &Value) -> Result<Tick, String> {
                 Some(p.to_string())
             }
         },
-        corrects: match obj.get("corrects").and_then(|x| x.as_str()) {
+        supersedes: match obj.get("supersedes").and_then(|x| x.as_str()) {
             None => None,
             Some(c) => {
-                validate_edge_id("corrects", c)?; // must be a 12-hex tick id
+                validate_edge_id("supersedes", c)?; // must be a 12-hex tick id
                 Some(c.to_string())
             }
         },
@@ -429,8 +429,8 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn the_only_relation_overlay_edges_are_corrects_and_ratifies() {
-        // given/then: ev ships exactly TWO relation-overlay edges — `corrects` (`ev correct`) and
+    fn the_only_relation_overlay_edges_are_supersedes_and_ratifies() {
+        // given/then: ev ships exactly TWO relation-overlay edges — `supersedes` (`ev correct`) and
         // `ratifies` (`ev ratify`). They are specific, adopter-driven bridges, each for one real need;
         // the general case-law graph (governed-by / case-of / arbitrary typed edges) is the PARKED 0.2
         // work and is deliberately NOT built. This fence pins the overlay surface: the non-hashed key
@@ -444,7 +444,7 @@ mod tests {
                 "jurisdiction",
                 "source_ref",
                 "provenance",
-                "corrects",
+                "supersedes",
                 "ratifies"
             ],
             "the relation-overlay surface changed — is this a deliberate new edge (the 0.2 graph)?"
@@ -452,28 +452,28 @@ mod tests {
     }
 
     #[test]
-    fn from_value_should_reject_a_corrects_that_is_not_a_tick_id() {
-        // given: an on-disk tick whose corrects edge is hand-edited to a non-id value
+    fn from_value_should_reject_a_supersedes_that_is_not_a_tick_id() {
+        // given: an on-disk tick whose supersedes edge is hand-edited to a non-id value
         let mut v = genesis_full();
         v.as_object_mut()
             .unwrap()
-            .insert("corrects".into(), json!("not-a-real-id"));
+            .insert("supersedes".into(), json!("not-a-real-id"));
 
         // when/then: the read-path validator rejects it — the overlay edge must be a real tick id
         assert!(from_value(&v).is_err());
     }
 
     #[test]
-    fn from_value_should_accept_a_valid_corrects_edge() {
-        // given: an on-disk tick carrying a well-formed 12-hex corrects edge
+    fn from_value_should_accept_a_valid_supersedes_edge() {
+        // given: an on-disk tick carrying a well-formed 12-hex supersedes edge
         let mut v = genesis_full();
         v.as_object_mut()
             .unwrap()
-            .insert("corrects".into(), json!("638c47b0c9dd"));
+            .insert("supersedes".into(), json!("638c47b0c9dd"));
 
         // when/then: it parses and round-trips the edge
-        let t = from_value(&v).expect("a valid corrects edge parses");
-        assert_eq!(t.corrects.as_deref(), Some("638c47b0c9dd"));
+        let t = from_value(&v).expect("a valid supersedes edge parses");
+        assert_eq!(t.supersedes.as_deref(), Some("638c47b0c9dd"));
     }
 
     #[test]
@@ -492,11 +492,11 @@ mod tests {
     #[test]
     fn an_overlay_edge_must_be_a_twelve_hex_tick_id() {
         // given/then: each edge validates as a tick id — a hand-edited/typo'd reference is rejected
-        assert!(validate_edge_id("corrects", "e2b337f53a1f").is_ok());
+        assert!(validate_edge_id("supersedes", "e2b337f53a1f").is_ok());
         assert!(validate_edge_id("ratifies", "638c47b0c9dd").is_ok());
-        assert!(validate_edge_id("corrects", "E2B337F53A1F").is_err()); // uppercase
-        assert!(validate_edge_id("corrects", "e2b337").is_err()); // too short
-        assert!(validate_edge_id("corrects", "not-hex-here!").is_err());
+        assert!(validate_edge_id("supersedes", "E2B337F53A1F").is_err()); // uppercase
+        assert!(validate_edge_id("supersedes", "e2b337").is_err()); // too short
+        assert!(validate_edge_id("supersedes", "not-hex-here!").is_err());
     }
 
     fn genesis_full() -> serde_json::Value {

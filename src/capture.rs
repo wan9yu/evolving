@@ -207,9 +207,9 @@ pub struct Decision {
     pub jurisdiction: Option<String>,
     pub source_ref: Option<serde_json::Value>,
     pub provenance: Option<String>,
-    // Non-hashed relation-overlay edges: `corrects` (set by `ev correct`), `ratifies` (set by
+    // Non-hashed relation-overlay edges: `supersedes` (set by `ev correct`), `ratifies` (set by
     // `ev ratify` — this human-now child ratifies an agent proposal); both None for a fresh decision.
-    pub corrects: Option<String>,
+    pub supersedes: Option<String>,
     pub ratifies: Option<String>,
 }
 
@@ -261,7 +261,7 @@ pub fn build(repo: &Path, d: Decision) -> Result<Tick, String> {
         jurisdiction: d.jurisdiction,
         source_ref: d.source_ref,
         provenance: d.provenance,
-        corrects: d.corrects,
+        supersedes: d.supersedes,
         ratifies: d.ratifies,
     };
     t.id = compute_id(&t);
@@ -524,7 +524,7 @@ fn assemble(repo: &Path, decision: Option<&str>, args: &[String]) -> Result<Deci
         // Fresh authorship is hard-stamped human-now (the absent default); decide takes no
         // provenance from the caller, so an importer can never launder a forbidden op as imported.
         provenance: None,
-        corrects: None,
+        supersedes: None,
         ratifies: None,
     })
 }
@@ -532,6 +532,36 @@ fn assemble(repo: &Path, decision: Option<&str>, args: &[String]) -> Result<Deci
 /// `ev decide` — assemble the decision and append it to the ledger.
 pub fn run(repo: &Path, decision: Option<&str>, args: &[String]) -> Result<Tick, String> {
     append(repo, assemble(repo, decision, args)?)
+}
+
+/// `ev supersede <id> "<new ruling>"` — the OVERTURN branch. A fresh decision (the full `ev decide`
+/// grammar for its grounds) that REPLACES a prior ruling, carrying a `supersedes:<target>` edge. A
+/// supersession must say WHY the prior ruling no longer holds, so at least one chosen ground
+/// (`--assume`) is REQUIRED — a bare overturn with no reason is refused. The target must exist.
+pub fn overturn(
+    repo: &Path,
+    decision: &str,
+    args: &[String],
+    target_id: &str,
+) -> Result<Tick, String> {
+    let store = Store::at(repo);
+    if store
+        .read_tick(target_id)
+        .map_err(|e| format!("reading {target_id}: {e}"))?
+        .is_none()
+    {
+        return Err(format!("no such tick to supersede: {target_id}"));
+    }
+    let mut d = assemble(repo, Some(decision), args)?;
+    if !d.grounds.iter().any(|g| g.supports == "chosen") {
+        return Err(
+            "ev supersede <id> <new ruling> needs at least one --assume <why the prior ruling no \
+             longer holds>"
+                .into(),
+        );
+    }
+    d.supersedes = Some(target_id.to_string());
+    append(repo, d)
 }
 
 /// `ev decide --dry-run` — assemble + build the tick (so every validation fires and the real id is
@@ -1170,7 +1200,7 @@ mod tests {
             jurisdiction: None,
             source_ref: None,
             provenance: None,
-            corrects: None,
+            supersedes: None,
             ratifies: None,
         };
 
@@ -1212,7 +1242,7 @@ mod tests {
             jurisdiction: Some("C".into()),
             source_ref: None,
             provenance: None,
-            corrects: None,
+            supersedes: None,
             ratifies: None,
         };
 

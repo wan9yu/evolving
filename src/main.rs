@@ -161,18 +161,25 @@ a check binds later via `ev guard`):
         #[arg(long = "jurisdiction-map")]
         jurisdiction_map: Option<String>,
     },
-    /// Correct a stale non-hashed tag (authority/jurisdiction/provenance) by appending a child.
-    Correct {
-        /// The tick id whose tag to correct.
+    /// Supersede a prior ruling: re-tag its standing (id + tags) or overturn it (id + a new ruling).
+    #[command(after_help = r#"GRAMMAR
+  ev supersede <id>                       RE-TAG — fix a standing tag in place (copies the ruling):
+    --authority <user-ruled|agent-disposable>   --jurisdiction <A|B|C|D>
+    --provenance <imported|agent-proposed|human-now>   --blame <who>
+  ev supersede <id> "<new ruling>"        OVERTURN — a fresh ruling replaces the prior one:
+    --assume "<why the prior ruling no longer holds>"   REQUIRED (repeatable)
+    --reject "<option>: <why>"            a road not taken (repeatable)
+    --authority / --jurisdiction / --source-ref / --blame   as in `ev decide`
+The target is never rewritten; the child carries a supersedes:<id> edge. The superseded ruling leaves
+every current view; `ev reopen <id>` marks it "superseded by"."#)]
+    Supersede {
+        /// The tick id this supersedes.
         id: String,
-        #[arg(long)]
-        authority: Option<String>,
-        #[arg(long)]
-        jurisdiction: Option<String>,
-        #[arg(long)]
-        provenance: Option<String>,
-        #[arg(long)]
-        blame: Option<String>,
+        /// The new ruling text. Omit it (pass only tags) to re-tag the target's standing in place.
+        #[arg(allow_hyphen_values = true)]
+        decision: Option<String>,
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
     },
     /// Ratify an agent proposal — mint a human-now, user-ruled child (the only propose→ratify bridge)
     Ratify {
@@ -277,22 +284,9 @@ fn main() -> std::process::ExitCode {
                 jurisdiction_map,
             },
         ),
-        Cmd::Correct {
-            id,
-            authority,
-            jurisdiction,
-            provenance,
-            blame,
-        } => ev::cmd::correct(
-            &repo,
-            ev::correct::CorrectArgs {
-                id,
-                authority,
-                jurisdiction,
-                provenance,
-                blame,
-            },
-        ),
+        Cmd::Supersede { id, decision, args } => {
+            ev::cmd::supersede(&repo, &id, decision.as_deref(), &args)
+        }
         Cmd::Ratify { id, blame } => ev::cmd::ratify(&repo, &id, &blame),
         Cmd::Pending { source_ref } => ev::cmd::pending(&repo, source_ref.as_deref(), painter),
         Cmd::Why { selector } => ev::cmd::why(&repo, &selector),

@@ -130,6 +130,12 @@ pub(crate) fn source_ref_key(v: &Value) -> String {
     }
 }
 
+/// Whether a tick's source_ref normalizes to `key` (the same dedup key `source_ref_key` derives).
+/// One predicate so propose's idempotency and `ev pending --source-ref` agree on "same source_ref".
+pub(crate) fn source_ref_matches(t: &Tick, key: &str) -> bool {
+    t.source_ref.as_ref().map(source_ref_key).as_deref() == Some(key)
+}
+
 /// Whether a detect-only (`C`/`D`) jurisdiction carries a runnable Test check on any ground. This is
 /// the single predicate behind the structural "a detect-only decision must not be able to gate, so it
 /// holds no runnable test binding" refusal — enforced both at the migrate ingest boundary (refuse at

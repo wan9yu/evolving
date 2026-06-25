@@ -6,15 +6,15 @@
 [![codecov](https://codecov.io/gh/wan9yu/evolving/branch/main/graph/badge.svg)](https://codecov.io/gh/wan9yu/evolving)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
-> Git for decisions — the durable decision layer that resurfaces a decision the moment a bound check goes red.
+> **Decisions don't stay right.** `ev` watches the reason a decision rests on and resurfaces it when that reason breaks — at your next `ev check`, no watcher to run.
 
 ## The problem
 
-A decision gets made — *we'll build our own retrieval; we'll keep the schema frozen; no Redis* — and the reasoning behind it is real and considered at the time. Then it scrolls out of view. The thread is archived, the ticket closes, the people rotate.
+Your agents make decisions faster than anyone can track — *build our own retrieval; keep the schema frozen; no Redis* — each one resting on a reason that was real at the time. Then it scrolls out of view: the thread is archived, the run ends, the agent that made the call is gone by the next one.
 
-Months later, an assumption that decision rested on quietly breaks: a dependency changes behavior, a constraint that made the call correct no longer holds, the test that proved the claim stops running. Nobody is reliably told. The decision is still in force, still shaping the codebase — but the ground beneath it has moved, and no one connected the two.
+Months later the reason quietly moves — a dependency changes behavior, a constraint that made the call correct lifts, the test that proved the claim stops running. The decision is still in force, still shaping the codebase, but the ground beneath it is gone. So a fresh agent re-derives a call you already settled, or builds on a premise that quietly died — and you, the human on the hook, find out late, if at all.
 
-`ev` is the layer that closes that gap. It records a human-authored decision *and the grounds it rests on* as an immutable, content-addressed chain, binds a falsifiable check to each ground, and **resurfaces the decision the moment that check goes red**. It deals in facts, not verdicts: no scores, no ranks, no auto-judgements — just an honest record of what was decided, why, who is on the hook, and whether the check guarding each reason is still alive.
+`ev` is the layer that closes that gap. It records a human-authored decision *and the grounds it rests on* as an immutable, content-addressed chain, binds a falsifiable check to each ground, and **resurfaces the decision when that check goes red — at your next `ev check`, no watcher to run.** It deals in facts, not verdicts: no scores, no ranks, no auto-judgements — just an honest record of what was decided, why, who is on the hook, and whether the check guarding each reason is still alive. Under the hood it's *git for decisions*; agents propose, a human ratifies and stays on the hook.
 
 A single self-contained Rust binary. No network, no daemon. The store is a local `.evolving/` directory — content-addressed and append-only.
 
@@ -22,11 +22,13 @@ A single self-contained Rust binary. No network, no daemon. The store is a local
 
 The question `ev` gets most often is *isn't this just …?* It is not:
 
-- **An ADR.** An Architecture Decision Record captures *why* a decision was made — as prose, written once, then left to rot. Nobody re-reads it, and nothing tells you when the premise it rested on stops holding. `ev` records the *why* too, but binds it to a falsifiable check and **brings the decision back the moment that check goes red**. An ADR is a tombstone; an `ev` decision is alive.
+- **An ADR.** An Architecture Decision Record captures *why* a decision was made — as prose, written once, then left to rot. Nobody re-reads it, and nothing tells you when the premise it rested on stops holding. `ev` records the *why* too, but binds it to a falsifiable check and **brings the decision back when that check goes red**. An ADR is a tombstone; an `ev` decision is alive.
 - **A comment on a test.** A note like *"this test guards the no-Redis decision"* is unstructured prose no one reads at decision time. When the test fails you get a red test — not *the no-Redis decision broke; here is the alternative that was rejected and who is on the hook* — and a comment can't tell you the guard itself quietly stopped running. `ev` makes the link structured and content-addressed, resurfaces the whole decision, and tracks whether the check is even still alive.
 - **git.** git versions the *code* — the *what*. It has no notion of a decision, the grounds it rests on, or whether a past call's assumption still holds; `git log` is findable but it never comes *to* you. `ev` borrows git's spine — immutable, content-addressed, append-only — and adds the one verb git lacks: **resurface a decision when the ground beneath it moves.**
 
 And it is not a task tracker, a CI system, or an environment monitor: it manages no work items, it does not own your test suite (it only reads whether a bound check passed), and it fires on git-recorded change — never on a UI click or a config drift that leaves no commit. `ev` detects and resurfaces; it does not prevent.
+
+For the full landscape — ADR tools, decision ledgers, agent memory, signed-provenance protocols, architecture-fitness functions, governance frameworks — and where `ev` sits among them, see [`docs/neighbors.md`](docs/neighbors.md).
 
 ## Install
 
@@ -132,6 +134,7 @@ ev reopen <id>
 Usage docs live in [`docs/`](docs/):
 
 - [`docs/concepts.md`](docs/concepts.md) — the model in depth: the Tick schema, Grounds, Checks, content-addressed identity, append-only immutability, jurisdiction, provenance, the forward-compatible schema, and the refusals `ev verify` enforces.
+- [`docs/neighbors.md`](docs/neighbors.md) — where `ev` sits in the landscape: its real neighbours (ADR tools, Lore, decision ledgers, agent memory, signed-provenance, fitness functions, governance frameworks), each with its approach and `ev`'s different path — plus the shared ground and `ev`'s own gaps.
 - [`docs/commands.md`](docs/commands.md) — the authoritative command reference: every flag, exit code, the exact strings each command prints, and a worked example per command.
 - [`docs/migrating.md`](docs/migrating.md) — bringing an existing decision history into `ev`: the canonical decision-intake format, writing a small adapter that emits it, and the built-in convenience extractors.
 - [`docs/philosophy.md`](docs/philosophy.md) — the design philosophy: the tenets behind `ev`, and why it makes the choices it does.

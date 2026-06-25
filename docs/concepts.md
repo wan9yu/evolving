@@ -233,6 +233,12 @@ A decision may carry a declared **`jurisdiction`** tag from the closed vocabular
 `{A, B, C, D}` (out-of-vocabulary is refused). It is bookkeeping — not hashed — and it answers
 one question: *may a not-green check on this decision fail a build?*
 
+Because it answers exactly one question, the vocabulary carries exactly **two** meanings —
+*may-gate* and *detect-only* — across its four labels. Treat **`A`** as the canonical may-gate
+label and **`C`** as the canonical detect-only label; **`B`** behaves identically to `A` and
+**`D`** to `C`. `B`/`D` are accepted as redundant aliases (so older ledgers keep validating),
+but prefer `A`/`C` for new decisions.
+
 - **`A` / `B` — may gate.** A decision in jurisdiction `A` or `B` behaves exactly as an
   un-tagged one: a bound check that reads red (or stale, not-run, …) trips `ev check
   --exit-on-red`. These are the decisions this repo owns and is willing to be stopped by.
@@ -276,6 +282,16 @@ fresh path can never write `imported`. On `ev migrate`, the convenience extracto
 `imported` by default (history); a **`canonical`** record must **declare** its provenance
 explicitly (no default — an omitted provenance is refused), so a live runner emits `agent-proposed`
 and a backfill adapter emits `imported`.
+
+**The honest limit (declared, not verified).** `human-now` is the *fresh-authorship default* —
+the mark of the `decide`/`guard` door, not a proof that a human was at the keyboard. `ev`
+performs no caller-identity check: an agent that calls `ev decide` also gets `human-now`. The
+human/agent boundary is therefore a **convention** — agents use `ev propose`, humans use `ev
+decide` / `ev ratify` — not a structural guarantee, and `provenance` is declared, not
+cryptographic (signing is a deliberate non-goal; see the honesty boundary). What *is* structural
+and machine-enforced is the inverse: a record **declared** `agent-proposed` can never gate (the
+gate-time lock maps it to non-gating `memo`) and is invisible to `ev brief` until a named human
+ratifies it with `ev ratify`.
 
 **The R5 provenance partition.** Only **one** refusal arm is partitioned by provenance: the R5
 **lexical forbidden-op lint** (`auto-close` / `auto-prune` / `self-stop` / `auto-inherit`).

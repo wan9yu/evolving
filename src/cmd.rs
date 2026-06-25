@@ -251,8 +251,8 @@ pub fn propose(repo: &Path, decision: Option<&str>, args: &[String]) -> ExitCode
                     println!("{}", propose_json(&t));
                 } else {
                     println!(
-                        "already proposed {} for this source_ref — no-op (awaiting ratification)",
-                        t.id
+                        "already proposed {:?} as {} for this source_ref — no-op (awaiting ratification)",
+                        t.decision, t.id
                     );
                 }
                 return ExitCode::SUCCESS;
@@ -572,7 +572,9 @@ pub fn check(
                 v = Verdict::Memo;
             }
             // LOCK 3 (gate-time, governance): an agent-PROPOSED tick must never flip --exit-on-red —
-            // an agent cannot author a gating rule; only a named human ratifies one (§五). Map ANY
+            // a record DECLARED agent-proposed can't gate; a named human ratifies it into one (§五).
+            // (The human/agent line is the propose-vs-decide convention — declared, not verified; LOCK 3
+            // enforces only the gating consequence of the declared tag, not who sat at the keyboard.) Map ANY
             // not-green to the non-gating Memo, the gate analogue of brief_visible excluding
             // agent-proposed from the boot-read (defense-in-depth: even if such a tick reaches the
             // gate, it cannot fire it; and it also protects the new rejected-road tripwire — an
@@ -1094,7 +1096,7 @@ pub fn list(repo: &Path, painter: crate::render::Painter) -> ExitCode {
 /// payload, which collapses the proposal away (content-equality), so an un-ratified proposal is exactly
 /// one that survives `current_decisions` still agent-proposed. (Sunset/aging of long-stale proposals to
 /// an `--all` view is a stated future refinement; for now every un-ratified proposal is shown.)
-pub fn pending(repo: &Path, painter: crate::render::Painter) -> ExitCode {
+pub fn pending(repo: &Path, source_ref: Option<&str>, painter: crate::render::Painter) -> ExitCode {
     let store = Store::at(repo);
     if !store.exists() {
         eprintln!("error: no .evolving/ store here — run `ev init` first");
@@ -1115,9 +1117,16 @@ pub fn pending(repo: &Path, painter: crate::render::Painter) -> ExitCode {
         .into_iter()
         .filter(|(_, t)| t.status == "live" && t.provenance.as_deref() == Some("agent-proposed"))
         .collect();
+    // --source-ref narrows a piling queue to one round (matched on the same dedup key propose uses).
+    if let Some(sr) = source_ref {
+        pend.retain(|(_, t)| crate::tick::source_ref_matches(t, sr));
+    }
     pend.sort_by(|a, b| b.1.held_since.cmp(&a.1.held_since).then(b.0.cmp(&a.0))); // newest first
     if pend.is_empty() {
-        println!("no proposals awaiting ratification");
+        match source_ref {
+            Some(sr) => println!("no proposals awaiting ratification for source_ref {sr}"),
+            None => println!("no proposals awaiting ratification"),
+        }
         return ExitCode::SUCCESS;
     }
     if painter.rich {

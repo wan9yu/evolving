@@ -183,7 +183,12 @@ a check binds later via `ev guard`):
         blame: String,
     },
     /// List agent proposals awaiting ratification — a pull-only view, never a notifier.
-    Pending,
+    Pending {
+        /// Show only proposals carrying this source_ref (the producer's round / work-unit key) —
+        /// narrow a piling queue to one round.
+        #[arg(long = "source-ref")]
+        source_ref: Option<String>,
+    },
     /// Reverse lookup: name the decision + ground a test selector guards.
     Why {
         /// The bound test selector to look up.
@@ -289,7 +294,7 @@ fn main() -> std::process::ExitCode {
             },
         ),
         Cmd::Ratify { id, blame } => ev::cmd::ratify(&repo, &id, &blame),
-        Cmd::Pending => ev::cmd::pending(&repo, painter),
+        Cmd::Pending { source_ref } => ev::cmd::pending(&repo, source_ref.as_deref(), painter),
         Cmd::Why { selector } => ev::cmd::why(&repo, &selector),
         Cmd::Reopen { id } => ev::cmd::reopen(&repo, &id, painter),
     }

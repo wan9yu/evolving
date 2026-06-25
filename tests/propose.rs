@@ -239,12 +239,16 @@ fn propose_should_be_idempotent_on_a_repeated_source_ref() {
     // then: it is a no-op — the source_ref already names a pending proposal, so no duplicate piles up,
     // and `ev pending` still shows exactly one
     assert!(second.status.success());
+    let s2 = String::from_utf8_lossy(&second.stdout);
     assert!(
-        String::from_utf8_lossy(&second.stdout)
-            .to_lowercase()
-            .contains("already proposed"),
-        "the repeat should report an idempotent no-op; was {:?}",
-        String::from_utf8_lossy(&second.stdout)
+        s2.to_lowercase().contains("already proposed"),
+        "the repeat should report an idempotent no-op; was {s2:?}"
+    );
+    // the no-op names the EXISTING decision, not just an id — so a re-proposing agent sees WHAT already
+    // holds the source_ref (the dogfood found the bare-id message uninformative)
+    assert!(
+        s2.contains("the cache is write-through"),
+        "the dedup no-op should name the existing decision; was {s2:?}"
     );
     let pend = run(&r, &["pending"]);
     let proposals = String::from_utf8_lossy(&pend.stdout)
@@ -256,6 +260,54 @@ fn propose_should_be_idempotent_on_a_repeated_source_ref() {
         1,
         "exactly one proposal should remain for the source_ref (idempotent); pending:\n{}",
         String::from_utf8_lossy(&pend.stdout)
+    );
+}
+
+#[test]
+fn pending_should_filter_by_source_ref() {
+    // given: two proposals under different source_refs (a queue a human must triage by round)
+    let r = repo();
+    run(
+        &r,
+        &[
+            "propose",
+            "decision A",
+            "--assume",
+            "c",
+            "--source-ref",
+            "round-A",
+        ],
+    );
+    run(
+        &r,
+        &[
+            "propose",
+            "decision B",
+            "--assume",
+            "c",
+            "--source-ref",
+            "round-B",
+        ],
+    );
+
+    // unfiltered: both show
+    let all = String::from_utf8_lossy(&run(&r, &["pending"]).stdout).to_string();
+    assert!(
+        all.contains("decision A") && all.contains("decision B"),
+        "unfiltered pending should list both; was {all:?}"
+    );
+
+    // when: filtered to one source_ref — only that round's proposal survives (the dogfood friction was a
+    // queue that degraded at scale with no way to narrow it)
+    let one = String::from_utf8_lossy(&run(&r, &["pending", "--source-ref", "round-A"]).stdout)
+        .to_string();
+    assert!(
+        one.contains("decision A"),
+        "filter must keep round-A; was {one:?}"
+    );
+    assert!(
+        !one.contains("decision B"),
+        "filter must drop round-B; was {one:?}"
     );
 }
 

@@ -338,7 +338,7 @@ would forge a human, so the ratifying human must be named explicitly.
 runs, **never** a notifier (no push, no unread, no badge).
 
 ```
-ev pending
+ev pending [--source-ref <key>]
 ```
 
 **What it does:** shows every live `agent-proposed` decision that has **not** yet been ratified. (A
@@ -346,6 +346,10 @@ ratified proposal collapses under its user-ruled child, so it drops out automati
 newest first; the `○` provenance glyph leads each row on a TTY, with a `… awaiting ratification —
 ev ratify <id> --blame <you>` footer; a pipe gets today's tab-separated bytes (id, status, decision,
 blame). Empty → `no proposals awaiting ratification`.
+
+`--source-ref <key>` narrows the queue to proposals carrying that source_ref (the producer's round /
+work-unit key, matched on the same dedup key `ev propose` uses) — so a piling queue stays triageable
+one round at a time. Empty under a filter → `no proposals awaiting ratification for source_ref <key>`.
 
 *Sunset:* aging long-stale proposals out of the default view (to an `--all`) is a stated future
 refinement; for now every un-ratified proposal is shown.

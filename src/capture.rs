@@ -606,11 +606,7 @@ pub fn propose(
                 .find(|t| {
                     t.status == "live"
                         && t.provenance.as_deref() == Some("agent-proposed")
-                        && t.source_ref
-                            .as_ref()
-                            .map(crate::tick::source_ref_key)
-                            .as_deref()
-                            == Some(key.as_str())
+                        && crate::tick::source_ref_matches(t, &key)
                 })
             {
                 return Ok((t, true));

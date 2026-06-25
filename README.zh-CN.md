@@ -39,6 +39,14 @@ cargo install evolving
 
 这会在你的 `PATH` 上安装一个 `ev` 二进制文件。包名为 `evolving`；命令是 `ev`。
 
+没有 Rust 工具链？每个 release 都附带**预构建的静态二进制文件**——从 [latest release](https://github.com/wan9yu/evolving/releases/latest) 下载对应平台的文件，放到 `PATH` 上即可。Linux 构建是静态的（`musl`），所以 `aarch64-unknown-linux-musl` 二进制可在任何 ARM-Linux 主机上运行，不受其 glibc 版本影响：
+
+```sh
+curl -L <asset-url> | tar xz
+install ev ~/.local/bin/ev
+ev --version
+```
+
 从源码构建：
 
 ```sh
@@ -131,6 +139,7 @@ ev reopen <id>
 - [`docs/commands.md`](docs/commands.md)——权威的命令参考：每一个标志、退出码、每个命令打印出的确切字符串，以及每个命令的一个可运行示例。
 - [`docs/migrating.md`](docs/migrating.md)——把一份既有的决策历史带入 `ev`：canonical 决策摄取格式、编写一个发出该格式的小适配器，以及那些内置的便捷提取器。
 - [`docs/philosophy.md`](docs/philosophy.md)——设计哲学：`ev` 背后的那些信条，以及它为什么做出这些选择。
+- [`docs/measuring-drift-defense.md`](docs/measuring-drift-defense.md)——如何诚实地衡量 `ev` 是否真的接住了重复推导：永远不在没有分母的情况下报 catch-rate、那个盲的外部分母、从不出错的对照组、不可捕获的同群体，以及以一个 MISS 开头。
 
 **让 AI agent 使用 `ev`？** [`skills/ev/SKILL.md`](skills/ev/SKILL.md) 是一个与具体工具无关的 agent skill——把它放进你 agent 的 skills 目录，agent 就能正确使用 `ev`，无需翻说明书。
 

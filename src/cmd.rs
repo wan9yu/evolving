@@ -130,6 +130,13 @@ pub fn init(repo: &Path) -> ExitCode {
 }
 pub fn show(repo: &Path, id: &str) -> ExitCode {
     let store = Store::at(repo);
+    // Reject anything that is not a 12-hex tick id BEFORE joining it to the store dir — a `..`/absolute
+    // path would otherwise let `ev show` read an arbitrary file (the id can come from a semi-trusted
+    // agent wrapper). A malformed id is simply "no such tick".
+    if !crate::tick::is_tick_id(id) {
+        eprintln!("error: no tick with id {id}");
+        return ExitCode::FAILURE;
+    }
     let path = store.ticks_dir().join(id);
     if !path.is_file() {
         eprintln!("error: no tick with id {id}");

@@ -290,12 +290,14 @@ above, plus:
 
 | Flag | Takes | Effect |
 | --- | --- | --- |
+| `--source-ref` | a key | The producer's round / work-unit key (opaque to ev; it derives a dedup key). Re-proposing the **same** `--source-ref` that already names a pending proposal is an **idempotent no-op** — it prints `already proposed …` and appends no second event, so a fleet that re-emits a round never piles duplicates. |
 | `--blame` | an agent id | The proposing agent's identity. If omitted: `EV_AGENT_ID`, else `agent`. Never git config. |
 | `--json` | flag | Emit `{"kind":"ev-proposed","id":…,"provenance":"agent-proposed","authority":"agent-disposable","blame":…}` — the citable envelope a runner records to cite when a human ratifies it. |
 
 **Output (stdout):** `proposed <id> (<n> ground(s)) — agent-proposed, awaiting ratification` (or the
-`--json` envelope). **Exit:** `0` ok · `1` on a write/validation failure · refused flags fail with the
-message above.
+`--json` envelope). On an idempotent `--source-ref` repeat it instead prints
+`already proposed "<decision>" as <id> for this source_ref — no-op (awaiting ratification)` and writes
+nothing. **Exit:** `0` ok · `1` on a write/validation failure · refused flags fail with the message above.
 
 ---
 
@@ -819,7 +821,7 @@ a named human appending a correction.
 
 **Output (stdout / stderr):**
 
-- success (stdout): `corrected <id> (<n> ground(s))` — `<id>` is the **new child** id.
+- success (stdout): `corrected <id>` — `<id>` is the **new child** id. (No ground count: a correction copies the parent's grounds verbatim, so the count is a zero-entropy echo — it appears only at creation, `decide`/`propose`, never on an amendment.)
 - failure (stderr): `error: <message>`.
 
 **Example** — a ruling imported with `authority` omitted (so it never reached `ev brief`), then
@@ -830,7 +832,7 @@ ev brief
 # → no user-ruled decisions          (the ruling was imported as an open item)
 
 ev correct 638c47b0c9dd --authority user-ruled --blame "You"
-# → corrected <new-child-id> (1 ground(s))
+# → corrected <new-child-id>
 
 ev brief
 # → <the ruling>  [user-ruled]       (the corrected child now surfaces; the stale parent stays in `ev log`)
@@ -892,7 +894,7 @@ tripwire: an agent-authored tripwire cannot gate.
 from `ev migrate`) is evaluated exactly as any other — a passing harvested test still reads
 `green`, a failing one still `red` — but its row's `<detail>` is prefixed
 `harvested — falsifiability not proven; …`, and after the rows a trailing
-`harvested-unproven: N of M test bindings have no counter-test (run ev guard to add one)` line
+`harvested-unproven: N of M test bindings have no counter-test` line
 counts the debt. Run `ev guard` to add a counter-test and prove falsifiability.
 
 **Exit code:** `0` normally; `1` only under `--exit-on-red` when any ground is not green
@@ -904,7 +906,7 @@ to `memo`), or when there is no store / the store cannot be read.
 - per Test-bound ground (stdout, one row each): `<label>\t<file>\t<claim>\t(<detail>)` —
   `<claim>` is quoted (`{:?}`); `<detail>` is `missing: <platforms>` for `not-run`, the stale
   reason for `stale`, else `ran <ts>` or `no receipt`.
-- after the rows, only when `--run` was **not** passed (stdout): a note pointing the reader to run `ev check --run` to execute each counter-test and prove its falsifiability (under `--run` the verdict itself carries it — an `unproven` row — so no note prints)
+- after the rows, only when `--run` was **not** passed (stdout): a note pointing the reader to run `ev check --run` — to re-run each bound check and, **when a declared counter-test exists**, prove its falsifiability; **when all bindings are harvested**, record a fresh receipt (the note adapts to which case applies; under `--run` the verdict itself carries it — an `unproven` row — so no note prints)
 - no Test-bound grounds (stdout): `no test-bound grounds to check`
 - no store (stderr): `error: no .evolving/ store here — run \`ev init\` first`
 - store read error (stderr): `error: reading store: <io error>`
@@ -915,7 +917,7 @@ binding is `exempt` here, not `not-run`:
 ```sh
 ev check --attest mac
 # → exempt	<file>	"<claim>"	(no receipt)
-# → note: run `ev check --run` to execute each counter-test and prove its falsifiability
+# → note: run `ev check --run` to re-run each bound check and record a fresh receipt
 
 ev check --run --platform linux-ci --exit-on-red
 ```
@@ -937,12 +939,8 @@ ev show <id>
 
 **Output (stdout / stderr):**
 
-- success (stdout): the on-disk JSON of the tick, printed as-is.
-- declared tags, each only when the tick carries one (stdout, after the JSON):
-  `authority: <value>`, then `jurisdiction: <value>`, then `source_ref: <value>` (a string
-  verbatim, or an object as its deterministic compact JSON), then `corrects: <id>` (the
-  relation-overlay edge, when the tick is a correction).
-- not found (stderr): `error: no tick with id <id>`
+- success (stdout): the on-disk JSON of the tick, printed as-is — **pure JSON**, so `ev show <id> | jq` is clean. (The declared tags live inside the JSON; for a human-readable single-tick view with the tags called out, use `ev reopen <id>`.)
+- not found / malformed id (stderr): `error: no tick with id <id>` (a non-id — a path, a `..` traversal — is refused, never read as a file).
 - read error (stderr): `error: reading <id>: <io error>`
 
 **Example:**
@@ -956,7 +954,7 @@ ev show 638c47b0c9dd
 ## `ev verify`
 
 **Synopsis:** audit the whole chain and its refusals; or, with `--self-test`, reproduce the
-three frozen golden vectors.
+four frozen golden vectors.
 
 ```
 ev verify [--self-test]
@@ -966,7 +964,7 @@ ev verify [--self-test]
 
 | Flag | Takes | Required | Effect |
 | --- | --- | --- | --- |
-| `--self-test` | — | no | Recompute the three frozen golden-vector ids and exit. |
+| `--self-test` | — | no | Recompute the four frozen golden-vector ids and exit. |
 
 **What `ev verify` checks:** every tick parses against the closed *hashed*-schema (R1) and
 check shape (R2); a `C`/`D`-jurisdiction (detect-only) tick carries no test check; every
@@ -995,10 +993,12 @@ violation is found (or any golden id drifts), or if the store cannot be read.
 ✓ genesis: e2b337f53a1f (want e2b337f53a1f)
 ✓ case1: 638c47b0c9dd (want 638c47b0c9dd)
 ✓ harvested: 0cf784b51331 (want 0cf784b51331)
+✓ rejected_tripwire: 9c5feb4582ac (want 9c5feb4582ac)
 ```
 
 The `harvested` vector pins that omitting an absent `counter_test` keeps a harvested binding's
-id byte-stable (see [concepts.md](concepts.md)).
+id byte-stable; the `rejected_tripwire` vector pins the id of a `user-ruled` decision whose
+rejected-road ground carries a Test tripwire (see [concepts.md](concepts.md)).
 
 **Example:**
 

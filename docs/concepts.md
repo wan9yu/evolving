@@ -45,16 +45,18 @@ forging a new identity:
   `{imported, agent-proposed, human-now}`, excluded from the hash; written only when set,
   **absent ⇒ `human-now`**. It records **how** the decision entered the ledger (see
   *Provenance* below). Vocab-validated; an out-of-vocabulary value is refused.
-- `corrects` — the **relation-overlay edge**: when set, the 12-hex id of the tick this one
-  **corrects** (written only by [`ev correct`](commands.md#ev-correct)). Non-hashed, so it never
-  moves the `id`; the brief/list collapse reads it to supersede the corrected tick precisely. It is
-  the **first, and currently the only, overlay relation** — the general case-law graph (governed-by /
-  case-of / arbitrary typed edges) is deliberately not built. A machine-fence test pins this so a new
-  edge type can only be added deliberately.
+- `corrects` / `ratifies` — the **two relation-overlay edges**, each (when set) the 12-hex id of the
+  tick this one points at. `corrects` (written by [`ev correct`](commands.md#ev-correct)) names the
+  tick this one supersedes; `ratifies` (written by [`ev ratify`](commands.md#ev-ratify)) names the
+  agent proposal this human-now child ratifies. Both are non-hashed, so they never move the `id`; the
+  brief/list collapse reads `corrects` to supersede the corrected tick precisely. These are the **two
+  specific, adopter-driven bridges** — the general case-law graph (governed-by / case-of / arbitrary
+  typed edges) is deliberately not built, and a machine-fence test pins that the overlay edges are
+  **exactly these two**, so a third can only be added deliberately.
 
 On disk a tick is stored as pretty JSON containing the hashed payload keys **plus** the
 bookkeeping keys at top level (`id`, `status`, `held_since`, `blame`, and — when set —
-`authority`, `jurisdiction`, `source_ref`, `provenance`, `corrects`). `ev show` prints that file as-is.
+`authority`, `jurisdiction`, `source_ref`, `provenance`, `corrects`, `ratifies`). `ev show` prints that file as-is.
 The genesis tick on disk looks like:
 
 ```json

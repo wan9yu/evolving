@@ -68,6 +68,10 @@ impl Store {
 
     /// Read one tick (parsed) by id, or None if absent.
     pub fn read_tick(&self, id: &str) -> std::io::Result<Option<crate::tick::Tick>> {
+        // A non-id (`..` / absolute path) is "no such tick" — never a file lookup outside the store.
+        if !crate::tick::is_tick_id(id) {
+            return Ok(None);
+        }
         let p = self.ticks_dir().join(id);
         if !p.is_file() {
             return Ok(None);

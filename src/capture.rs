@@ -81,8 +81,10 @@ fn t_grounds_text(grounds: &[Ground]) -> Vec<String> {
 /// One `git show -s --format=<fmt> <commit>` field, run in `repo`. Returns the trimmed
 /// stdout, or an error if git can't resolve the commit (the caller maps this to a clear message).
 fn git_show(repo: &Path, fmt: &str, commit: &str) -> Result<String, String> {
+    // `--end-of-options` stops a hyphen-leading `commit` from being parsed as a git flag (e.g.
+    // `--output=<path>`, an arbitrary-file-write primitive). The parse site also rejects such values.
     let out = Command::new("git")
-        .args(["show", "-s", fmt, commit])
+        .args(["show", "-s", fmt, "--end-of-options", commit])
         .current_dir(repo)
         .output()
         .map_err(|e| format!("cannot run git: {e}"))?;
@@ -391,7 +393,13 @@ fn assemble(repo: &Path, decision: Option<&str>, args: &[String]) -> Result<Deci
         let flag = args[i].clone();
         match flag.as_str() {
             "--from-git" => {
-                from_git = Some(need(args, i, &flag)?);
+                let commit = need(args, i, &flag)?;
+                if commit.starts_with('-') {
+                    return Err(format!(
+                        "--from-git takes a commit-ish, not a flag (got {commit:?})"
+                    ));
+                }
+                from_git = Some(commit);
             }
             "--observe" => {
                 observe = need(args, i, &flag)?;

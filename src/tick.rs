@@ -314,17 +314,22 @@ pub(crate) const KNOWN_NON_HASHED_KEYS: &[&str] = &[
 /// lowercase hex. (ev only ever writes a real target id via `ev correct` / `ev ratify`; the check
 /// catches a hand-edited/typo'd reference.)
 pub(crate) fn validate_edge_id(field: &str, val: &str) -> Result<(), String> {
-    if val.len() == 12
-        && val
-            .bytes()
-            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
-    {
+    if is_tick_id(val) {
         Ok(())
     } else {
         Err(format!(
             "{field} must be a 12-char lowercase-hex tick id (got {val:?})"
         ))
     }
+}
+
+/// Whether `s` is a well-formed tick id: exactly 12 lowercase-hex chars. ev only ever writes ids it
+/// computed, so a caller-supplied id that fails this is a typo or a path-injection attempt — it guards
+/// the file lookups in `ev show` / `Store::read_tick` against `..` / absolute-path arguments.
+pub(crate) fn is_tick_id(s: &str) -> bool {
+    s.len() == 12
+        && s.bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
 
 /// A tick's top-level keys that are neither hashed/identity nor a known-non-hashed field — the

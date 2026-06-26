@@ -416,6 +416,42 @@ fn overturn_should_require_a_reason() {
 }
 
 #[test]
+fn log_should_mark_an_overturned_ruling_as_superseded() {
+    // given: a ruling overturned by a new one
+    let (r, old) = repo_with_live_ruling("use buffering");
+    let sup = run(
+        &r,
+        &[
+            "supersede",
+            &old,
+            "use streaming",
+            "--assume",
+            "scale",
+            "--blame",
+            "You",
+        ],
+    );
+    assert!(
+        sup.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&sup.stderr)
+    );
+    let new = child_id(&sup.stdout);
+
+    // then: `ev log` marks the overturned ruling so a grep cannot misread it as in-effect — its
+    // on-disk status stays `live` (immutability), but the row carries a superseded-by token.
+    let log = String::from_utf8_lossy(&run(&r, &["log"]).stdout).to_string();
+    let old_line = log
+        .lines()
+        .find(|l| l.contains(&old))
+        .expect("the overturned ruling appears in log");
+    assert!(
+        old_line.contains("superseded-by:") && old_line.contains(&new),
+        "log must mark the overturned ruling superseded: {old_line}"
+    );
+}
+
+#[test]
 fn reopen_should_mark_a_ruling_that_has_been_superseded() {
     // given: a ruling overturned by a new one
     let (r, old) = repo_with_live_ruling("use buffering");

@@ -174,9 +174,16 @@ fn check_run_should_be_unproven_and_gate_when_the_counter_test_agrees_with_the_c
         .output()
         .unwrap();
 
-    // then: unproven — the check can't be shown to flip; gate fails
+    // then: unproven — the check can't be shown to flip; gate fails. And it WARNS on stderr, so the
+    // contract is no longer silent (a counter that agrees is not a valid negative control — the
+    // failure mode that otherwise reads identically to a staleness stall).
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stdout)
         .lines()
         .any(|l| l.starts_with("unproven\t")));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("did not flip"),
+        "a counter-test that agrees with the check must warn 'did not flip'; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }

@@ -624,7 +624,7 @@ pub fn propose(
     d.provenance = Some("agent-proposed".into());
     d.authority = Some("agent-disposable".into());
     // Idempotency: if this source_ref already names a live agent-proposed proposal, return THAT one
-    // instead of piling up a duplicate (the un-triaged pending pile the dogfood hit). Only on an
+    // instead of piling up a duplicate (an un-triaged pending pile re-proposing the same round). Only on an
     // explicit source_ref — without a producer key there is no stable identity to dedup on. Returns
     // `true` to tell the caller this was a no-op (no new tick, no event). Match `ev pending`'s set:
     // live + agent-proposed (a ratified proposal is superseded by its human-now child, but a repeat

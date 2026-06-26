@@ -19,7 +19,7 @@ enum Cmd {
     Init,
     /// Print one decision in full
     Show { id: String },
-    /// List every decision in the ledger (id, status, decision).
+    /// List every EFFECTIVE decision in the ledger (id, status, decision; superseded rulings collapsed).
     List,
     /// Show the decision lineage from HEAD back to genesis.
     Log,
@@ -44,6 +44,9 @@ enum Cmd {
   --assume "<claim>"          a ground (repeatable). Bind a runnable test to the latest ground with
                               --assume-test <ref> --counter-test <cmd> --on-platform <p>
                               --triggered-by <path> --surface <s> --verified-at-sha <sha>
+                              (--counter-test is a NEGATIVE control: it must FAIL on the current
+                              clean state, proving the check can flip. One that passes on clean reads
+                              `unproven`, never green.)
   --reject "<option>: <why>"  a road not taken (repeatable)
   --revisit <when>            a human re-check ground (repeatable)
   --observe <text>            the situation observed

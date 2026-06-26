@@ -577,7 +577,17 @@ pub fn check(
                                         platform,
                                         config.green_exit_code,
                                     ) {
-                                        Ok(ct) => rc.falsifiable = Some(rc.result != ct.result),
+                                        Ok(ct) => {
+                                            rc.falsifiable = Some(rc.result != ct.result);
+                                            // A counter-test is a NEGATIVE control: it must FAIL on a
+                                            // clean state so it proves the check can flip. If it AGREED
+                                            // with the check here it did not flip → the verdict is
+                                            // unproven (gates) — and was SILENT, looking exactly like a
+                                            // staleness stall. Warn loudly, mirroring the arm below.
+                                            if rc.result == ct.result {
+                                                eprintln!("warning: counter-test {counter_test:?} did not flip (it agreed with the check) — not a valid negative control; recording unproven");
+                                            }
+                                        }
                                         Err(e) => {
                                             // The binding DECLARES a counter-test but it could not be
                                             // executed — falsifiability is NOT established, so the
@@ -828,6 +838,22 @@ pub fn check(
         }
         if !run {
             println!("{run_note}");
+        }
+    }
+    // Co-location preflight: if you RAN the bound checks but NONE resolved pass/fail (every row is
+    // stale / not-run / unproven), the likely cause is the ledger not seeing the guarded code — ev
+    // reads git state from THIS directory. Gated on `run`, so a never-run store is never nagged.
+    if run {
+        let stuck = rows
+            .iter()
+            .any(|r| matches!(r.label.as_str(), "stale" | "not-run" | "unproven"));
+        let resolved = rows
+            .iter()
+            .any(|r| matches!(r.label.as_str(), "green" | "red"));
+        if stuck && !resolved {
+            // A diagnostic, not a verdict — to stderr (like the counter-test warning), so a piped
+            // machine read of check's rows on stdout stays clean.
+            eprintln!("note: ran the bound checks but none resolved pass/fail (all stale / not-run / unproven) — ev reads git state from this directory; if the ledger is separate from the guarded code, run ev in the working tree, or set staleness_ref = local-head");
         }
     }
     // The check-run COST summary (wall-time + how many decisions were evaluated), distinct from the
@@ -1085,7 +1111,8 @@ pub fn why(repo: &Path, selector: &str) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// List every decision in the ledger: id, status, decision (sorted by id, deterministic).
+/// List every EFFECTIVE decision: id, status, decision (sorted by id, deterministic). A superseded
+/// ruling is collapsed out (see `ev log` for the full lineage), so this is current decisions, not all ticks.
 pub fn list(repo: &Path, painter: crate::render::Painter) -> ExitCode {
     let store = Store::at(repo);
     if !store.exists() {
@@ -1218,7 +1245,7 @@ pub fn pending(repo: &Path, source_ref: Option<&str>, painter: crate::render::Pa
         // All rows are agent-proposed → the hollow ○ provenance glyph; the footer signposts the bridge.
         for (id, t) in &pend {
             // Triage context: blame · source_ref · held_since — so a piling queue is scannable at a
-            // glance (the dogfood friction was a pending view that hid these). Rich only; plain unchanged.
+            // glance (a pending view that hides these forces re-reading each one). Rich only; plain unchanged.
             let sr = t
                 .source_ref
                 .as_ref()
@@ -1465,6 +1492,9 @@ pub fn log(repo: &Path, painter: crate::render::Painter) -> ExitCode {
         println!("no decisions yet");
         return ExitCode::SUCCESS;
     }
+    // Load every tick once so each lineage row can be marked if a LATER ruling supersedes it — an
+    // overturned ruling stays on-disk `live` (immutability), so without this it reads as in-effect.
+    let all = store.read_all().map(|f| parse_all(&f)).unwrap_or_default();
     let mut seen = std::collections::HashSet::new();
     while !id.is_empty() {
         if !seen.insert(id.clone()) {
@@ -1472,9 +1502,12 @@ pub fn log(repo: &Path, painter: crate::render::Painter) -> ExitCode {
         }
         match store.read_tick(&id) {
             Ok(Some(t)) => {
+                // A later ruling that supersedes this one (re-tag or overturn), if any — so an
+                // overturned ruling is marked, not silently shown `live`.
+                let sup = superseding_child(&all, &t.id);
                 if painter.rich {
-                    // Chronological lineage: the edge-verb sits in a fixed dim slot — the ledger's
-                    // grammar made visible. (ratifies <id> joins once Cut D lands.)
+                    // Chronological lineage: the edge-verb (supersedes / ratifies / proposed /
+                    // decided) sits in a fixed dim slot — the ledger's grammar made visible.
                     let verb = match (&t.supersedes, &t.ratifies, t.provenance.as_deref()) {
                         (Some(c), _, _) => format!("supersedes {c}"),
                         (_, Some(r), _) => format!("ratifies {r}"),
@@ -1482,7 +1515,7 @@ pub fn log(repo: &Path, painter: crate::render::Painter) -> ExitCode {
                         (None, None, _) => "decided".to_string(),
                     };
                     let agent = t.provenance.as_deref() == Some("agent-proposed");
-                    println!(
+                    let mut line = format!(
                         "{} {}  {}  {}  {}",
                         painter.prov_glyph(agent),
                         painter.meta(&verb),
@@ -1490,8 +1523,23 @@ pub fn log(repo: &Path, painter: crate::render::Painter) -> ExitCode {
                         painter.id(&t.id),
                         painter.meta(&t.blame)
                     );
+                    if let Some(child) = &sup {
+                        line.push_str(&format!(
+                            "  {}",
+                            painter.meta(&format!("superseded by {child}"))
+                        ));
+                    }
+                    println!("{line}");
                 } else {
-                    println!("{}\t{}\t{:?}", t.id, t.status, t.decision);
+                    // Non-rich stays tab-stable; a superseded row gains a trailing 4th field only
+                    // (columns 1-3 unchanged) so a grep can tell an overturned ruling from a live one.
+                    match &sup {
+                        Some(child) => println!(
+                            "{}\t{}\t{:?}\tsuperseded-by:{}",
+                            t.id, t.status, t.decision, child
+                        ),
+                        None => println!("{}\t{}\t{:?}", t.id, t.status, t.decision),
+                    }
                 }
                 id = t.parent_id;
             }

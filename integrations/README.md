@@ -40,8 +40,8 @@ Three deployment notes, stated as runtime conventions so this repo names no vend
 - **Version.** Headless skill invocation needs a recent runtime build — confirm the deploy box's version
   supports skills in non-interactive mode before relying on auto-invocation.
 
-(The exact, vendor-specific commands for our own deploy boxes are kept **outside this repo** — they name a
-vendor, and this repo stays vendor-neutral.)
+For Claude Code specifically, the concrete commands + a **one-step installer** that does all of the above
+live in [`claude-code/`](claude-code/) (`ev-setup.sh` + the `claude -p` headless recipe).
 
 ## Honest boundary
 

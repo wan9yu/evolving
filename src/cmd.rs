@@ -198,6 +198,57 @@ fn triggered_since(
     }
 }
 
+/// Whether the binding's guarded (triggered_by) paths actually changed between its `verified_at_sha`
+/// and the live origin. `Some(false)` = the sha moved but the guarded code did NOT (a bookkeeping
+/// commit) — the binding is still valid. `Some(true)` / `None` = changed, or can't tell → stay stale.
+fn guarded_paths_drifted(
+    repo: &std::path::Path,
+    ground: &crate::tick::Ground,
+    live_origin: Option<&str>,
+) -> Option<bool> {
+    use crate::tick::Check;
+    let (verified, triggered_by) = match &ground.check {
+        Some(Check::Test {
+            verified_at_sha,
+            liveness,
+            ..
+        }) => (verified_at_sha.as_str(), &liveness.triggered_by),
+        _ => return None,
+    };
+    crate::liveness::changed_between(repo, verified, live_origin?, triggered_by)
+}
+
+/// `verdict_for` + DIFF-AWARE sha-staleness: a `Stale{Sha}` whose guarded paths did NOT change between
+/// `verified_at_sha` and the live origin is a bookkeeping-commit false-stale (HEAD advanced, the code
+/// did not) — recompute ignoring the sha gate, so a bound check is not single-use on an auto-committing
+/// host. A real guarded change (or an unknowable diff) keeps the sha-stale (conservative — never a
+/// false-green). The git diff lives here, in the impure layer; `verdict_for` stays pure.
+fn resolve_verdict(
+    repo: &std::path::Path,
+    ground: &crate::tick::Ground,
+    receipts: &[crate::receipt::Receipt],
+    ctx: &crate::verdict::Ctx,
+    triggered: bool,
+) -> crate::verdict::Verdict {
+    use crate::verdict::{verdict_for, StaleKind, Verdict};
+    let v = verdict_for(ground, receipts, ctx, triggered);
+    if matches!(
+        v,
+        Verdict::Stale {
+            kind: StaleKind::Sha,
+            ..
+        }
+    ) && guarded_paths_drifted(repo, ground, ctx.live_origin_sha.as_deref()) == Some(false)
+    {
+        let relaxed = crate::verdict::Ctx {
+            live_origin_sha: None,
+            ..ctx.clone()
+        };
+        return verdict_for(ground, receipts, &relaxed, triggered);
+    }
+    v
+}
+
 pub fn init(repo: &Path) -> ExitCode {
     let store = Store::at(repo);
     match store.init() {
@@ -518,7 +569,7 @@ pub fn check(
     painter: crate::render::Painter,
 ) -> ExitCode {
     use crate::render::{class_of, Class};
-    use crate::verdict::{verdict_for, Verdict};
+    use crate::verdict::Verdict;
     let store = Store::at(repo);
     if !store.exists() {
         eprintln!("error: no .evolving/ store here — run `ev init` first");
@@ -648,7 +699,7 @@ pub fn check(
             };
             // verdict_for returns NotApplicable for any non-Test ground.
             let ts = triggered_since(repo, g, &receipts);
-            let mut v = verdict_for(g, &receipts, &ctx, ts);
+            let mut v = resolve_verdict(repo, g, &receipts, &ctx, ts);
             // Why a not-green verdict is suppressed to Memo (LOCK 1 detect-only / LOCK 3 agent-proposed),
             // captured for the rich human row — the plain/scriptable path is byte-stable, only rich uses it.
             let mut memo_reason: Option<String> = None;
@@ -1651,7 +1702,7 @@ pub fn reopen(repo: &Path, id: &str, painter: crate::render::Painter) -> ExitCod
             }) => {
                 let receipts = crate::receipt::read_for(&store, reference).unwrap_or_default();
                 let ts = triggered_since(repo, g, &receipts);
-                let v = crate::verdict::verdict_for(g, &receipts, &ctx, ts);
+                let v = resolve_verdict(repo, g, &receipts, &ctx, ts);
                 let now = v.label();
                 let short = &verified_at_sha[..verified_at_sha.len().min(8)];
                 if painter.rich {

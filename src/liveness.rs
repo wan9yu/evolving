@@ -4,18 +4,13 @@
 use std::path::Path;
 use std::process::Command;
 
-/// True if any commit reachable from HEAD and NEWER than `since_commit` touches one of
-/// `paths` (a `triggered_by` set). `None` if git fails or `since_commit` is unknown — in
-/// which case event-driven staleness is simply NOT evaluated (never a false not-green).
-pub fn changed_since(repo: &Path, since_commit: &str, paths: &[String]) -> Option<bool> {
+/// True if any commit in the range `from..to` touches one of `paths`. `None` if git fails or a
+/// commit is unknown — in which case the caller stays conservative (staleness simply NOT relaxed).
+pub fn changed_between(repo: &Path, from: &str, to: &str, paths: &[String]) -> Option<bool> {
     if paths.is_empty() {
         return Some(false);
     }
-    let mut args: Vec<String> = vec![
-        "rev-list".into(),
-        format!("{since_commit}..HEAD"),
-        "--".into(),
-    ];
+    let mut args: Vec<String> = vec!["rev-list".into(), format!("{from}..{to}"), "--".into()];
     args.extend(paths.iter().cloned());
     let out = Command::new("git")
         .args(&args)
@@ -26,6 +21,13 @@ pub fn changed_since(repo: &Path, since_commit: &str, paths: &[String]) -> Optio
         return None; // unknown commit / not a git repo → do not evaluate
     }
     Some(!out.stdout.is_empty())
+}
+
+/// True if any commit reachable from HEAD and NEWER than `since_commit` touches one of
+/// `paths` (a `triggered_by` set). `None` if git fails or `since_commit` is unknown — in
+/// which case event-driven staleness is simply NOT evaluated (never a false not-green).
+pub fn changed_since(repo: &Path, since_commit: &str, paths: &[String]) -> Option<bool> {
+    changed_between(repo, since_commit, "HEAD", paths)
 }
 
 #[cfg(test)]

@@ -76,6 +76,7 @@ use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 /// The evaluation context, built once per `ev check` / `ev reopen` invocation:
 /// the staleness reference sha, the selected-list, and the clock for age-staleness.
+#[derive(Clone)]
 pub struct Ctx {
     pub live_origin_sha: Option<String>, // None ⇒ sha-staleness not evaluated
     pub selected: Option<SelectedList>,  // None ⇒ L2 not evaluated

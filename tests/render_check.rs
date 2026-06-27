@@ -158,16 +158,16 @@ fn brief_should_render_masthead_and_provenance_glyph_under_color_always() {
         "rich brief leads with the human provenance glyph; was {s:?}"
     );
     assert!(
-        !s.contains("[user-ruled]"),
-        "rich brief drops the legacy per-row tag; was {s:?}"
+        !s.contains("[user-ruled"),
+        "rich brief drops the legacy per-row bracket tag; was {s:?}"
     );
 
-    // and a pipe still gets today's exact bytes
+    // and a pipe still gets the plain per-row bracket tag (here `· advisory` — no check watches it)
     let piped = run(&r, &["brief"]);
     let p = String::from_utf8_lossy(&piped.stdout);
     assert!(
-        p.contains("[user-ruled]"),
-        "a pipe keeps today's [user-ruled] tag; was {p:?}"
+        p.contains("[user-ruled"),
+        "a pipe keeps the plain [user-ruled…] tag; was {p:?}"
     );
     assert!(
         !p.contains('●'),

@@ -1,6 +1,6 @@
 ---
 name: recording-decisions-with-ev
-description: Use when a technical decision is being made, a premise needs an invariant guarding it, or a guarding test has gone red — record and resurface it with `ev` (git for decisions), an immutable content-addressed decision ledger, instead of letting the reasoning scroll away in chat or a docstring. Also use at session start to load the decisions a human has already ruled on, so a fresh agent does not re-open a settled call.
+description: Use when a technical decision is being made, a premise needs an invariant guarding it, or a guarding test has gone red — record it with `ev` (git for decisions, an immutable content-addressed ledger) AND bind the falsifiable test that catches its violation, because a decision nothing watches is just a note that drifts. `ev` resurfaces the decision — named — when a bound check goes red. Also use at session start to load the decisions a human has already ruled on (`ev brief` — it marks which are still advisory/unwatched), so a fresh agent neither re-opens a settled call nor leaves a ruling unguarded.
 ---
 
 # Recording & resurfacing decisions with `ev`
@@ -70,6 +70,35 @@ edge — the **only** bridge from a proposal to a governing ruling. Reserve `ev 
 **human's** ruling (with their `--blame`); routing your own judgment through `propose` keeps the ledger
 from ever claiming a human decided what an agent did. (This is honest-by-construction, not
 cryptographic — an agent *could* call `decide`; the point is the right path is the easy one.)
+
+## The core discipline: bind, or it's just a note
+
+A recorded decision that **nothing watches** is *advisory* — and an advisory decision is a notes file:
+it relies on a future agent reading and heeding it, and at some rate it drifts. **`ev`'s value is in the
+binding, not the recording.** So the core move is not "record the decision" — it is:
+
+> **When you make a consequential decision, write the falsifiable test that catches its violation, and
+> bind it (`--assume-test` + `--counter-test`). A decision is born *watched*, not as a note.**
+
+- **Bind where it earns**, two shapes: (a) a **cross-diff / cross-time** invariant — a future change in
+  another file or 100 lines away could silently break it, and a reviewer of *that* diff won't connect it
+  to this decision, but the bound check will; (b) a **true-now-but-UNGUARDED** invariant — the test suite
+  is green to the violation today, and your check goes red by construction. These add coverage a note
+  never could.
+- **Don't bind wallpaper.** If the invariant is ALREADY guarded by a comprehensive test, a bound check is
+  pure duplication; if the check medium is more fragile than the thing it guards, or the premise is
+  *designed to move* (tunable → would false-red on legitimate change), don't bind it. Recording the
+  decision advisory is fine there — just don't pretend a wallpaper check adds safety.
+- **The counter-test must FAIL on a clean tree** — it is the negative control proving your check can flip.
+  One that passes-on-clean (or can't run) makes the binding `unproven` (it gates; `ev check --run` warns
+  "did not flip"). This is what keeps an agent-written check honest: **you cannot install a dead detector.**
+- **Never bless a defect.** If the honest invariant is RED *now* (a contract is currently violated), a
+  "passes-now" check would lock in the broken state — a false-green about your own guarantee. Record the
+  finding; do not mint a green check on a violated invariant.
+
+`ev brief` marks each ruling **`advisory`** (no check watches it) and footer-counts the **drift surface**
+("N of M advisory"); `ev brief --json` carries a per-decision `bound` + an `advisory` aggregate.
+**Treat an advisory ruling as a to-do: bind the ones in the two earning shapes above.**
 
 **Record a decision.** Each `--assume` opens a *chosen* ground; `--reject "<opt>: <why>"`
 records a road-not-taken. Per-ground flags (`--revisit`, `--assume-test`, `--counter-test`,

@@ -61,8 +61,73 @@ fn brief_should_show_a_user_ruled_decision_and_its_rejected_road_when_one_is_rec
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("keep the slice locked"));
-    assert!(stdout.contains("[user-ruled]"));
+    assert!(stdout.contains("user-ruled"));
     assert!(stdout.contains("rejected v1.9"));
+}
+
+#[test]
+fn brief_should_mark_advisory_rulings_and_count_the_drift_surface() {
+    // given: one ADVISORY user-ruled ruling (no check watches it) + one BOUND ruling (a falsifiable
+    // check watches it)
+    let r = repo();
+    decide(&r, "advisory ruling", &["--authority", "user-ruled"]);
+    decide(
+        &r,
+        "bound ruling",
+        &[
+            "--authority",
+            "user-ruled",
+            "--assume-test",
+            "true",
+            "--counter-test",
+            "false",
+            "--on-platform",
+            "local",
+            "--triggered-by",
+            "f",
+            "--surface",
+            "s",
+            "--verified-at-sha",
+            "0000000000000000000000000000000000000000",
+        ],
+    );
+
+    // then (plain): the advisory one is tagged, the bound one is not, and the footer names the drift surface
+    let out = String::from_utf8_lossy(&ev().arg("brief").current_dir(&r).output().unwrap().stdout)
+        .to_string();
+    assert!(
+        out.contains("advisory ruling  [user-ruled · advisory]"),
+        "an advisory ruling must be tagged: {out}"
+    );
+    assert!(
+        out.contains("bound ruling  [user-ruled]")
+            && !out.contains("bound ruling  [user-ruled · advisory]"),
+        "a bound ruling is not advisory: {out}"
+    );
+    assert!(
+        out.contains("1 of 2 advisory"),
+        "the footer counts the drift surface: {out}"
+    );
+
+    // then (--json): per-decision `bound` + the `advisory` aggregate (additive contract)
+    let js = String::from_utf8_lossy(
+        &ev()
+            .args(["brief", "--json"])
+            .current_dir(&r)
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .to_string();
+    let v: serde_json::Value = serde_json::from_str(&js).expect("ev brief --json is valid JSON");
+    assert_eq!(v["advisory"], 1, "the aggregate advisory count: {js}");
+    let decisions = v["decisions"].as_array().unwrap();
+    assert!(decisions
+        .iter()
+        .any(|d| d["decision"] == "advisory ruling" && d["bound"] == false));
+    assert!(decisions
+        .iter()
+        .any(|d| d["decision"] == "bound ruling" && d["bound"] == true));
 }
 
 #[test]

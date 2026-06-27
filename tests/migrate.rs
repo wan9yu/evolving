@@ -488,7 +488,7 @@ fn migrate_canonical_should_stamp_authority_user_ruled_so_the_ruling_surfaces_in
     assert!(brief.status.success());
     let b = String::from_utf8_lossy(&brief.stdout);
     assert!(
-        b.contains("rate-limit lives at the edge proxy") && b.contains("[user-ruled]"),
+        b.contains("rate-limit lives at the edge proxy") && b.contains("user-ruled"),
         "the imported user ruling must surface in brief; was {b:?}"
     );
 }

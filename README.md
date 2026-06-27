@@ -18,6 +18,26 @@ Months later the reason quietly moves — a dependency changes behavior, a const
 
 A single self-contained Rust binary. No network, no daemon. The store is a local `.evolving/` directory — content-addressed and append-only.
 
+## How it works
+
+Using `ev` is a short loop you run as your project keeps changing:
+
+```mermaid
+flowchart LR
+    D["1 · Decide + guard<br/>record a decision, bind a<br/>falsifiable check to its reason<br/>ev decide · ev guard"]
+    B["2 · Heed<br/>each session a fresh agent<br/>loads what's settled<br/>ev brief"]
+    C["3 · Check<br/>as the project changes,<br/>the guard is re-run<br/>ev check"]
+    R["4 · Re-decide<br/>a decision whose reason broke<br/>comes back, red and named<br/>ev supersede"]
+    D --> B --> C --> R --> B
+```
+
+1. **Decide + guard** — record a decision and bind a falsifiable check to its reason (`ev decide` / `ev guard`; or an agent proposes and a human ratifies).
+2. **Heed** — at the start of each session a fresh agent loads what's already settled (`ev brief`) and doesn't re-open it.
+3. **Check** — as the project changes, the guard is re-run (`ev check`, at your next run — no daemon); a decision whose reason has broken comes back red and named, with who's on the hook.
+4. **Re-decide** — a human re-rules it (`ev supersede`), and the loop continues.
+
+Leave a decision unguarded and it's *advisory* — still surfaced by `ev brief`, but nothing catches it when its reason breaks.
+
 ## What `ev` is — and is not
 
 The question `ev` gets most often is *isn't this just …?* It is not:

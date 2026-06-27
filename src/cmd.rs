@@ -1363,7 +1363,15 @@ fn brief_visible(t: &Tick) -> bool {
 /// enricher) parses. Every entry is a live, user-ruled, non-agent-proposed ruling carrying its citable
 /// id; the counts make any elision visible so the consumer can re-pull with a higher limit rather than
 /// silently miss a pinned ruling.
-fn brief_json(kept: &[(String, Tick)], total: usize, dropped_lb: usize) -> String {
+/// The honest enforcement footer: how many user-ruled rulings are ADVISORY (nothing watches them, so
+/// they rely on heed and will drift). Bind a falsifiable check to move one onto the catch-loop.
+fn advisory_note(advisory: usize, total: usize) -> String {
+    format!(
+        "{advisory} of {total} advisory — nothing watches them (heed only); bind a check to catch a violation"
+    )
+}
+
+fn brief_json(kept: &[(String, Tick)], total: usize, dropped_lb: usize, advisory: usize) -> String {
     let decisions: Vec<Value> = kept
         .iter()
         .map(|(_, t)| {
@@ -1375,6 +1383,9 @@ fn brief_json(kept: &[(String, Tick)], total: usize, dropped_lb: usize) -> Strin
                 "decision": t.decision,
                 "load_bearing": load_bearing(t),
                 "rejected_roads": roads,
+                // Enforcement status (additive, derived): true = a falsifiable check WATCHES this ruling
+                // (a violation can go red); false = ADVISORY (nothing watches it — it relies on heed).
+                "bound": crate::tick::has_test_check(&t.grounds),
             });
             // source_ref is genuinely optional — present only when the producer supplied one.
             if let (Some(sr), Some(obj)) = (&t.source_ref, d.as_object_mut()) {
@@ -1393,6 +1404,9 @@ fn brief_json(kept: &[(String, Tick)], total: usize, dropped_lb: usize) -> Strin
         "total": total,
         "elided": total - kept.len(),
         "elided_load_bearing": dropped_lb,
+        // How many of the `total` user-ruled rulings are ADVISORY (no check watches them) — the
+        // drift surface, so "recorded" never reads as "enforced" (no-false-green, on enforcement).
+        "advisory": advisory,
     });
     // A Value built by json! is infallible to serialize; .expect documents that invariant rather
     // than masking a failure into an empty string — which would be a false-green: a consumer parsing
@@ -1440,6 +1454,11 @@ pub fn brief(
             .then(b.0.cmp(&a.0))
     });
     let total = kept.len();
+    // The advisory (no-check) count over the FULL user-ruled set — the drift surface the footer names.
+    let advisory_total = kept
+        .iter()
+        .filter(|(_, t)| !crate::tick::has_test_check(&t.grounds))
+        .count();
     // 0 means "show all"; otherwise cap at the limit (never past the end).
     let n = if limit == 0 { total } else { limit.min(total) };
     // Count load-bearing rulings about to be elided, before we truncate the shown set.
@@ -1451,7 +1470,7 @@ pub fn brief(
     // and DECOMPOSED: `testbindable` is the catch-eligible subset (a non-test-bindable ruling can never
     // produce a catch, so it must not be charged as if it could); `total`/`elided` give injection
     // coverage past --limit. Additive, best-effort, gitignored 埋点 — no hashed payload is touched.
-    let out = brief_json(&kept, total, dropped_lb);
+    let out = brief_json(&kept, total, dropped_lb, advisory_total);
     let testbindable = kept
         .iter()
         .filter(|(_, t)| crate::tick::has_test_check(&t.grounds))
@@ -1494,8 +1513,18 @@ pub fn brief(
             painter.name(&format!("{total} user-ruled decisions"))
         );
         for (id, t) in &kept {
+            // Advisory = no check watches this ruling → a debt, kept at attention weight (never
+            // dimmer than a bound ruling — no-false-green, on enforcement). (Mirrors the plain tag.)
+            let advisory = if crate::tick::has_test_check(&t.grounds) {
+                String::new()
+            } else {
+                format!(
+                    "  {}",
+                    painter.class("advisory", crate::render::Class::Attention)
+                )
+            };
             println!(
-                "{} {}  {}",
+                "{} {}  {}{advisory}",
                 painter.prov_glyph(false),
                 painter.name(&format!("{:?}", t.decision)),
                 painter.id(id)
@@ -1510,16 +1539,33 @@ pub fn brief(
         if total > n {
             println!("{}", painter.meta(&footer(total - n)));
         }
+        if advisory_total > 0 {
+            println!(
+                "{}",
+                painter.class(
+                    &advisory_note(advisory_total, total),
+                    crate::render::Class::Attention
+                )
+            );
+        }
     } else {
-        // Legacy: today's exact bytes.
+        // Plain path: today's bytes + an `· advisory` tag on a ruling no check watches.
         for (_id, t) in &kept {
-            println!("{}  [user-ruled]", t.decision);
+            let tag = if crate::tick::has_test_check(&t.grounds) {
+                "[user-ruled]"
+            } else {
+                "[user-ruled · advisory]"
+            };
+            println!("{}  {tag}", t.decision);
             for (option, claim) in rejected_roads(t) {
                 println!("  rejected {option}: {claim}");
             }
         }
         if total > n {
             println!("{}", footer(total - n));
+        }
+        if advisory_total > 0 {
+            println!("{}", advisory_note(advisory_total, total));
         }
     }
     ExitCode::SUCCESS

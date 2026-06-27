@@ -23,10 +23,30 @@ wrong layout unrepresentable: the ledger is born at the root of the guarded work
 emits a co-location hint at runtime if a `--run` resolves no pass/fail — the cheap detector behind the
 structural fix.)
 
+## Using the skill in a headless / unattended agent
+
+An agent invoked NON-INTERACTIVELY (a runner that runs it with permissions pre-granted — CI, an
+unattended box) can use [`../skills/ev/SKILL.md`](../skills/ev/SKILL.md) the same as an interactive one.
+Three deployment notes, stated as runtime conventions so this repo names no vendor:
+
+- **Placement.** A runtime auto-discovers a skill from a per-project skills directory in the working
+  directory (then a per-user one). Place `skills/ev/SKILL.md` there **on the deploy box** — that path is
+  vendor-specific local config, copied/generated on the box, **never committed here** (so this repo stays
+  vendor-neutral). The co-location scaffold is the natural place to also drop it.
+- **Invocation.** Non-interactive mode auto-invokes a skill when its `description` matches the task; to
+  GUARANTEE it loads, name the skill in the round prompt. **A permission-bypass flag does NOT gate skills**
+  — skill availability is independent of the permission mode (a skill is gated only by an explicit
+  skill-permission rule, not by bypass).
+- **Version.** Headless skill invocation needs a recent runtime build — confirm the deploy box's version
+  supports skills in non-interactive mode before relying on auto-invocation.
+
+(The exact, vendor-specific commands for our own deploy boxes are kept **outside this repo** — they name a
+vendor, and this repo stays vendor-neutral.)
+
 ## Honest boundary
 
 These raise enforcement; they do not turn `ev` into an enforcer. `ev` stays detect-not-prevent: the
-SessionStart hook makes settled decisions *unmissable* (heed rate up), it does not compel obedience; the
+session-start hook makes settled decisions *unmissable* (heed rate up), it does not compel obedience; the
 git hook gates commits only; the scaffold removes a setup judgment, it does not police the filesystem. A
 genuinely advisory decision (a judgment call no check can watch) will still rely on heed — that is honest,
 not a gap. Push each decision to the highest rung it can sit on; accept that the top of the ladder is

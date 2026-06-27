@@ -13,6 +13,7 @@ see [concepts.md](concepts.md).
 
 - [Global flags — output rendering](#global-flags--output-rendering)
 - [`ev init`](#ev-init)
+- [`ev setup`](#ev-setup)
 - [`ev decide`](#ev-decide)
 - [`ev propose`](#ev-propose)
 - [`ev ratify`](#ev-ratify)
@@ -78,6 +79,34 @@ not be created.
 ev init
 # → created .evolving/  (content-addressed chain + results cache)
 ```
+
+---
+
+## `ev setup`
+
+**Synopsis:** set up the ev usage loop for Claude Code in a working tree — co-locate the ledger, install
+the skill where it is discovered, and wire the session-start brief + pre-commit gate.
+
+```
+ev setup [--dry-run] [target-working-tree]
+```
+
+**Flags:** `--dry-run` prints every change and writes nothing. The `target` defaults to the current
+directory.
+
+**What it does:** in a git working tree it (1) co-locates the ledger (`ev init` +
+`staleness_ref=local-head`, so a local change can go red as you work), (2) writes the skill to
+`.claude/skills/ev/SKILL.md` — embedded in the binary, so no checkout is needed — and (3) installs the
+session-start brief (`.claude/hooks/` + a `.claude/settings.json` SessionStart hook) and the pre-commit
+gate (`.git/hooks/pre-commit`). It is **idempotent and non-destructive**: it keeps an existing ledger,
+backs up a differing skill, never edits an existing `settings.json` (it prints the one line to add), and
+never overwrites an existing pre-commit hook. It raises enforcement; it does not make `ev` an enforcer.
+
+**Exit code:** `0` on success (or a clean `--dry-run`); `1` if the target is not a git working tree or a
+write fails.
+
+**See also:** [`integrations/claude-code/`](../integrations/claude-code/) — the headless (`claude -p`)
+recipe and the manual equivalent.
 
 ---
 

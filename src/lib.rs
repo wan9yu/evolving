@@ -12,6 +12,7 @@ pub mod receipt;
 pub mod render;
 pub mod runner;
 pub mod selected;
+pub mod setup;
 pub mod staleness;
 pub mod state;
 pub mod store;

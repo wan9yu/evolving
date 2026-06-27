@@ -17,6 +17,15 @@ struct Cli {
 enum Cmd {
     /// Create the .evolving/ store
     Init,
+    /// Set up the ev usage loop for Claude Code in a working tree: co-locate the ledger, install the
+    /// skill where it's discovered, and wire the session-start brief + pre-commit gate.
+    Setup {
+        /// The git working tree to set up (default: the current directory).
+        target: Option<std::path::PathBuf>,
+        /// Show what would change without writing anything.
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Print one decision in full
     Show { id: String },
     /// List every EFFECTIVE decision in the ledger (id, status, decision; superseded rulings collapsed).
@@ -219,6 +228,9 @@ fn main() -> std::process::ExitCode {
     let painter = ev::render::Painter::resolve(cli.color, cli.plain);
     match cli.cmd {
         Cmd::Init => ev::cmd::init(&repo),
+        Cmd::Setup { target, dry_run } => {
+            ev::setup::run(target.as_deref().unwrap_or(&repo), dry_run)
+        }
         Cmd::Show { id } => ev::cmd::show(&repo, &id),
         Cmd::List => ev::cmd::list(&repo, painter),
         Cmd::Log => ev::cmd::log(&repo, painter),

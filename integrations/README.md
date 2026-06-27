@@ -40,8 +40,9 @@ Three deployment notes, stated as runtime conventions so this repo names no vend
 - **Version.** Headless skill invocation needs a recent runtime build — confirm the deploy box's version
   supports skills in non-interactive mode before relying on auto-invocation.
 
-For Claude Code specifically, the concrete commands + a **one-step installer** that does all of the above
-live in [`claude-code/`](claude-code/) (`ev-setup.sh` + the `claude -p` headless recipe).
+For Claude Code specifically, a built-in **one-step installer** — `ev setup` — does all of the above (it
+embeds the skill + hooks, so no checkout is needed); see [`claude-code/`](claude-code/) for it and the
+`claude -p` headless recipe.
 
 ## Honest boundary
 

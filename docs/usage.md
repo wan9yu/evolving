@@ -5,10 +5,11 @@ reference (every flag, exit code, exact output string) see
 [commands.md](commands.md); for the model behind it — Ticks, Grounds, Checks, the refusals —
 see [concepts.md](concepts.md).
 
-`ev` is **git for decisions**: it records a decision and the grounds it rests on as an
-immutable, content-addressed chain, binds a falsifiable test (or a human re-check) to each
-ground, and **resurfaces the decision — named — when a bound check goes red**. It deals in
-**facts, not verdicts**.
+`ev` watches the **reason** a decision rests on and **resurfaces the decision — named — when that
+reason stops being true**: a falsifiable check bound to the reason goes red against your real git
+state. It fires on the premise going false — not when a file is touched or a rule is violated (see
+[neighbors.md](neighbors.md)). Under the hood it's *git for decisions* — an immutable,
+content-addressed chain — and it deals in **facts, not verdicts**.
 
 Create the store once per repo:
 

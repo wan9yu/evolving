@@ -1,14 +1,18 @@
 ---
 name: recording-decisions-with-ev
-description: Use when a technical decision is being made, a premise needs an invariant guarding it, or a guarding test has gone red — record it with `ev` (git for decisions, an immutable content-addressed ledger) AND bind the falsifiable test that catches its violation, because a decision nothing watches is just a note that drifts. `ev` resurfaces the decision — named — when a bound check goes red. Also use at session start to load the decisions a human has already ruled on (`ev brief` — it marks which are still advisory/unwatched), so a fresh agent neither re-opens a settled call nor leaves a ruling unguarded.
+description: Use when a technical decision is being made, the reason it rests on needs a falsifiable check guarding it, or a guarding check has gone red — record the decision with `ev` AND bind the check that catches its reason breaking (a decision nothing watches is just a note that drifts). `ev` brings the decision back — named — the moment its reason stops being true: that bound check goes red against your real git state (under the hood, *git for decisions*: an immutable, content-addressed ledger). Also use at session start to load what a human has already ruled (`ev brief` — it marks which rulings are still advisory/unwatched), so a fresh agent neither re-opens a settled call nor leaves a ruling unguarded.
 ---
 
 # Recording & resurfacing decisions with `ev`
 
-`ev` is **git for decisions**: it records a human-vetted decision and the grounds it
-rests on as an immutable, content-addressed chain, binds a falsifiable test (or a human
-re-check) to each ground, and **resurfaces the whole decision — named — when a bound check
-goes red**. It deals in **facts, not verdicts**: no scores, no ranks, no auto-judgements.
+`ev` watches the **reason** a decision rests on and **resurfaces the whole decision — named —
+when that reason stops being true**: a human binds a falsifiable test (or a human re-check) to
+each ground, and the decision comes back the moment that check goes red against your real git
+state. Under the hood it's *git for decisions* — a human-vetted decision and its grounds as an
+immutable, content-addressed chain — and it deals in **facts, not verdicts**: no scores, no
+ranks, no auto-judgements. That trigger is the distinctive one: `ev` fires when the decision's
+**premise** goes false — which can happen with no guarded file touched and no rule violated —
+not when a pull request touches certain files, nor when code violates a lint/architecture rule.
 
 Install: `cargo install evolving` (the command is `ev`). The store lives in `.evolving/`.
 

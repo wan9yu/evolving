@@ -78,7 +78,7 @@ pub fn run(repo: &Path, a: GuardArgs) -> Result<Tick, String> {
     if let Some(val) = &a.authority {
         crate::capture::validate_authority(val)?;
     }
-    // 0.1.8: a rejected road (closed by a ruling) may be guarded with a falsifiable tripwire, but
+    // A rejected road (closed by a ruling) may be guarded with a falsifiable tripwire, but
     // ONLY when the binding declares --authority user-ruled (the human's deliberate closed-road call).
     // Mirrors capture.rs build_ground; the counter-test stays required below (no harvested tripwire).
     // provenance is hard-stamped human-now on the child (line below), so a guard can never create an
@@ -351,7 +351,7 @@ mod tests {
 
     #[test]
     fn guard_should_mint_a_byte_stable_child_id_when_binding_a_fixed_ground() {
-        // BYTE-IDENTITY LOCK for the guard→append refactor (0.1.18/p2): the child's content-addressed
+        // BYTE-IDENTITY LOCK for the guard→append refactor: the child's content-addressed
         // id is a function of the hashed payload {decision, observe, grounds, parent_id} ONLY. Routing
         // guard through capture::append must NOT move this id. The value below is captured from the
         // PRE-refactor build and must remain unchanged after it.

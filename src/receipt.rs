@@ -1,6 +1,6 @@
 //! Run-receipts: the non-hashed evidence that a bound test ran — one JSON object
 //! per line in results/receipts/<test-key>.jsonl. Deleting receipts never changes a
-//! tick id (the hashed/cached split). Unsigned, trust-on-write for 0.1.0.
+//! tick id (the hashed/cached split). Unsigned, trust-on-write.
 use crate::store::Store;
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};

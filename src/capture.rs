@@ -294,7 +294,7 @@ fn build_ground(
     if d.supports.starts_with("rejected:") && d.revisit.is_some() {
         return Err("a road-not-taken (rejected) ground cannot carry a human re-check".into());
     }
-    // 0.1.8 tripwire: a rejected road MAY carry a falsifiable test that trips when the closed road is
+    // Rejected-road tripwire: a rejected road MAY carry a falsifiable test that trips when the closed road is
     // re-walked — but ONLY when a human deliberately ruled the road closed (--authority user-ruled).
     // The counter-test stays REQUIRED via the shared strict path below (no harvested rejected-road
     // tripwire). HONESTY: this binds only a STRUCTURAL token (the test/counter-test grep a real
@@ -579,7 +579,7 @@ pub fn build_preview(repo: &Path, decision: Option<&str>, args: &[String]) -> Re
 ///     git identity): `--blame` if given, else `EV_AGENT_ID` (the runner's declared agent), else the
 ///     generic literal `"agent"`. The proposal's author is therefore never silently the human.
 ///
-/// `agent-proposed` is inert at the gate (LOCK 3) and excluded from `brief` (the §五 guarantee) until a
+/// `agent-proposed` is inert at the gate (LOCK 3) and excluded from `brief` (the propose→ratify guarantee) until a
 /// named human ratifies it.
 pub fn propose(
     repo: &Path,
@@ -1217,7 +1217,7 @@ mod tests {
     #[test]
     fn build_should_refuse_a_detect_only_decision_that_carries_a_runnable_test() {
         // given: a C-jurisdiction (detect-only) decision whose ground carries a runnable Test — the
-        // contradiction 0.1.19 closes. detect-only never gates, so it may hold no test binding; the
+        // contradiction build() refuses. detect-only never gates, so it may hold no test binding; the
         // shared write primitive build() is the one door that makes decide AGREE with verify/migrate.
         let r = repo();
         let d = Decision {

@@ -2,7 +2,7 @@
 //! payload (decision / observe / grounds) verbatim, flips `provenance → human-now` and
 //! `authority → user-ruled`, and attaches the `ratifies:<proposal-id>` edge. The proposal itself is
 //! NEVER rewritten — it stays immutable, thereafter shown "ratified by <child>". This is the ONLY
-//! bridge from `agent-proposed` to a user-ruled ruling (the §五 line), and `--blame` is REQUIRED and
+//! bridge from `agent-proposed` to a user-ruled ruling (the propose→ratify rule), and `--blame` is REQUIRED and
 //! never auto-filled — ratification is the one op where a `git config` fallback would forge a human.
 //! Same mint-a-child mechanics as `ev correct`; the child's id is content-addressed over the copied
 //! payload, so the proposal and its ratified child are recognizably the same decision.

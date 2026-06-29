@@ -39,6 +39,11 @@ pub enum Verdict {
     NotRun { missing_platforms: Vec<String> },
     Stale { kind: StaleKind, reason: String },
     SilentlyUnbound,
+    // A green that rests on UNCOMMITTED changes to a guarded path — the run attests the working tree,
+    // not any commit, so it is not a trustworthy green. Produced by the cmd-layer `resolve_verdict`
+    // (read-time, git-impure: `git status` on the triggered_by paths), never by the pure verdict_for.
+    // Non-gating (a dirty tree is the normal pre-commit state) but surfaced, never silently green.
+    Dirty,
     Exempt,        // this runner attests none of the binding's declared platforms (non-gating)
     Memo, // a C/D-jurisdiction (detect-only) not-green fact — surfaced but never gates (non-gating)
     NotApplicable, // no check, or a person re-check
@@ -55,6 +60,7 @@ impl Verdict {
             Verdict::NotRun { .. } => "not-run",
             Verdict::Stale { .. } => "stale",
             Verdict::SilentlyUnbound => "silently-unbound",
+            Verdict::Dirty => "dirty",
             Verdict::Exempt => "exempt",
             Verdict::Memo => "memo",
             Verdict::NotApplicable => "n/a",

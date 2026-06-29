@@ -160,3 +160,63 @@ fn a_commit_touching_the_guarded_path_does_stale_the_binding() {
         "a commit touching the guarded path must stale the binding: {out}"
     );
 }
+
+#[test]
+fn an_uncommitted_change_to_a_guarded_path_makes_a_green_read_dirty() {
+    // given: a bound check, then an UNCOMMITTED edit to its guarded path (the false-green shape: a
+    // green that rests on changes never committed)
+    let (r, c1) = repo();
+    decide_bound(&r, &c1);
+    std::fs::write(r.join("guarded.txt"), "v2-uncommitted").unwrap();
+
+    // when: the check is run — the test passes against the dirty tree, so the receipt is green
+    let out = run(&r, &["check", "--run", "--platform", "local"]);
+
+    // then: it reads DIRTY, never silently green — the green attests the worktree, not the verified sha
+    assert_eq!(
+        row_label(&out).as_deref(),
+        Some("dirty"),
+        "a green resting on an uncommitted change to a guarded path must read dirty: {out}"
+    );
+}
+
+#[test]
+fn an_uncommitted_change_to_a_non_guarded_path_keeps_a_binding_green() {
+    // given: a green bound check (guarded by guarded.txt)
+    let (r, c1) = repo();
+    decide_bound(&r, &c1);
+    run(&r, &["check", "--run", "--platform", "local"]);
+
+    // when: an UNCOMMITTED edit touches a NON-guarded path
+    std::fs::write(r.join("other.txt"), "v2-uncommitted").unwrap();
+    let out = run(&r, &["check"]);
+
+    // then: still GREEN — dirtiness off the guarded path does not taint the binding
+    assert_eq!(
+        row_label(&out).as_deref(),
+        Some("green"),
+        "an uncommitted change off the guarded path must not read dirty: {out}"
+    );
+}
+
+#[test]
+fn a_dirty_green_is_non_gating() {
+    // given: a green-but-dirty binding (uncommitted change on the guarded path)
+    let (r, c1) = repo();
+    decide_bound(&r, &c1);
+    std::fs::write(r.join("guarded.txt"), "v2-uncommitted").unwrap();
+
+    // when: the gate runs (--exit-on-red)
+    let out = ev()
+        .args(["check", "--run", "--platform", "local", "--exit-on-red"])
+        .current_dir(&r)
+        .output()
+        .unwrap();
+
+    // then: dirty does NOT gate — a dirty tree is the normal pre-commit state; it is surfaced, not blocked
+    assert!(
+        out.status.success(),
+        "dirty must be non-gating (exit 0): {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+}

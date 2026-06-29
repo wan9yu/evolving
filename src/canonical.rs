@@ -57,7 +57,7 @@ pub fn hashed_value(t: &Tick) -> Value {
         .iter()
         .map(|g| {
             // Built as a manual Map (not json!) so an absent check OMITS the key
-            // entirely — never serializes as null (design §4.8).
+            // entirely — never serializes as null.
             let mut o = Map::new();
             o.insert("claim".into(), Value::String(g.claim.clone()));
             o.insert("supports".into(), Value::String(g.supports.clone()));

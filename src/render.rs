@@ -53,7 +53,8 @@ impl Class {
 
 /// The meaning-class of a verdict. Gating-not-green → Attention (decision-invitations, one calm hue);
 /// green → Clear; the non-gating facts (exempt / memo / n/a) → Informational. Honest debt (the
-/// harvested line) is styled Attention by its caller too, so it is never quieter than a green.
+/// harvested line, and `dirty` — a green resting on uncommitted code) is styled Attention so it is
+/// never quieter than a green, even though `dirty` does not gate.
 pub fn class_of(v: &Verdict) -> Class {
     match v {
         Verdict::Red
@@ -61,6 +62,7 @@ pub fn class_of(v: &Verdict) -> Class {
         | Verdict::NotRun { .. }
         | Verdict::Stale { .. }
         | Verdict::Unproven
+        | Verdict::Dirty
         | Verdict::SilentlyUnbound => Class::Attention,
         Verdict::Green => Class::Clear,
         Verdict::Exempt | Verdict::Memo | Verdict::NotApplicable => Class::Informational,

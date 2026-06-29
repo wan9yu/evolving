@@ -30,6 +30,28 @@ pub fn changed_since(repo: &Path, since_commit: &str, paths: &[String]) -> Optio
     changed_between(repo, since_commit, "HEAD", paths)
 }
 
+/// True if a TRACKED file under `paths` has uncommitted changes (staged or unstaged) — i.e. a run
+/// here attests a worktree that differs from the committed code, the false-green shape. UNTRACKED
+/// files are excluded (`--untracked-files=no`): a generated/never-committed file has no committed
+/// baseline it could contradict, so a check that reads one (e.g. an exporter output vs a frozen
+/// snapshot) is not tainted. Empty paths or a git failure → false (never fabricate a dirty).
+pub fn worktree_dirty(repo: &Path, paths: &[String]) -> bool {
+    if paths.is_empty() {
+        return false;
+    }
+    let mut args: Vec<String> = vec![
+        "status".into(),
+        "--porcelain".into(),
+        "--untracked-files=no".into(),
+        "--".into(),
+    ];
+    args.extend(paths.iter().cloned());
+    match Command::new("git").args(&args).current_dir(repo).output() {
+        Ok(out) if out.status.success() => !out.stdout.is_empty(),
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

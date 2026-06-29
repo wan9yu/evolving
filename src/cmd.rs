@@ -103,11 +103,11 @@ pub fn ratify(repo: &Path, id: &str, blame: &str) -> ExitCode {
 }
 
 /// The identity of a DECISION (not a tick): its hashed payload minus `parent_id`. The LEGACY collapse
-/// signal: ticks sharing this — in practice a pre-0.1.10 `ev correct` child and the tick it re-tags
+/// signal: ticks sharing this — in practice a legacy edge-less corrective child and the tick it re-tags
 /// (same decision/observe/grounds, a different chain position) — are treated as one decision and
 /// collapsed to the latest. Content equality is a weaker signal than the explicit `supersedes` edge
 /// (two genuinely-independent decisions with byte-identical decision/observe/grounds also share it);
-/// since 0.1.10 a correction carries an explicit `supersedes:<id>` edge, and the edge supersedes first —
+/// a correction now carries an explicit `supersedes:<id>` edge, and the edge supersedes first —
 /// content-equality remains only as the fallback that keeps legacy (edge-less) corrections collapsing.
 fn decision_identity(t: &Tick) -> String {
     let mut v = crate::canonical::hashed_value(t);
@@ -118,11 +118,11 @@ fn decision_identity(t: &Tick) -> String {
 }
 
 /// Collapse a corrective lineage to its CURRENT state. Two signals, in order:
-/// 1. The explicit `supersedes:<id>` relation-overlay edge (0.1.10+): a tick whose id is named by some
+/// 1. The explicit `supersedes:<id>` relation-overlay edge: a tick whose id is named by some
 ///    other tick's `supersedes` is SUPERSEDED — dropped precisely, regardless of content. (No cycles:
 ///    `supersedes` only ever points backward to an older tick — append-only + content-addressed.)
 /// 2. Legacy content-equality fallback: among the survivors, keep only the latest (by `held_since`,
-///    then id) per `decision_identity` — so pre-0.1.10 corrective children (no edge) still collapse.
+///    then id) per `decision_identity` — so legacy corrective children (no edge) still collapse.
 ///
 /// A decision that was never corrected is its own sole entry.
 fn current_decisions(mut ticks: Vec<(String, Tick)>) -> Vec<(String, Tick)> {
@@ -218,6 +218,19 @@ fn guarded_paths_drifted(
     crate::liveness::changed_between(repo, verified, live_origin?, triggered_by)
 }
 
+/// True when a TRACKED file on this ground's triggered_by paths has uncommitted changes — a run here
+/// attests a worktree that differs from the committed code. Untracked files, git failure, or no
+/// triggered_by → false (never fabricate a dirty; don't disturb a green over uncertainty).
+fn guarded_paths_dirty(repo: &std::path::Path, ground: &crate::tick::Ground) -> bool {
+    use crate::tick::Check;
+    match &ground.check {
+        Some(Check::Test { liveness, .. }) => {
+            crate::liveness::worktree_dirty(repo, &liveness.triggered_by)
+        }
+        _ => false,
+    }
+}
+
 /// `verdict_for` + DIFF-AWARE sha-staleness: a `Stale{Sha}` whose guarded paths did NOT change between
 /// `verified_at_sha` and the live origin is a bookkeeping-commit false-stale (HEAD advanced, the code
 /// did not) — recompute ignoring the sha gate, so a bound check is not single-use on an auto-committing
@@ -231,7 +244,7 @@ fn resolve_verdict(
     triggered: bool,
 ) -> crate::verdict::Verdict {
     use crate::verdict::{verdict_for, StaleKind, Verdict};
-    let v = verdict_for(ground, receipts, ctx, triggered);
+    let mut v = verdict_for(ground, receipts, ctx, triggered);
     if matches!(
         v,
         Verdict::Stale {
@@ -244,7 +257,13 @@ fn resolve_verdict(
             live_origin_sha: None,
             ..ctx.clone()
         };
-        return verdict_for(ground, receipts, &relaxed, triggered);
+        v = verdict_for(ground, receipts, &relaxed, triggered);
+    }
+    // A green resting on UNCOMMITTED changes to a guarded path is not a trustworthy green — the receipt
+    // attests the live worktree, not the verified sha. Surface it as `dirty` (non-gating), never
+    // silently green. Only overrides green: a red/stale/not-run already won earlier and stays.
+    if matches!(v, Verdict::Green) && guarded_paths_dirty(repo, ground) {
+        return Verdict::Dirty;
     }
     v
 }
@@ -491,7 +510,8 @@ fn verdict_rank(v: &crate::verdict::Verdict) -> u8 {
         Verdict::Stale { .. } => 4,
         Verdict::NotRun { .. } => 3,
         Verdict::Unproven => 2,
-        Verdict::Memo => 1,
+        // non-gating but visible above green, so a dirty/memo sibling is not masked by a clean green
+        Verdict::Memo | Verdict::Dirty => 1,
         Verdict::Green | Verdict::Exempt | Verdict::NotApplicable => 0,
     }
 }
@@ -550,6 +570,9 @@ fn live_ctx(
 struct CheckRow {
     label: String,
     class: crate::render::Class,
+    // Whether this verdict gates (--exit-on-red). Distinct from `class`: `dirty` is Attention-styled
+    // (never quieter than green) yet does NOT gate, so the tally counts by this, not by colour.
+    gating: bool,
     id: String,
     decision: String,
     claim: String,
@@ -704,15 +727,18 @@ pub fn check(
             // captured for the rich human row — the plain/scriptable path is byte-stable, only rich uses it.
             let mut memo_reason: Option<String> = None;
             // LOCK 1 (gate-time, LEGACY DEFENSE): a C/D-jurisdiction (detect-only) decision never
-            // gates. As of 0.1.19 a C/D decision carrying a Test is refused at creation by
+            // gates. A C/D decision carrying a Test is refused at creation by
             // capture::build() (so it can no longer be authored) — but ev is immutable, and a C/D+Test
             // tick written before that door persists forever. This maps ANY not-green verdict on such a
             // legacy tick to the non-gating Memo BEFORE the any_not_green writer below, so it can never
             // flip --exit-on-red. (Unlike LOCK 3 below — which guards a legitimately-creatable object —
-            // LOCK 1 now only defends pre-0.1.19 legacy data; it becomes deletable once no such tick
+            // LOCK 1 only defends legacy data (a C/D+Test tick authored before that refusal existed); it becomes deletable once no such tick
             // can exist in any ledger.)
             if matches!(t.jurisdiction.as_deref(), Some("C") | Some("D"))
-                && !matches!(v, Verdict::Green | Verdict::NotApplicable | Verdict::Exempt)
+                && !matches!(
+                    v,
+                    Verdict::Green | Verdict::NotApplicable | Verdict::Exempt | Verdict::Dirty
+                )
             {
                 memo_reason = Some(format!(
                     "would read {}; detect-only (C/D), never gates",
@@ -722,7 +748,7 @@ pub fn check(
                 v = Verdict::Memo;
             }
             // LOCK 3 (gate-time, governance): an agent-PROPOSED tick must never flip --exit-on-red —
-            // a record DECLARED agent-proposed can't gate; a named human ratifies it into one (§五).
+            // a record DECLARED agent-proposed can't gate; a named human ratifies it into one.
             // (The human/agent line is the propose-vs-decide convention — declared, not verified; LOCK 3
             // enforces only the gating consequence of the declared tag, not who sat at the keyboard.) Map ANY
             // not-green to the non-gating Memo, the gate analogue of brief_visible excluding
@@ -735,7 +761,11 @@ pub fn check(
             if t.provenance.as_deref() == Some("agent-proposed")
                 && !matches!(
                     v,
-                    Verdict::Green | Verdict::NotApplicable | Verdict::Exempt | Verdict::Memo
+                    Verdict::Green
+                        | Verdict::NotApplicable
+                        | Verdict::Exempt
+                        | Verdict::Memo
+                        | Verdict::Dirty
                 )
             {
                 memo_reason = Some(format!(
@@ -745,10 +775,18 @@ pub fn check(
                 suppressed.push(v.clone());
                 v = Verdict::Memo;
             }
-            if !matches!(
+            // Does this verdict gate (--exit-on-red)? The non-gating set is clean green plus the
+            // surfaced-but-non-gating facts (exempt / memo / dirty / n-a). Drives the gate AND the
+            // tally, so the summary's "gating" count matches what actually blocks a commit.
+            let gating = !matches!(
                 v,
-                Verdict::Green | Verdict::NotApplicable | Verdict::Exempt | Verdict::Memo
-            ) {
+                Verdict::Green
+                    | Verdict::NotApplicable
+                    | Verdict::Exempt
+                    | Verdict::Memo
+                    | Verdict::Dirty
+            );
+            if gating {
                 any_not_green = true;
             }
             // Only Test-bound grounds appear in the printed set and the gate.
@@ -760,6 +798,7 @@ pub fn check(
                         format!("missing: {}", missing_platforms.join(", "))
                     }
                     Verdict::Stale { reason, .. } => reason.clone(),
+                    Verdict::Dirty => "verified against a dirty worktree — uncommitted change on a guarded path; commit + re-run to confirm".into(),
                     _ => latest_ran_at(&receipts)
                         .map(|ts| format!("ran {ts}"))
                         .unwrap_or_else(|| "no receipt".into()),
@@ -782,6 +821,7 @@ pub fn check(
                 rows.push(CheckRow {
                     label: v.label().to_string(),
                     class: class_of(&v),
+                    gating,
                     id: filename.clone(),
                     decision: t.decision.clone(),
                     claim: g.claim.clone(),
@@ -854,15 +894,16 @@ pub fn check(
                 painter.meta(&format!("{:?} · {}", r.claim, detail)),
             );
         }
-        // A plain COUNT (never a score): gating / green / non-gating, by meaning-class.
-        let n = |c: Class| rows.iter().filter(|r| r.class == c).count();
+        // A plain COUNT (never a score): gating / green / non-gating. Bucketed by ACTUAL gating, not by
+        // colour — `dirty` is Attention-styled but non-gating, so it counts as non-gating here while the
+        // count of what truly blocks a commit stays honest.
+        let gating = rows.iter().filter(|r| r.gating).count();
+        let green = rows.iter().filter(|r| r.class == Class::Clear).count();
+        let non_gating = rows.len() - gating - green;
         println!(
             "{}",
             painter.meta(&format!(
-                "{} gating · {} green · {} non-gating",
-                n(Class::Attention),
-                n(Class::Clear),
-                n(Class::Informational)
+                "{gating} gating · {green} green · {non_gating} non-gating"
             ))
         );
         // Honest debt stays at attention weight — never rendered quieter than a green (no false-green).
@@ -870,7 +911,7 @@ pub fn check(
             println!("{}", painter.class(&harvested_note, Class::Attention));
         }
         // Signpost the resurface zoom when something gates (a red invites a re-decide, not a klaxon).
-        if n(Class::Attention) > 0 {
+        if gating > 0 {
             println!(
                 "{}",
                 painter.meta("tip: ev why <selector> · ev reopen <id> — resurface a red")
@@ -1350,7 +1391,7 @@ fn rejected_roads(t: &Tick) -> impl Iterator<Item = (&str, &str)> {
 /// by recency (held_since), then id. Capped to the effective limit, with a remainder footer
 /// that counts how many hidden rulings closed a road so the elision stays visible.
 /// The boot-read visibility gate, shared by the text and `--json` forms: a decision reaches `brief`
-/// only when it is live, user-ruled, and NOT agent-proposed. The provenance exclusion is the §五
+/// only when it is live, user-ruled, and NOT agent-proposed. The provenance exclusion is the propose→ratify
 /// guarantee — an agent-proposed proposal never governs a fresh agent, even before the pending-lane
 /// machinery lands; until a named human vouches for it, it stays out of the boot-read entirely.
 fn brief_visible(t: &Tick) -> bool {
@@ -1880,7 +1921,7 @@ fn self_test_golden() -> ExitCode {
     if let Some(Check::Test { counter_test, .. }) = &mut harvested.grounds[0].check {
         *counter_test = None;
     }
-    // A rejected-road tripwire (0.1.8): case1's rejected:Redis road now CARRYING a Check::Test — the
+    // A rejected-road tripwire: case1's rejected:Redis road now CARRYING a Check::Test — the
     // re-walk guard a user-ruled decision may bind to the road it closed. Pins the byte layout of a
     // rejected: ground WITH a check (a layout no other golden exercises). authority=user-ruled is
     // non-hashed (it never moves the id); the new check on grounds[2] is what makes this a fresh id.

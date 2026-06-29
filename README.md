@@ -24,11 +24,21 @@ Using `ev` is a short loop you run as your project keeps changing:
 
 ```mermaid
 flowchart LR
-    D["1 · Decide + guard<br/>record a decision, bind a<br/>falsifiable check to its reason<br/>ev decide · ev guard"]
-    B["2 · Heed<br/>each session a fresh agent<br/>loads what's settled<br/>ev brief"]
-    C["3 · Check<br/>as the project changes,<br/>the guard is re-run<br/>ev check"]
-    R["4 · Re-decide<br/>a decision whose reason broke<br/>comes back, red and named<br/>ev supersede"]
-    D --> B --> C --> R --> B
+    D(["① Decide + guard<br/>bind a falsifiable check to the reason<br/>ev decide · ev guard"])
+    H(["② Heed each session<br/>a fresh agent loads what's settled<br/>ev brief"])
+    C{"③ Check —<br/>is the reason<br/>still true?"}
+    OK(["holds → stays green"])
+    R(["④ Resurface + re-decide<br/>the check went red; the decision<br/>comes back, named<br/>ev supersede"])
+    D --> H --> C
+    C -->|yes| OK
+    C -->|"no — the reason broke"| R
+    R --> H
+    classDef step fill:#eaf0fb,stroke:#5b7bb5,color:#16243d;
+    classDef good fill:#e7f3ea,stroke:#5a9a6b,color:#1d3a26;
+    classDef alert fill:#fbecea,stroke:#c5705f,color:#45201a;
+    class D,H,C step
+    class OK good
+    class R alert
 ```
 
 1. **Decide + guard** — record a decision and bind a falsifiable check to its reason (`ev decide` / `ev guard`; or an agent proposes and a human ratifies).

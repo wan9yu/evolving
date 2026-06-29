@@ -20,23 +20,33 @@
 
 ## 工作原理
 
-用 `ev` 是一个短循环——随着你的项目不断变化,你这样跑它:
+用 `ev` 是一个短循环——随着你的项目不断变化，你这样跑它：
 
 ```mermaid
 flowchart LR
-    D["1 · 裁决 + 绑定<br/>记录一个决策,把一个<br/>可证伪的检查绑到它的理由上<br/>ev decide · ev guard"]
-    B["2 · 加载<br/>每次会话,新鲜 agent<br/>加载已定的决策<br/>ev brief"]
-    C["3 · 检查<br/>随项目变化,<br/>重新跑这个检查<br/>ev check"]
-    R["4 · 重新裁决<br/>理由破裂的决策<br/>变红、具名地回来<br/>ev supersede"]
-    D --> B --> C --> R --> B
+    D(["① 裁决 + 绑定<br/>把一个可证伪的检查绑到理由上<br/>ev decide · ev guard"])
+    H(["② 每次会话都加载<br/>新鲜 agent 加载已定的决策<br/>ev brief"])
+    C{"③ 检查 ——<br/>理由还成立吗？"}
+    OK(["成立 → 保持绿"])
+    R(["④ 重新浮现 + 重新裁决<br/>检查变红，决策具名地回来<br/>ev supersede"])
+    D --> H --> C
+    C -->|是| OK
+    C -->|"否 —— 理由破裂"| R
+    R --> H
+    classDef step fill:#eaf0fb,stroke:#5b7bb5,color:#16243d;
+    classDef good fill:#e7f3ea,stroke:#5a9a6b,color:#1d3a26;
+    classDef alert fill:#fbecea,stroke:#c5705f,color:#45201a;
+    class D,H,C step
+    class OK good
+    class R alert
 ```
 
-1. **裁决 + 绑定** —— 记录一个决策,把一个可证伪的检查绑到它的理由上(`ev decide` / `ev guard`;或由 agent 提议、人来批准)。
-2. **加载** —— 每次会话开始,新鲜 agent 加载已经定下的决策(`ev brief`),不重新打开它。
-3. **检查** —— 随着项目变化,这个检查被重新跑(`ev check`,在你下一次运行时——无守护进程);理由已经破裂的决策会变红、具名地回来,并带着谁在担责。
-4. **重新裁决** —— 由人重新裁决它(`ev supersede`),循环继续。
+1. **裁决 + 绑定** —— 记录一个决策，把一个可证伪的检查绑到它的理由上（`ev decide` / `ev guard`；或由 agent 提议、人来批准）。
+2. **加载** —— 每次会话开始，新鲜 agent 加载已经定下的决策（`ev brief`），不重新打开它。
+3. **检查** —— 随着项目变化，这个检查被重新跑（`ev check`，在你下一次运行时——无守护进程）；理由已经破裂的决策会变红、具名地回来，并带着谁在担责。
+4. **重新裁决** —— 由人重新裁决它（`ev supersede`），循环继续。
 
-一个决策若不绑定检查,它就是 *advisory*——仍会被 `ev brief` 浮现,但它的理由破裂时没有东西抓得住它。
+一个决策若不绑定检查，它就是 *advisory*——仍会被 `ev brief` 浮现，但它的理由破裂时没有东西抓得住它。
 
 ## `ev` 是什么——又不是什么
 

@@ -3,6 +3,7 @@ fn run(dir: &std::path::Path, args: &[&str]) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_ev"))
         .args(args)
         .current_dir(dir)
+        .env_remove("CLAUDECODE")
         .output()
         .unwrap()
 }

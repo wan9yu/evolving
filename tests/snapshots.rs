@@ -36,7 +36,7 @@ fn a_bare_claim_past_two_boundaries_is_expired_bare() {
 
 #[test]
 fn a_snapshot_counts_closes_not_in_a_prior_snapshot() {
-    // counted-set: two closes before snap A, one more before snap B -> A=2, B counts only the new 1
+    // the fold surfaces each snapshot's recorded delta as-is: one close before snap A (1), one before snap B (1)
     let events = vec![
         env(1, "clm_a", "claim", serde_json::json!({"label":"a"})),
         env(

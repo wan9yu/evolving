@@ -163,7 +163,7 @@ pub fn think(label: String, pinned: bool) -> Result<()> {
 /// Return a short display prefix for an event id: `<prefix>_<first-6-of-ulid>`.
 pub fn short(id: &str) -> String {
     match id.split_once('_') {
-        Some((p, rest)) => format!("{p}_{}", &rest[..rest.len().min(6)]),
+        Some((p, rest)) => format!("{p}_{}", rest.chars().take(6).collect::<String>()),
         None => id.to_string(),
     }
 }

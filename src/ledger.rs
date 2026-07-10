@@ -17,6 +17,30 @@ pub struct Actor {
     pub via: Option<String>,
 }
 
+impl Actor {
+    pub fn human() -> Self {
+        Actor {
+            kind: ActorKind::Human,
+            id: None,
+            via: None,
+        }
+    }
+    pub fn engine() -> Self {
+        Actor {
+            kind: ActorKind::Engine,
+            id: None,
+            via: None,
+        }
+    }
+    pub fn agent(id: impl Into<String>) -> Self {
+        Actor {
+            kind: ActorKind::Agent,
+            id: Some(id.into()),
+            via: None,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Envelope {
     pub v: u8,
@@ -183,8 +207,8 @@ impl Ledger {
         if content.is_empty() || content.ends_with('\n') {
             return Ok(());
         }
-        let last = content.rlines_last();
-        if serde_json::from_str::<Envelope>(&last).is_err() {
+        let last = last_line(&content);
+        if serde_json::from_str::<Envelope>(last).is_err() {
             let keep = content.len() - last.len();
             f.set_len(keep as u64)?;
         }
@@ -225,16 +249,10 @@ impl Ledger {
     }
 }
 
-trait RLinesLast {
-    fn rlines_last(&self) -> String;
-}
-
-impl RLinesLast for String {
-    fn rlines_last(&self) -> String {
-        match self.rfind('\n') {
-            Some(i) => self[i + 1..].to_string(),
-            None => self.clone(),
-        }
+fn last_line(s: &str) -> &str {
+    match s.rfind('\n') {
+        Some(i) => &s[i + 1..],
+        None => s,
     }
 }
 

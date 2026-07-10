@@ -239,8 +239,7 @@ pub fn fold(events: &[Envelope]) -> Derived {
             id: a.id.clone(),
             label: a.label.clone(),
             state,
-            self_evident: a.evidence.iter().any(|e| e.self_evident)
-                && a.evidence.iter().all(|e| e.self_evident),
+            self_evident: !a.evidence.is_empty() && a.evidence.iter().all(|e| e.self_evident),
             evidence: a.evidence.clone(),
             boundaries_open,
             referenced_by: a.referenced_by,
@@ -248,8 +247,7 @@ pub fn fold(events: &[Envelope]) -> Derived {
             reason: a.held.clone(),
         };
         match state {
-            ClaimState::Closed => out.closed.push(view.clone()),
-            ClaimState::Dead => out.closed.push(view.clone()),
+            ClaimState::Closed | ClaimState::Dead => out.closed.push(view.clone()),
             ClaimState::Grey => out.grey.push(view.clone()),
             _ => {}
         }

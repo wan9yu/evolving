@@ -1,9 +1,16 @@
-use crate::ledger::{Actor, ActorKind, Ledger, NewEvent};
+use crate::ledger::{Actor, Ledger, NewEvent};
 use crate::Result;
 use std::collections::HashSet;
 use std::io::Read;
 use std::path::Path;
-use std::process::Command;
+
+fn write_settings(path: &Path, v: &serde_json::Value) -> Result<()> {
+    std::fs::write(
+        path,
+        format!("{}\n", serde_json::to_string_pretty(v).unwrap()),
+    )
+    .map_err(crate::EvError::from)
+}
 
 /// Merge ev's SessionStart + SessionEnd hooks into .claude/settings.json, idempotently.
 pub fn install(root: &Path) -> Result<()> {
@@ -28,10 +35,7 @@ pub fn install(root: &Path) -> Result<()> {
     );
     upsert_hook(hooks, "SessionEnd", "ev hook session-end", None);
 
-    std::fs::write(
-        &settings_path,
-        format!("{}\n", serde_json::to_string_pretty(&v).unwrap()),
-    )?;
+    write_settings(&settings_path, &v)?;
     println!("installed ev hooks into {}", settings_path.display());
     Ok(())
 }
@@ -72,10 +76,7 @@ pub fn uninstall(root: &Path) -> Result<()> {
                     }
                 }
             }
-            std::fs::write(
-                &settings_path,
-                format!("{}\n", serde_json::to_string_pretty(&v).unwrap()),
-            )?;
+            write_settings(&settings_path, &v)?;
         }
     }
     println!("removed ev hooks.");
@@ -101,7 +102,7 @@ pub fn session_start(root: &Path) -> Result<()> {
 pub fn session_end(root: &Path) -> Result<()> {
     let payload = drain_stdin();
     let session = extract_session_id(&payload).unwrap_or_else(|| ulid::Ulid::new().to_string());
-    let head = git_head(root);
+    let head = crate::git_output(root, &["rev-parse", "HEAD"]);
     if let Ok(ledger) = Ledger::open(root) {
         let mut body = serde_json::json!({ "marker": "end", "session": session, "swept": false });
         if let Some(h) = head {
@@ -109,11 +110,7 @@ pub fn session_end(root: &Path) -> Result<()> {
         }
         let _ = ledger.append_batch(vec![NewEvent {
             etype: "session".into(),
-            actor: Actor {
-                kind: ActorKind::Engine,
-                id: None,
-                via: None,
-            },
+            actor: Actor::engine(),
             body,
         }]);
     }
@@ -204,11 +201,7 @@ pub fn sweep(root: &Path, ledger: &Ledger) -> Result<()> {
         // mark this session swept; a write failure must not abort the sweep loop
         let _ = ledger.append_batch(vec![NewEvent {
             etype: "session".into(),
-            actor: Actor {
-                kind: ActorKind::Engine,
-                id: None,
-                via: None,
-            },
+            actor: Actor::engine(),
             body: serde_json::json!({ "marker": "swept", "session": session_id, "head": resolved }),
         }]);
 
@@ -220,16 +213,7 @@ pub fn sweep(root: &Path, ledger: &Ledger) -> Result<()> {
 /// Resolve a git ref (including the literal "HEAD") to its concrete sha.
 /// Falls back to the input unchanged when git is unavailable or the ref is unknown.
 fn resolve_sha(root: &Path, r: &str) -> String {
-    Command::new("git")
-        .args(["rev-parse", r])
-        .current_dir(root)
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| r.to_string())
+    crate::git_output(root, &["rev-parse", r]).unwrap_or_else(|| r.to_string())
 }
 
 fn drain_stdin() -> String {
@@ -243,18 +227,4 @@ fn extract_session_id(payload: &str) -> Option<String> {
     v.get("session_id")
         .and_then(|s| s.as_str())
         .map(|s| s.to_string())
-}
-
-/// Best-effort HEAD sha from the repo root.
-fn git_head(root: &Path) -> Option<String> {
-    let out = Command::new("git")
-        .args(["rev-parse", "HEAD"])
-        .current_dir(root)
-        .output()
-        .ok()?;
-    if out.status.success() {
-        Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
-    } else {
-        None
-    }
 }

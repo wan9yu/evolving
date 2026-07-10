@@ -1,4 +1,4 @@
-use crate::ledger::{Actor, ActorKind, Ledger, NewEvent};
+use crate::ledger::{Actor, Ledger, NewEvent};
 use crate::state::{ClaimState, Derived};
 use crate::Result;
 use std::io::{BufRead, Write};
@@ -114,11 +114,7 @@ pub fn run_pause(root: &Path, opts: PauseOpts) -> Result<()> {
         .unwrap_or_else(|| "y".into());
     ledger.append_batch(vec![NewEvent {
         etype: "pause".into(),
-        actor: Actor {
-            kind: ActorKind::Human,
-            id: None,
-            via: None,
-        },
+        actor: Actor::human(),
         body: serde_json::json!({
             "boundary": opts.boundary,
             "seconds": secs,
@@ -140,11 +136,7 @@ pub fn apply_bare_answer(
     ans: &str,
 ) -> Result<()> {
     let a = ans.trim();
-    let human = Actor {
-        kind: ActorKind::Human,
-        id: None,
-        via: None,
-    };
+    let human = Actor::human();
     if a == "d" {
         ledger.append_batch(vec![NewEvent {
             etype: "demand".into(),
@@ -188,11 +180,7 @@ pub fn write_boundary(ledger: &Ledger, d: &Derived) -> Result<()> {
     let delta_expired = expired_now.saturating_sub(prior_expired);
     ledger.append_batch(vec![NewEvent {
         etype: "snapshot".into(),
-        actor: Actor {
-            kind: ActorKind::Engine,
-            id: None,
-            via: None,
-        },
+        actor: Actor::engine(),
         body: serde_json::json!({
             "closed_with_evidence": delta_closed,
             "expired_bare": delta_expired,

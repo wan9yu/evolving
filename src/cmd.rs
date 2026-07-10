@@ -1,5 +1,4 @@
 use crate::ledger::{Actor, ActorKind, Ledger, NewEvent};
-use crate::state::fold;
 use crate::{EvError, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -105,11 +104,7 @@ pub fn claim(args: ClaimArgs) -> Result<()> {
             via: None,
         }
     } else {
-        Actor {
-            kind: ActorKind::Human,
-            id: None,
-            via: None,
-        }
+        Actor::human()
     };
     let mut body = serde_json::json!({ "label": args.label });
     if let Some(sref) = &args.source_ref {
@@ -146,11 +141,7 @@ pub fn claim(args: ClaimArgs) -> Result<()> {
 pub fn think(label: String, pinned: bool) -> Result<()> {
     let root = find_root();
     let ledger = Ledger::open(&root)?;
-    let actor = Actor {
-        kind: ActorKind::Human,
-        id: None,
-        via: None,
-    };
+    let actor = Actor::human();
     ledger.append_batch(vec![NewEvent {
         etype: "thought".into(),
         actor,
@@ -162,10 +153,7 @@ pub fn think(label: String, pinned: bool) -> Result<()> {
 
 /// Return a short display prefix for an event id: `<prefix>_<first-6-of-ulid>`.
 pub fn short(id: &str) -> String {
-    match id.split_once('_') {
-        Some((p, rest)) => format!("{p}_{}", rest.chars().take(6).collect::<String>()),
-        None => id.to_string(),
-    }
+    crate::short_id(id)
 }
 
 fn agent_id() -> Option<String> {
@@ -174,11 +162,6 @@ fn agent_id() -> Option<String> {
     } else {
         std::env::var("EV_AGENT").ok()
     }
-}
-
-/// Fold the full ledger into derived state; used by several read-path verbs.
-pub fn load_derived(ledger: &Ledger) -> Result<crate::state::Derived> {
-    Ok(fold(&ledger.scan()?))
 }
 
 // ── evidence + verify verbs ───────────────────────────────────────────────────
@@ -213,11 +196,7 @@ pub fn verify_cmd(claim_id: Option<String>) -> Result<()> {
                 let status = crate::verify::verify_ref(&r, &root);
                 ledger.append_batch(vec![NewEvent {
                     etype: "verify".into(),
-                    actor: Actor {
-                        kind: ActorKind::Engine,
-                        id: None,
-                        via: None,
-                    },
+                    actor: Actor::engine(),
                     body: serde_json::json!({
                         "claim": c.id,
                         "ref": ev.eref,
@@ -252,17 +231,9 @@ fn resolve_id(ledger: &Ledger, prefix: &str) -> Result<String> {
 fn evidence_actor() -> Actor {
     // Evidence is creation-only; agents are permitted. Provenance is recorded.
     if std::env::var("CLAUDECODE").is_ok() {
-        Actor {
-            kind: ActorKind::Agent,
-            id: Some("claude-code".into()),
-            via: None,
-        }
+        Actor::agent("claude-code")
     } else {
-        Actor {
-            kind: ActorKind::Human,
-            id: None,
-            via: None,
-        }
+        Actor::human()
     }
 }
 
@@ -303,11 +274,7 @@ pub fn close(args: CloseArgs) -> Result<()> {
             .ok_or_else(|| EvError::Refusal("--dead needs --reason".into()))?;
         ledger.append_batch(vec![NewEvent {
             etype: "prune".into(),
-            actor: Actor {
-                kind: ActorKind::Human,
-                id: None,
-                via: None,
-            },
+            actor: Actor::human(),
             body: serde_json::json!({ "claim": full, "reason": reason }),
         }])?;
         println!("declared dead: {} — {reason}", short(&full));
@@ -322,11 +289,7 @@ pub fn close(args: CloseArgs) -> Result<()> {
     }
     ledger.append_batch(vec![NewEvent {
         etype: "close".into(),
-        actor: Actor {
-            kind: ActorKind::Human,
-            id: None,
-            via: None,
-        },
+        actor: Actor::human(),
         body: serde_json::json!({ "claim": full }),
     }])?;
     println!("closed {} with evidence.", short(&full));
@@ -340,11 +303,7 @@ pub fn hold(claim: String, reason: String, i_am_the_human: bool) -> Result<()> {
     let full = resolve_id(&ledger, &claim)?;
     ledger.append_batch(vec![NewEvent {
         etype: "hold".into(),
-        actor: Actor {
-            kind: ActorKind::Human,
-            id: None,
-            via: None,
-        },
+        actor: Actor::human(),
         body: serde_json::json!({ "claim": full, "reason": reason }),
     }])?;
     println!("held (grey): {} — {reason}", short(&full));
@@ -358,11 +317,7 @@ pub fn demand(claim: String, i_am_the_human: bool) -> Result<()> {
     let full = resolve_id(&ledger, &claim)?;
     ledger.append_batch(vec![NewEvent {
         etype: "demand".into(),
-        actor: Actor {
-            kind: ActorKind::Human,
-            id: None,
-            via: None,
-        },
+        actor: Actor::human(),
         body: serde_json::json!({ "claim": full }),
     }])?;
     println!(
@@ -421,11 +376,7 @@ pub fn indicator_declare(name: String, i_am_the_human: bool) -> Result<()> {
     }
     ledger.append_batch(vec![NewEvent {
         etype: "indicator".into(),
-        actor: Actor {
-            kind: ActorKind::Human,
-            id: None,
-            via: None,
-        },
+        actor: Actor::human(),
         body: serde_json::json!({ "name": name }),
     }])?;
     println!("indicator declared: {name}");
@@ -439,11 +390,7 @@ pub fn indicator_retire(id: String, i_am_the_human: bool) -> Result<()> {
     let full = resolve_id(&ledger, &id)?;
     ledger.append_batch(vec![NewEvent {
         etype: "retire".into(),
-        actor: Actor {
-            kind: ActorKind::Human,
-            id: None,
-            via: None,
-        },
+        actor: Actor::human(),
         body: serde_json::json!({ "indicator": full }),
     }])?;
     println!("retired {}", short(&full));

@@ -1,4 +1,4 @@
-use crate::ledger::{Actor, ActorKind, Ledger, NewEvent};
+use crate::ledger::{Actor, Ledger, NewEvent};
 use crate::{EvError, Result};
 use std::path::Path;
 use std::process::Command;
@@ -32,13 +32,7 @@ pub fn discover(repo_root: &Path, since: &str, until: &str, session: &str) -> Re
             subjects.push(s.to_string());
         }
     }
-    let branch = Command::new("git")
-        .args(["rev-parse", "--abbrev-ref", "HEAD"])
-        .current_dir(repo_root)
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|s| s.trim().to_string())
+    let branch = crate::git_output(repo_root, &["rev-parse", "--abbrev-ref", "HEAD"])
         .unwrap_or_else(|| "HEAD".into());
     Ok(Window {
         session: session.to_string(),
@@ -101,11 +95,7 @@ pub fn file_window(
     }) {
         return Ok(None);
     }
-    let actor = Actor {
-        kind: ActorKind::Agent,
-        id: Some("exhaust".into()),
-        via: None,
-    };
+    let actor = Actor::agent("exhaust");
     let minted = ledger.append_batch(vec![NewEvent {
         etype: "claim".into(),
         actor: actor.clone(),

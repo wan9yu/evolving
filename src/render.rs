@@ -96,10 +96,7 @@ fn truncate(s: &str, n: usize) -> String {
 }
 
 fn short_id(id: &str) -> String {
-    match id.split_once('_') {
-        Some((p, r)) => format!("{p}_{}", &r[..r.len().min(6)]),
-        None => id.to_string(),
-    }
+    crate::short_id(id)
 }
 
 /// Render the work line: closed-with-evidence and expired-bare counts, no percentage or composite.

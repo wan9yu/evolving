@@ -52,15 +52,6 @@ impl EvRef {
     }
 }
 
-pub fn status_str(raw: &str) -> &'static str {
-    match raw {
-        "verified" => "verified",
-        "failed" => "failed",
-        "unreachable" => "unreachable",
-        _ => "recorded",
-    }
-}
-
 /// Verify a ref against `repo_root`.
 /// V1: Commit → `git rev-parse --verify`; Metric/Url → "recorded" (self-asserted).
 /// V2: Test/File/Artifact → exists→sha256→pass-line check.
@@ -104,24 +95,6 @@ fn verify_v2(r: &EvRef, repo_root: &Path) -> String {
             }
         }
     }
-}
-
-/// Copy a matched pass-line region (±20 lines) into `.evolving/artifacts/` and
-/// return the artifact ref that replaces a fragile transcript ref. Used by exhaust.
-pub fn archive_region(repo_root: &Path, source: &Path, pattern: &str) -> Result<Option<String>> {
-    let text = std::fs::read_to_string(source).map_err(|e| EvError::Failure(e.to_string()))?;
-    let lines: Vec<&str> = text.lines().collect();
-    let Some(hit) = lines.iter().position(|l| l.contains(pattern)) else {
-        return Ok(None);
-    };
-    let lo = hit.saturating_sub(20);
-    let hi = (hit + 21).min(lines.len());
-    let region = lines[lo..hi].join("\n");
-    let name = format!("region-{}.txt", ulid::Ulid::new());
-    let dir = repo_root.join(".evolving/artifacts");
-    std::fs::create_dir_all(&dir).map_err(|e| EvError::Failure(e.to_string()))?;
-    std::fs::write(dir.join(&name), region).map_err(|e| EvError::Failure(e.to_string()))?;
-    Ok(Some(format!("artifact:{name}::{pattern}")))
 }
 
 fn verify_commit(sha: &str, repo_root: &Path) -> String {

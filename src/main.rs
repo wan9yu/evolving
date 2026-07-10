@@ -78,6 +78,15 @@ enum Command {
         #[arg(long)]
         stable: bool,
     },
+    /// The daily pause: demands, exhaust batch, bare claims, receipt.
+    Pause {
+        #[arg(long)]
+        boundary: bool,
+        #[arg(long)]
+        script: bool,
+        #[arg(long = "i-am-the-human")]
+        i_am_the_human: bool,
+    },
     /// Declare or retire an indicator (ceiling 4).
     #[command(subcommand)]
     Indicator(IndicatorCmd),
@@ -147,6 +156,11 @@ fn main() {
             claim,
             i_am_the_human,
         }) => evolving::cmd::demand(claim, i_am_the_human),
+        Some(Command::Pause {
+            boundary,
+            script,
+            i_am_the_human,
+        }) => evolving::cmd::pause(boundary, script, i_am_the_human),
         Some(Command::Exhaust { since, session }) => evolving::cmd::exhaust(since, session),
         Some(Command::Line { json, stable }) => evolving::cmd::line(json, stable),
         Some(Command::Indicator(IndicatorCmd::Declare {

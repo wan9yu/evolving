@@ -372,6 +372,12 @@ pub fn demand(claim: String, i_am_the_human: bool) -> Result<()> {
     Ok(())
 }
 
+pub fn pause(boundary: bool, script: bool, i_am_the_human: bool) -> Result<()> {
+    assert_human(i_am_the_human)?;
+    let root = find_root();
+    crate::pause::run_pause(&root, crate::pause::PauseOpts { boundary, script })
+}
+
 pub fn exhaust(since: String, session: String) -> Result<()> {
     let root = find_root();
     let ledger = Ledger::open(&root)?;

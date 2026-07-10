@@ -23,13 +23,14 @@ agent claims ─▶ evidence pointer ─▶ engine verifies (exists? matches?)
 ## Install
 
 ```sh
-cargo install evolving   # installs the `ev` binary
+cargo install --git https://github.com/wan9yu/evolving   # installs the `ev` binary
 ```
 
 ## The loop
 
 ```sh
 ev init                                   # enroll a repo
+ev hook install                           # wire the session hooks: auto-capture + the brief
 ev claim "fixed the parser" \             # an agent files a claim with a pointer
     --by agent --evidence commit:<sha>
 ev claim "the boundary is safe"           # a bare claim — no pointer yet
@@ -59,6 +60,11 @@ Evidence pointer types: `commit:<sha>` · `test:<path>[::<pass-line>]` · `file:
 
 A repo running `ev` carries an [`AGENTS.md`](AGENTS.md) that tells any coding agent how to file
 evidence-backed claims and answer a demand.
+
+## Design
+
+The internals — the append-only ledger, the fold, the verifiers, the sweep, and the pause — are
+described in [`docs/design.md`](docs/design.md).
 
 ## License
 

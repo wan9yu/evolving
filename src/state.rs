@@ -29,7 +29,6 @@ pub struct ClaimView {
     pub evidence: Vec<EvidenceView>,
     pub self_evident: bool,
     pub boundaries_open: u32,
-    pub referenced_by: u32,
     pub source_ref: Option<String>,
     pub reason: Option<String>,
 }
@@ -80,7 +79,6 @@ struct ClaimAcc {
     dead: bool,
     demanded_at: Option<u64>,
     last_activity_seq: u64,
-    referenced_by: u32,
     opened_at_boundary: u32,
 }
 
@@ -114,7 +112,6 @@ pub fn fold(events: &[Envelope]) -> Derived {
                     dead: false,
                     demanded_at: None,
                     last_activity_seq: e.seq,
-                    referenced_by: 0,
                     opened_at_boundary: boundary_count,
                 });
             }
@@ -138,8 +135,8 @@ pub fn fold(events: &[Envelope]) -> Derived {
             "verify" => {
                 if let (Some(cid), Some(st)) = (s(&e.body, "claim"), s(&e.body, "status")) {
                     if let Some(acc) = claims.get_mut(&cid) {
-                        let vref = e.body.get("ref").and_then(|v| v.as_str());
-                        if let Some(r) = vref {
+                        // refs should be unique per claim; rev() picks the most recent if not.
+                        if let Some(r) = e.body.get("ref").and_then(|v| v.as_str()) {
                             if let Some(item) =
                                 acc.evidence.iter_mut().rev().find(|ev| ev.eref == r)
                             {
@@ -254,7 +251,6 @@ pub fn fold(events: &[Envelope]) -> Derived {
             self_evident: !a.evidence.is_empty() && a.evidence.iter().all(|e| e.self_evident),
             evidence: a.evidence.clone(),
             boundaries_open,
-            referenced_by: a.referenced_by,
             source_ref: a.source_ref.clone(),
             reason: a.held.clone(),
         };

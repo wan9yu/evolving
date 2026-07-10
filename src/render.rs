@@ -101,8 +101,8 @@ fn short_id(id: &str) -> String {
 
 /// Render the work line: closed-with-evidence and expired-bare counts, no percentage or composite.
 pub fn line(d: &Derived, json: bool, stable: bool) -> String {
-    // Sum closed-with-evidence and expired-bare across all periods.
-    // "closed" in the current window = claims whose state is Closed (have evidence).
+    // Current live counts. "closed" = claims whose state is Closed (have evidence).
+    // The snapshot rows below carry the boundary history; they are not summed in here.
     let closed_now = d
         .closed
         .iter()
@@ -113,9 +113,6 @@ pub fn line(d: &Derived, json: bool, stable: bool) -> String {
         .iter()
         .filter(|c| matches!(c.state, ClaimState::ExpiredBare))
         .count() as u32;
-
-    let closed_total = closed_now;
-    let expired_total = expired_now;
 
     if json {
         let as_of_val = if stable { "<id>".to_string() } else { as_of(d) };
@@ -136,8 +133,8 @@ pub fn line(d: &Derived, json: bool, stable: bool) -> String {
             "indicators": [
                 {
                     "name": "work",
-                    "closed_with_evidence": closed_total,
-                    "expired_bare": expired_total,
+                    "closed_with_evidence": closed_now,
+                    "expired_bare": expired_now,
                 }
             ],
             "snapshots": snaps,
@@ -156,7 +153,7 @@ pub fn line(d: &Derived, json: bool, stable: bool) -> String {
         ));
     }
     out.push_str(&format!(
-        "  now: {closed_total} closed-with-evidence · {expired_total} expired-bare\n"
+        "  now: {closed_now} closed-with-evidence · {expired_now} expired-bare\n"
     ));
     out.push_str(&format!("— as of {} · {}\n", short_id(&as_of(d)), FOOTER));
     out

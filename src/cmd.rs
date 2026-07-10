@@ -180,3 +180,88 @@ fn agent_id() -> Option<String> {
 pub fn load_derived(ledger: &Ledger) -> Result<crate::state::Derived> {
     Ok(fold(&ledger.scan()?))
 }
+
+// ── evidence + verify verbs ───────────────────────────────────────────────────
+
+/// Attach a typed evidence ref to a claim. Agents are permitted.
+pub fn evidence(claim_id: String, eref: String) -> Result<()> {
+    let root = find_root();
+    let ledger = Ledger::open(&root)?;
+    let full = resolve_id(&ledger, &claim_id)?;
+    let actor = evidence_actor();
+    let verdict = crate::verify::verify_and_record(&ledger, &root, &full, &eref, false, actor)?;
+    println!("evidence attached to {} → {verdict}", short(&full));
+    Ok(())
+}
+
+/// Re-verify a single claim's evidence, or all open claims' evidence.
+pub fn verify_cmd(claim_id: Option<String>) -> Result<()> {
+    let root = find_root();
+    let ledger = Ledger::open(&root)?;
+    let events = ledger.scan()?;
+    let d = crate::state::fold(&events);
+    let targets: Vec<&crate::state::ClaimView> = match &claim_id {
+        Some(cid) => {
+            let full = resolve_id(&ledger, cid)?;
+            d.claims.iter().filter(|c| c.id == full).collect()
+        }
+        None => d.claims.iter().collect(),
+    };
+    for c in targets {
+        for ev in &c.evidence {
+            if let Ok(r) = crate::verify::EvRef::parse(&ev.eref) {
+                let status = crate::verify::verify_ref(&r, &root);
+                ledger.append_batch(vec![NewEvent {
+                    etype: "verify".into(),
+                    actor: Actor {
+                        kind: ActorKind::Engine,
+                        id: None,
+                        via: None,
+                    },
+                    body: serde_json::json!({
+                        "claim": c.id,
+                        "ref": ev.eref,
+                        "status": status,
+                    }),
+                }])?;
+                println!("{} · {} → {status}", short(&c.id), ev.eref);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Resolve a unique id prefix to a full id.
+fn resolve_id(ledger: &Ledger, prefix: &str) -> Result<String> {
+    let events = ledger.scan()?;
+    let matches: Vec<&str> = events
+        .iter()
+        .map(|e| e.id.as_str())
+        .filter(|id| id.starts_with(prefix))
+        .collect();
+    match matches.len() {
+        1 => Ok(matches[0].to_string()),
+        0 => Err(EvError::Refusal(format!("no event matches id {prefix}"))),
+        _ => Err(EvError::Refusal(format!(
+            "ambiguous id {prefix} — {} matches",
+            matches.len()
+        ))),
+    }
+}
+
+fn evidence_actor() -> Actor {
+    // Evidence is creation-only; agents are permitted. Provenance is recorded.
+    if std::env::var("CLAUDECODE").is_ok() {
+        Actor {
+            kind: ActorKind::Agent,
+            id: Some("claude-code".into()),
+            via: None,
+        }
+    } else {
+        Actor {
+            kind: ActorKind::Human,
+            id: None,
+            via: None,
+        }
+    }
+}

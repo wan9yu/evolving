@@ -31,6 +31,10 @@ enum Command {
         #[arg(long = "source-ref")]
         source_ref: Option<String>,
     },
+    /// Attach evidence to a claim (typed ref). Agents may do this.
+    Evidence { claim: String, evidence_ref: String },
+    /// Re-verify a claim's evidence (or all open claims).
+    Verify { claim: Option<String> },
 }
 
 fn main() {
@@ -55,6 +59,11 @@ fn main() {
             by_agent: by == "agent",
             source_ref,
         }),
+        Some(Command::Evidence {
+            claim,
+            evidence_ref,
+        }) => evolving::cmd::evidence(claim, evidence_ref),
+        Some(Command::Verify { claim }) => evolving::cmd::verify_cmd(claim),
     };
     if let Err(e) = result {
         eprintln!("ev: {e}");

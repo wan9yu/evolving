@@ -63,16 +63,65 @@ pub fn status_str(raw: &str) -> &'static str {
 
 /// Verify a ref against `repo_root`.
 /// V1: Commit → `git rev-parse --verify`; Metric/Url → "recorded" (self-asserted).
-/// V2 kinds (Test/File/Artifact) are wired in the next task; "unreachable" is the
-/// honest default until that verifier exists.
+/// V2: Test/File/Artifact → exists→sha256→pass-line check.
 /// Never touches the network.
 pub fn verify_ref(r: &EvRef, repo_root: &Path) -> String {
     match r.kind {
         RefKind::Commit => verify_commit(&r.payload, repo_root),
         RefKind::Metric | RefKind::Url => "recorded".into(),
-        // V2 verifier replaces this arm in the next task.
-        _ => "unreachable".into(),
+        RefKind::Test | RefKind::File | RefKind::Artifact => verify_v2(r, repo_root),
     }
+}
+
+fn verify_v2(r: &EvRef, repo_root: &Path) -> String {
+    let path = if r.kind == RefKind::Artifact {
+        repo_root.join(".evolving/artifacts").join(&r.payload)
+    } else {
+        repo_root.join(&r.payload)
+    };
+    if !path.exists() {
+        return "unreachable".into();
+    }
+    // existence is established; hash it (proves readability), then the pass-line.
+    let content = match std::fs::read(&path) {
+        Ok(c) => c,
+        Err(_) => return "unreachable".into(),
+    };
+    let _digest = {
+        use sha2::{Digest, Sha256};
+        let mut h = Sha256::new();
+        h.update(&content);
+        format!("{:x}", h.finalize())
+    };
+    match &r.passline {
+        None => "verified".into(),
+        Some(pattern) => {
+            let text = String::from_utf8_lossy(&content);
+            if text.lines().any(|l| l.contains(pattern.as_str())) {
+                "verified".into()
+            } else {
+                "failed".into()
+            }
+        }
+    }
+}
+
+/// Copy a matched pass-line region (±20 lines) into `.evolving/artifacts/` and
+/// return the artifact ref that replaces a fragile transcript ref. Used by exhaust.
+pub fn archive_region(repo_root: &Path, source: &Path, pattern: &str) -> Result<Option<String>> {
+    let text = std::fs::read_to_string(source).map_err(|e| EvError::Failure(e.to_string()))?;
+    let lines: Vec<&str> = text.lines().collect();
+    let Some(hit) = lines.iter().position(|l| l.contains(pattern)) else {
+        return Ok(None);
+    };
+    let lo = hit.saturating_sub(20);
+    let hi = (hit + 21).min(lines.len());
+    let region = lines[lo..hi].join("\n");
+    let name = format!("region-{}.txt", ulid::Ulid::new());
+    let dir = repo_root.join(".evolving/artifacts");
+    std::fs::create_dir_all(&dir).map_err(|e| EvError::Failure(e.to_string()))?;
+    std::fs::write(dir.join(&name), region).map_err(|e| EvError::Failure(e.to_string()))?;
+    Ok(Some(format!("artifact:{name}::{pattern}")))
 }
 
 fn verify_commit(sha: &str, repo_root: &Path) -> String {

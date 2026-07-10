@@ -80,6 +80,11 @@ fn a_held_claim_is_grey() {
     let d = fold(&events);
     assert_eq!(d.grey.len(), 1);
     assert_eq!(d.grey[0].reason.as_deref(), Some("waiting on upstream"));
+    assert_eq!(
+        d.claims.len(),
+        0,
+        "a grey claim must not also appear in the open list"
+    );
 }
 
 #[test]

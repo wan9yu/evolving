@@ -255,7 +255,7 @@ pub fn fold(events: &[Envelope]) -> Derived {
         if a.demanded_at.is_some() && !a.evidence.is_empty() && !a.closed && !a.dead {
             out.demands_returned.push(view.clone());
         }
-        if !a.closed && !a.dead {
+        if !a.closed && !a.dead && state != ClaimState::Grey {
             out.claims.push(view);
         }
     }

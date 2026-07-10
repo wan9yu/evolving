@@ -147,12 +147,12 @@ impl Ledger {
             .open(self.seq_lock_path())?;
         lockf.lock_exclusive()?;
 
-        let mut seq = self.tail_seq()?;
+        let base_seq = self.tail_seq()?;
         let ts = now_rfc3339();
         let mut buf = String::new();
         let mut minted = Vec::with_capacity(events.len());
-        for ne in events {
-            seq += 1;
+        for (i, ne) in events.into_iter().enumerate() {
+            let seq = base_seq + 1 + i as u64;
             let env = Envelope {
                 v: SCHEMA_VERSION,
                 id: mint_id(&ne.etype),

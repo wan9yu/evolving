@@ -1,0 +1,1 @@
+.evolving/ledger/*.jsonl merge=union

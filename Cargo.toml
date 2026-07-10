@@ -2,7 +2,7 @@
 name = "evolving"
 version = "0.2.0"
 edition = "2021"
-license = "MIT"
+license = "Apache-2.0"
 description = "A closure engine for one human and their agent fleet."
 
 [[bin]]

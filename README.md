@@ -62,4 +62,4 @@ evidence-backed claims and answer a demand.
 
 ## License
 
-MIT.
+Apache-2.0.

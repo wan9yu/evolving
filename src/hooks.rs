@@ -145,19 +145,15 @@ pub fn sweep(root: &Path, ledger: &Ledger) -> Result<()> {
         })
         .collect();
 
-    // the watermark starts at the head recorded on the most-recent swept end-marker;
-    // ROOT if no swept markers exist yet
+    // the watermark starts at the head recorded on the most-recent SWEPT marker (not the end
+    // marker); swept markers always carry a concrete resolved sha, so this is unambiguous.
+    // Fall back to ROOT when no swept markers exist yet.
     let mut watermark: String = events
         .iter()
         .filter(|e| {
             e.etype == "session"
                 && e.writer == my_writer
-                && e.body.get("marker").and_then(|s| s.as_str()) == Some("end")
-                && e.body
-                    .get("session")
-                    .and_then(|s| s.as_str())
-                    .map(|id| swept.contains(id))
-                    .unwrap_or(false)
+                && e.body.get("marker").and_then(|s| s.as_str()) == Some("swept")
         })
         .max_by_key(|e| (e.ts.clone(), e.seq))
         .and_then(|e| {
@@ -201,20 +197,39 @@ pub fn sweep(root: &Path, ledger: &Ledger) -> Result<()> {
         let window = crate::exhaust::discover(root, &watermark, &until, &session_id)?;
         let _ = crate::exhaust::file_window(ledger, root, &window, None)?;
 
-        // mark this session swept
-        ledger.append_batch(vec![NewEvent {
+        // resolve the raw ref to a concrete sha so the swept marker and next watermark are
+        // never the ambiguous literal "HEAD"
+        let resolved = resolve_sha(root, &until);
+
+        // mark this session swept; a write failure must not abort the sweep loop
+        let _ = ledger.append_batch(vec![NewEvent {
             etype: "session".into(),
             actor: Actor {
                 kind: ActorKind::Engine,
                 id: None,
                 via: None,
             },
-            body: serde_json::json!({ "marker": "swept", "session": session_id, "head": until }),
-        }])?;
+            body: serde_json::json!({ "marker": "swept", "session": session_id, "head": resolved }),
+        }]);
 
-        watermark = until;
+        watermark = resolved;
     }
     Ok(())
+}
+
+/// Resolve a git ref (including the literal "HEAD") to its concrete sha.
+/// Falls back to the input unchanged when git is unavailable or the ref is unknown.
+fn resolve_sha(root: &Path, r: &str) -> String {
+    Command::new("git")
+        .args(["rev-parse", r])
+        .current_dir(root)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| r.to_string())
 }
 
 fn drain_stdin() -> String {

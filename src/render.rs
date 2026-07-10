@@ -114,12 +114,8 @@ pub fn line(d: &Derived, json: bool, stable: bool) -> String {
         .filter(|c| matches!(c.state, ClaimState::ExpiredBare))
         .count() as u32;
 
-    let closed_total = closed_now
-        + d.snapshots
-            .iter()
-            .map(|s| s.closed_with_evidence)
-            .sum::<u32>();
-    let expired_total = expired_now + d.snapshots.iter().map(|s| s.expired_bare).sum::<u32>();
+    let closed_total = closed_now;
+    let expired_total = expired_now;
 
     if json {
         let as_of_val = if stable { "<id>".to_string() } else { as_of(d) };

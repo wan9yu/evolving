@@ -49,8 +49,8 @@ pub fn run_pause(root: &Path, opts: PauseOpts) -> Result<()> {
         for c in &batch {
             writeln!(
                 out,
-                "  ⊙ {}  [{} boundaries old · referenced by {}]  → acknowledge",
-                c.label, c.boundaries_open, c.referenced_by
+                "  ⊙ {}  [{} boundaries old]  → acknowledge",
+                c.label, c.boundaries_open
             )?;
         }
         writeln!(

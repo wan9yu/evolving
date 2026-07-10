@@ -138,7 +138,14 @@ pub fn fold(events: &[Envelope]) -> Derived {
             "verify" => {
                 if let (Some(cid), Some(st)) = (s(&e.body, "claim"), s(&e.body, "status")) {
                     if let Some(acc) = claims.get_mut(&cid) {
-                        if let Some(last) = acc.evidence.last_mut() {
+                        let vref = e.body.get("ref").and_then(|v| v.as_str());
+                        if let Some(r) = vref {
+                            if let Some(item) =
+                                acc.evidence.iter_mut().rev().find(|ev| ev.eref == r)
+                            {
+                                item.status = st;
+                            }
+                        } else if let Some(last) = acc.evidence.last_mut() {
                             last.status = st;
                         }
                         acc.last_activity_seq = e.seq;
@@ -191,6 +198,11 @@ pub fn fold(events: &[Envelope]) -> Derived {
                     id: e.id.clone(),
                     name: s(&e.body, "name").unwrap_or_default(),
                 });
+            }
+            "retire" => {
+                if let Some(id) = e.body.get("indicator").and_then(|v| v.as_str()) {
+                    indicators.retain(|i| i.id != id);
+                }
             }
             "snapshot" => {
                 snapshots.push(Snapshot {

@@ -10,12 +10,14 @@ pub struct Window {
     pub branch: String,
 }
 
-/// Discover commits in (since, HEAD]. `since == "ROOT"` means the whole history.
-pub fn discover(repo_root: &Path, since: &str, session: &str) -> Result<Window> {
+/// Discover commits in the range (since, until].
+/// When `since == "ROOT"` the range is the full history up to `until`.
+/// When `since` is a sha the range is `since..until`.
+pub fn discover(repo_root: &Path, since: &str, until: &str, session: &str) -> Result<Window> {
     let range = if since == "ROOT" {
-        "HEAD".to_string()
+        until.to_string()
     } else {
-        format!("{since}..HEAD")
+        format!("{since}..{until}")
     };
     let log = Command::new("git")
         .args(["log", "--format=%H%x1f%s", &range])

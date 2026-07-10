@@ -90,6 +90,8 @@ enum Command {
     /// Declare or retire an indicator (ceiling 4).
     #[command(subcommand)]
     Indicator(IndicatorCmd),
+    /// Manage the Claude Code hooks (install/uninstall/session-start/session-end).
+    Hook { action: String },
 }
 
 #[derive(Subcommand)]
@@ -169,6 +171,11 @@ fn main() {
         })) => evolving::cmd::indicator_declare(name, i_am_the_human),
         Some(Command::Indicator(IndicatorCmd::Retire { id, i_am_the_human })) => {
             evolving::cmd::indicator_retire(id, i_am_the_human)
+        }
+        Some(Command::Hook { action }) => {
+            // hooks must never fail the host session
+            if let Err(_e) = evolving::cmd::hook(action) {}
+            Ok(())
         }
     };
     if let Err(e) = result {

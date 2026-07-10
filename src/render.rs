@@ -42,12 +42,23 @@ pub fn brief(d: &Derived, json: bool) -> String {
 }
 
 fn claim_json(c: &ClaimView) -> serde_json::Value {
+    let evidence: Vec<serde_json::Value> = c
+        .evidence
+        .iter()
+        .map(|e| {
+            serde_json::json!({
+                "ref": e.eref,
+                "status": e.status,
+                "self_evident": e.self_evident,
+            })
+        })
+        .collect();
     serde_json::json!({
         "id": c.id,
         "label": c.label,
         "state": state_word(&c.state),
         "self_evident": c.self_evident,
-        "evidence": c.evidence.len(),
+        "evidence": evidence,
     })
 }
 

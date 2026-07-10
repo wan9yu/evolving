@@ -381,7 +381,7 @@ pub fn pause(boundary: bool, script: bool, i_am_the_human: bool) -> Result<()> {
 pub fn exhaust(since: String, session: String) -> Result<()> {
     let root = find_root();
     let ledger = Ledger::open(&root)?;
-    let window = crate::exhaust::discover(&root, &since, &session)?;
+    let window = crate::exhaust::discover(&root, &since, "HEAD", &session)?;
     match crate::exhaust::file_window(&ledger, &root, &window, None)? {
         Some(id) => println!(
             "filed exhaust claim {} ({} commits).",
@@ -448,4 +448,15 @@ pub fn indicator_retire(id: String, i_am_the_human: bool) -> Result<()> {
     }])?;
     println!("retired {}", short(&full));
     Ok(())
+}
+
+pub fn hook(action: String) -> Result<()> {
+    let root = find_root();
+    match action.as_str() {
+        "install" => crate::hooks::install(&root),
+        "uninstall" => crate::hooks::uninstall(&root),
+        "session-start" => crate::hooks::session_start(&root),
+        "session-end" => crate::hooks::session_end(&root),
+        other => Err(EvError::Failure(format!("unknown hook action: {other}"))),
+    }
 }

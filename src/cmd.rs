@@ -372,6 +372,21 @@ pub fn demand(claim: String, i_am_the_human: bool) -> Result<()> {
     Ok(())
 }
 
+pub fn exhaust(since: String, session: String) -> Result<()> {
+    let root = find_root();
+    let ledger = Ledger::open(&root)?;
+    let window = crate::exhaust::discover(&root, &since, &session)?;
+    match crate::exhaust::file_window(&ledger, &root, &window, None)? {
+        Some(id) => println!(
+            "filed exhaust claim {} ({} commits).",
+            short(&id),
+            window.shas.len()
+        ),
+        None => println!("nothing to file for session {session}."),
+    }
+    Ok(())
+}
+
 pub fn brief(json: bool) -> Result<()> {
     let root = find_root();
     let ledger = Ledger::open(&root)?;

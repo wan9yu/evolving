@@ -64,6 +64,13 @@ enum Command {
         #[arg(long = "i-am-the-human")]
         i_am_the_human: bool,
     },
+    /// Plumbing: file exhaust for a session's git window.
+    Exhaust {
+        #[arg(long)]
+        since: String,
+        #[arg(long)]
+        session: String,
+    },
 }
 
 fn main() {
@@ -114,6 +121,7 @@ fn main() {
             claim,
             i_am_the_human,
         }) => evolving::cmd::demand(claim, i_am_the_human),
+        Some(Command::Exhaust { since, session }) => evolving::cmd::exhaust(since, session),
     };
     if let Err(e) = result {
         eprintln!("ev: {e}");

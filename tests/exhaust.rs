@@ -57,7 +57,7 @@ fn a_single_commit_window_files_one_self_evident_claim_labeled_by_the_subject() 
         v["open"][0]["label"].as_str().unwrap(),
         "tighten the redaction boundary"
     );
-    assert_eq!(v["open"][0]["self_evident"].as_bool().unwrap(), true);
+    assert!(v["open"][0]["self_evident"].as_bool().unwrap());
 }
 
 #[test]

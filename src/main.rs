@@ -92,6 +92,8 @@ enum Command {
     Indicator(IndicatorCmd),
     /// Manage the Claude Code hooks (install/uninstall/session-start/session-end).
     Hook { action: String },
+    /// Check ledger integrity (dangling refs, duplicate closes, clock drift).
+    Doctor,
 }
 
 #[derive(Subcommand)]
@@ -177,6 +179,7 @@ fn main() {
             if let Err(_e) = evolving::cmd::hook(action) {}
             Ok(())
         }
+        Some(Command::Doctor) => evolving::cmd::doctor(),
     };
     if let Err(e) = result {
         eprintln!("ev: {e}");

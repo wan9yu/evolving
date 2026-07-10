@@ -450,6 +450,77 @@ pub fn indicator_retire(id: String, i_am_the_human: bool) -> Result<()> {
     Ok(())
 }
 
+pub fn doctor() -> Result<()> {
+    let root = find_root();
+    let ledger = Ledger::open(&root)?;
+    let events = ledger.scan()?;
+    let mut problems: Vec<String> = Vec::new();
+
+    let claim_ids: std::collections::HashSet<&str> = events
+        .iter()
+        .filter(|e| e.etype == "claim")
+        .map(|e| e.id.as_str())
+        .collect();
+
+    // Dangling refs: evidence/close/hold/demand/verify/prune pointing at an unknown claim.
+    for e in &events {
+        if matches!(
+            e.etype.as_str(),
+            "evidence" | "close" | "hold" | "demand" | "verify" | "prune"
+        ) {
+            if let Some(cid) = e.body.get("claim").and_then(|s| s.as_str()) {
+                if !claim_ids.contains(cid) {
+                    problems.push(format!(
+                        "dangling {} → unknown claim {cid} (event {})",
+                        e.etype, e.id
+                    ));
+                }
+            }
+        }
+    }
+
+    // Duplicate close transitions on the same claim.
+    let mut closed_once: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for e in events.iter().filter(|e| e.etype == "close") {
+        if let Some(cid) = e.body.get("claim").and_then(|s| s.as_str()) {
+            if !closed_once.insert(cid.to_string()) {
+                problems.push(format!("duplicate close on {cid}"));
+            }
+        }
+    }
+
+    // Clock drift: non-monotonic ts within a single writer's event stream.
+    let mut last_ts: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
+    for e in &events {
+        if let Some(prev) = last_ts.get(e.writer.as_str()) {
+            if e.ts.as_str() < *prev {
+                problems.push(format!(
+                    "clock drift on writer {}: {} < {}",
+                    e.writer, e.ts, prev
+                ));
+            }
+        }
+        last_ts.insert(e.writer.as_str(), e.ts.as_str());
+    }
+
+    if problems.is_empty() {
+        println!(
+            "ledger clean: {} events, {} claims.",
+            events.len(),
+            claim_ids.len()
+        );
+        Ok(())
+    } else {
+        for p in &problems {
+            println!("• {p}");
+        }
+        Err(EvError::Failure(format!(
+            "{} problem(s) found",
+            problems.len()
+        )))
+    }
+}
+
 pub fn hook(action: String) -> Result<()> {
     let root = find_root();
     match action.as_str() {

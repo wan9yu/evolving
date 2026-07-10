@@ -265,3 +265,117 @@ fn evidence_actor() -> Actor {
         }
     }
 }
+
+// ── closure verbs ─────────────────────────────────────────────────────────────
+
+/// Refuse closure verbs under CLAUDECODE unless the human override is present.
+fn assert_human(i_am_the_human: bool) -> Result<()> {
+    if std::env::var("CLAUDECODE").is_ok() && !i_am_the_human {
+        return Err(EvError::Refusal(
+            "closure is the human's move. Re-run with --i-am-the-human if that's you.".into(),
+        ));
+    }
+    Ok(())
+}
+
+pub struct CloseArgs {
+    pub claim: String,
+    pub dead: bool,
+    pub reason: Option<String>,
+    pub i_am_the_human: bool,
+}
+
+pub fn close(args: CloseArgs) -> Result<()> {
+    assert_human(args.i_am_the_human)?;
+    let root = find_root();
+    let ledger = Ledger::open(&root)?;
+    let full = resolve_id(&ledger, &args.claim)?;
+    let d = crate::state::fold(&ledger.scan()?);
+    let view = d
+        .claims
+        .iter()
+        .find(|c| c.id == full)
+        .ok_or_else(|| EvError::Refusal(format!("{} is not an open claim", short(&full))))?;
+
+    if args.dead {
+        let reason = args
+            .reason
+            .ok_or_else(|| EvError::Refusal("--dead needs --reason".into()))?;
+        ledger.append_batch(vec![NewEvent {
+            etype: "prune".into(),
+            actor: Actor {
+                kind: ActorKind::Human,
+                id: None,
+                via: None,
+            },
+            body: serde_json::json!({ "claim": full, "reason": reason }),
+        }])?;
+        println!("declared dead: {} — {reason}", short(&full));
+        return Ok(());
+    }
+
+    if view.evidence.is_empty() {
+        return Err(EvError::Refusal(format!(
+            "{} has no evidence. A claim closes with a pointer, or it is declared dead (--dead --reason).\nClosed-anyway does not exist here.",
+            short(&full)
+        )));
+    }
+    ledger.append_batch(vec![NewEvent {
+        etype: "close".into(),
+        actor: Actor {
+            kind: ActorKind::Human,
+            id: None,
+            via: None,
+        },
+        body: serde_json::json!({ "claim": full }),
+    }])?;
+    println!("closed {} with evidence.", short(&full));
+    Ok(())
+}
+
+pub fn hold(claim: String, reason: String, i_am_the_human: bool) -> Result<()> {
+    assert_human(i_am_the_human)?;
+    let root = find_root();
+    let ledger = Ledger::open(&root)?;
+    let full = resolve_id(&ledger, &claim)?;
+    ledger.append_batch(vec![NewEvent {
+        etype: "hold".into(),
+        actor: Actor {
+            kind: ActorKind::Human,
+            id: None,
+            via: None,
+        },
+        body: serde_json::json!({ "claim": full, "reason": reason }),
+    }])?;
+    println!("held (grey): {} — {reason}", short(&full));
+    Ok(())
+}
+
+pub fn demand(claim: String, i_am_the_human: bool) -> Result<()> {
+    assert_human(i_am_the_human)?;
+    let root = find_root();
+    let ledger = Ledger::open(&root)?;
+    let full = resolve_id(&ledger, &claim)?;
+    ledger.append_batch(vec![NewEvent {
+        etype: "demand".into(),
+        actor: Actor {
+            kind: ActorKind::Human,
+            id: None,
+            via: None,
+        },
+        body: serde_json::json!({ "claim": full }),
+    }])?;
+    println!(
+        "demanded evidence for {}. It leads the next brief.",
+        short(&full)
+    );
+    Ok(())
+}
+
+pub fn brief(json: bool) -> Result<()> {
+    let root = find_root();
+    let ledger = Ledger::open(&root)?;
+    let d = crate::state::fold(&ledger.scan()?);
+    print!("{}", crate::render::brief(&d, json));
+    Ok(())
+}

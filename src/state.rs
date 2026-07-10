@@ -81,6 +81,7 @@ struct ClaimAcc {
     demanded_at: Option<u64>,
     last_activity_seq: u64,
     referenced_by: u32,
+    opened_at_boundary: u32,
 }
 
 fn s(v: &serde_json::Value, k: &str) -> Option<String> {
@@ -114,6 +115,7 @@ pub fn fold(events: &[Envelope]) -> Derived {
                     demanded_at: None,
                     last_activity_seq: e.seq,
                     referenced_by: 0,
+                    opened_at_boundary: boundary_count,
                 });
             }
             "evidence" => {
@@ -231,7 +233,7 @@ pub fn fold(events: &[Envelope]) -> Derived {
     };
 
     for a in accs {
-        let boundaries_open = boundaries_since(&a, boundary_count);
+        let boundaries_open = boundary_count.saturating_sub(a.opened_at_boundary);
         let state = derive_state(&a, boundaries_open);
         let view = ClaimView {
             id: a.id.clone(),
@@ -260,13 +262,6 @@ pub fn fold(events: &[Envelope]) -> Derived {
         }
     }
     out
-}
-
-fn boundaries_since(a: &ClaimAcc, _total: u32) -> u32 {
-    // Starvation boundary counts are wired in the snapshot task.
-    // Until snapshots exist a fresh ledger has no boundaries, so this is 0.
-    let _ = a;
-    0
 }
 
 fn derive_state(a: &ClaimAcc, boundaries_open: u32) -> ClaimState {

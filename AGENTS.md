@@ -17,6 +17,7 @@ When you finish a unit of work:
 Evidence pointer types: `commit:<sha>` · `test:<path>[::<pass-line>]` · `file:<path>[::<line>]` ·
 `artifact:<name>` · `metric:<text>` (recorded, not verified) · `url:<text>` (recorded, not verified).
 
-Your session's commits are also captured automatically as self-evident claims, so you do not have
-to file a claim for every commit — file one when you want to assert something a bare commit does not
-say (fixed, verified, safe), and back it with a pointer.
+On machines where the session hooks are wired (`ev hook install`, once per machine), your session's
+commits are captured automatically as self-evident claims — so you do not have to file a claim for
+every commit. File one when you want to assert something a bare commit does not say (fixed,
+verified, safe), and back it with a pointer.

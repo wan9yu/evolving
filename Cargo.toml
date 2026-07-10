@@ -3,7 +3,11 @@ name = "evolving"
 version = "0.2.0"
 edition = "2021"
 license = "Apache-2.0"
-description = "A closure engine for one human and their agent fleet."
+description = "A closure engine for one human and their agent fleet — claims close on evidence, or not at all."
+repository = "https://github.com/wan9yu/evolving"
+readme = "README.md"
+keywords = ["claims", "evidence", "agent", "cli", "ledger"]
+exclude = [".evolving/", ".github/", ".gitattributes"]
 
 [[bin]]
 name = "ev"

@@ -23,8 +23,11 @@ agent claims ─▶ evidence pointer ─▶ engine verifies (exists? matches?)
 ## Install
 
 ```sh
-cargo install --git https://github.com/wan9yu/evolving   # installs the `ev` binary
+cargo install evolving   # installs the `ev` binary
 ```
+
+Prebuilt static binaries (including aarch64 musl for hosts without a toolchain) are attached to
+each GitHub Release.
 
 ## The loop
 

@@ -90,3 +90,70 @@ fn short_id(id: &str) -> String {
         None => id.to_string(),
     }
 }
+
+/// Render the work line: closed-with-evidence and expired-bare counts, no percentage or composite.
+pub fn line(d: &Derived, json: bool, stable: bool) -> String {
+    // Sum closed-with-evidence and expired-bare across all periods.
+    // "closed" in the current window = claims whose state is Closed (have evidence).
+    let closed_now = d
+        .closed
+        .iter()
+        .filter(|c| matches!(c.state, ClaimState::Closed) && !c.evidence.is_empty())
+        .count() as u32;
+    let expired_now = d
+        .claims
+        .iter()
+        .filter(|c| matches!(c.state, ClaimState::ExpiredBare))
+        .count() as u32;
+
+    let closed_total = closed_now
+        + d.snapshots
+            .iter()
+            .map(|s| s.closed_with_evidence)
+            .sum::<u32>();
+    let expired_total = expired_now + d.snapshots.iter().map(|s| s.expired_bare).sum::<u32>();
+
+    if json {
+        let as_of_val = if stable { "<id>".to_string() } else { as_of(d) };
+        let snaps: Vec<serde_json::Value> = if stable {
+            vec![]
+        } else {
+            d.snapshots
+                .iter()
+                .map(|s| {
+                    serde_json::json!({
+                        "closed_with_evidence": s.closed_with_evidence,
+                        "expired_bare": s.expired_bare,
+                    })
+                })
+                .collect()
+        };
+        let v = serde_json::json!({
+            "indicators": [
+                {
+                    "name": "work",
+                    "closed_with_evidence": closed_total,
+                    "expired_bare": expired_total,
+                }
+            ],
+            "snapshots": snaps,
+            "as_of": as_of_val,
+        });
+        return format!("{}\n", serde_json::to_string_pretty(&v).unwrap());
+    }
+
+    // Terminal form: one honest line per snapshot + a "now" line, no percentage.
+    let mut out = String::new();
+    out.push_str("work line\n");
+    for s in &d.snapshots {
+        out.push_str(&format!(
+            "  ▪ closed {}  · expired-bare {}\n",
+            s.closed_with_evidence, s.expired_bare
+        ));
+    }
+    out.push_str(&format!(
+        "  now: {closed_total} closed-with-evidence · {expired_total} expired-bare\n"
+    ));
+    out.push_str(&format!("— as of {} · {}\n", short_id(&as_of(d)), FOOTER));
+    out
+}

@@ -1,0 +1,11 @@
+{
+  "as_of": "<id>",
+  "indicators": [
+    {
+      "closed_with_evidence": 0,
+      "expired_bare": 0,
+      "name": "work"
+    }
+  ],
+  "snapshots": []
+}

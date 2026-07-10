@@ -394,3 +394,52 @@ pub fn brief(json: bool) -> Result<()> {
     print!("{}", crate::render::brief(&d, json));
     Ok(())
 }
+
+pub fn line(json: bool, stable: bool) -> Result<()> {
+    let root = find_root();
+    let ledger = Ledger::open(&root)?;
+    let d = crate::state::fold(&ledger.scan()?);
+    print!("{}", crate::render::line(&d, json, stable));
+    Ok(())
+}
+
+pub fn indicator_declare(name: String, i_am_the_human: bool) -> Result<()> {
+    assert_human(i_am_the_human)?;
+    let root = find_root();
+    let ledger = Ledger::open(&root)?;
+    let d = crate::state::fold(&ledger.scan()?);
+    if d.indicators.len() >= 4 {
+        return Err(EvError::Refusal(
+            "indicator ceiling is 4. Retire one first.".into(),
+        ));
+    }
+    ledger.append_batch(vec![NewEvent {
+        etype: "indicator".into(),
+        actor: Actor {
+            kind: ActorKind::Human,
+            id: None,
+            via: None,
+        },
+        body: serde_json::json!({ "name": name }),
+    }])?;
+    println!("indicator declared: {name}");
+    Ok(())
+}
+
+pub fn indicator_retire(id: String, i_am_the_human: bool) -> Result<()> {
+    assert_human(i_am_the_human)?;
+    let root = find_root();
+    let ledger = Ledger::open(&root)?;
+    let full = resolve_id(&ledger, &id)?;
+    ledger.append_batch(vec![NewEvent {
+        etype: "retire".into(),
+        actor: Actor {
+            kind: ActorKind::Human,
+            id: None,
+            via: None,
+        },
+        body: serde_json::json!({ "indicator": full }),
+    }])?;
+    println!("retired {}", short(&full));
+    Ok(())
+}

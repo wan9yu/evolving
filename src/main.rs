@@ -71,6 +71,32 @@ enum Command {
         #[arg(long)]
         session: String,
     },
+    /// Draw the work line (terminal, or --json [--stable]).
+    Line {
+        #[arg(long)]
+        json: bool,
+        #[arg(long)]
+        stable: bool,
+    },
+    /// Declare or retire an indicator (ceiling 4).
+    #[command(subcommand)]
+    Indicator(IndicatorCmd),
+}
+
+#[derive(Subcommand)]
+enum IndicatorCmd {
+    /// Declare a new named indicator.
+    Declare {
+        name: String,
+        #[arg(long = "i-am-the-human")]
+        i_am_the_human: bool,
+    },
+    /// Retire an existing indicator by id.
+    Retire {
+        id: String,
+        #[arg(long = "i-am-the-human")]
+        i_am_the_human: bool,
+    },
 }
 
 fn main() {
@@ -122,6 +148,14 @@ fn main() {
             i_am_the_human,
         }) => evolving::cmd::demand(claim, i_am_the_human),
         Some(Command::Exhaust { since, session }) => evolving::cmd::exhaust(since, session),
+        Some(Command::Line { json, stable }) => evolving::cmd::line(json, stable),
+        Some(Command::Indicator(IndicatorCmd::Declare {
+            name,
+            i_am_the_human,
+        })) => evolving::cmd::indicator_declare(name, i_am_the_human),
+        Some(Command::Indicator(IndicatorCmd::Retire { id, i_am_the_human })) => {
+            evolving::cmd::indicator_retire(id, i_am_the_human)
+        }
     };
     if let Err(e) = result {
         eprintln!("ev: {e}");

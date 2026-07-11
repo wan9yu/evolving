@@ -54,5 +54,5 @@ fn evidence_pointing_at_a_real_commit_verifies() {
     );
     let out = run(&dir, &["brief", "--json"]);
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(v["open"][0]["state"].as_str().unwrap(), "verified");
+    assert_eq!(v["open"][0]["state"].as_str().unwrap(), "anchored");
 }

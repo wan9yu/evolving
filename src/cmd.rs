@@ -78,6 +78,7 @@ pub struct ClaimArgs {
     pub evidence: Option<String>,
     pub by_agent: bool,
     pub source_ref: Option<String>,
+    pub kind: Option<String>,
 }
 
 pub fn claim(args: ClaimArgs) -> Result<()> {
@@ -109,6 +110,9 @@ pub fn claim(args: ClaimArgs) -> Result<()> {
     let mut body = serde_json::json!({ "label": args.label });
     if let Some(sref) = &args.source_ref {
         body["source_ref"] = serde_json::json!(sref);
+    }
+    if let Some(kind) = &args.kind {
+        body["kind"] = serde_json::json!(kind);
     }
     let batch = vec![NewEvent {
         etype: "claim".into(),
@@ -203,7 +207,20 @@ pub fn verify_cmd(claim_id: Option<String>) -> Result<()> {
                         "status": status,
                     }),
                 }])?;
-                println!("{} · {} → {status}", short(&c.id), ev.eref);
+                // drift: the world's movement under the anchor, in commits touching
+                // the cited path — a structural fact, judged by the human.
+                let moved = ev
+                    .base
+                    .as_deref()
+                    .and_then(|base| crate::verify::drift(&root, base, &r));
+                match moved {
+                    Some(k) if k > 0 => println!(
+                        "{} · {} → {status} · drift: cited path changed in {k} commit(s) beyond the anchor",
+                        short(&c.id),
+                        ev.eref
+                    ),
+                    _ => println!("{} · {} → {status}", short(&c.id), ev.eref),
+                }
             }
         }
     }

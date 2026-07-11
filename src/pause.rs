@@ -67,7 +67,10 @@ pub fn run_pause(root: &Path, opts: PauseOpts) -> Result<()> {
         .cloned()
         .collect();
     for c in &bare {
-        writeln!(out, "\nbare claim: {}", c.label)?;
+        match &c.kind {
+            Some(k) => writeln!(out, "\nbare claim [{k}]: {}", c.label)?,
+            None => writeln!(out, "\nbare claim: {}", c.label)?,
+        }
         writeln!(
             out,
             "  recommended: demand evidence (d) · attach (a <ref>) · hold (h) · dead (x) · carry (c)"

@@ -19,7 +19,7 @@ One crate, each module one job:
 |---|---|
 | `ledger` | envelope, writer identity, the single atomic batch-append, torn-tolerant scan |
 | `state` | the fold: event log → derived state (claim machine, grey, snapshots, views) |
-| `verify` | pointer verification (commit / file / test / artifact) and the four statuses |
+| `verify` | anchor resolution (commit / file / test / artifact), the four statuses, drift |
 | `exhaust` | git-window discovery; one claim per session; the label rule |
 | `hooks` | session hook install and handlers; the sweep |
 | `pause` | the ritual: screens, decisions, receipts |
@@ -47,7 +47,7 @@ Git is invoked as a subprocess; there is no git library, no TUI crate, no networ
   `local/writer.toml` guards the per-writer `seq` counter. A provably partial trailing line (torn by
   a kill) is truncated before the next append; reads skip any unparseable line with a warning.
 - The fold: no database. Every invocation scans `ledger/*.jsonl`, dedupes by id, sorts by
-  `(ts, writer, seq)`, and folds. Derived claim states: `bare → evidenced → verified` (open) ·
+  `(ts, writer, seq)`, and folds. Derived claim states: `bare → evidenced → anchored` (open) ·
   `grey` (an explicit hold; evidence revives it) · `closed` · `dead` · `expired-bare` (a bare claim
   that has survived two boundary pauses — countable, revivable by evidence). A demanded claim that
   later gains evidence surfaces as a **returned demand**. Snapshots are immutable events; the fold
@@ -56,9 +56,10 @@ Git is invoked as a subprocess; there is no git library, no TUI crate, no networ
 ## Verbs
 
 `init` · `think` (`--pin`) · `claim` (`--evidence <ref>`, `--by agent|human`, `--source-ref` as the
-idempotency key) · `evidence <claim> <ref>` (the demand-answer verb; agents permitted) ·
-`verify [<claim>]` (re-check pointers; each check appends a `verify` event, so disagreeing
-re-verifications sit beside their history) · `close <claim>` (requires evidence, or the explicit exit
+idempotency key, `--kind` to declare what kind of claim this is — e.g. defect, priority) ·
+`evidence <claim> <ref>` (the demand-answer verb; agents permitted) ·
+`verify [<claim>]` (re-check anchors and report drift; each check appends a `verify` event, so
+disagreeing re-checks sit beside their history) · `close <claim>` (requires evidence, or the explicit exit
 `--dead --reason <text>`; a bare close is refused) · `hold <claim> --reason` · `demand <claim>` ·
 `pause` (`--boundary` on the snapshot day; `--script` for piped stdin) · `brief` (`--json`; ≤2KB text) ·
 `line` (`--json [--stable]`) · `indicator declare|retire` (ceiling of four) ·
@@ -70,18 +71,27 @@ environment variable unless `--i-am-the-human` is passed — a provenance courte
 Exit codes: 0 done · 1 honest refusal · 2 error. State-reading output ends with
 "as of event `<id>` · ev refreshes when invoked, not in the background."
 
-## Evidence and verification
+## Evidence, resolution, drift
 
 - Typed refs: `commit:<sha>` · `test:<path>[::<pass-line>]` · `file:<path>[::<line>]` ·
   `artifact:<name>[::<pass-line>]` · `metric:<text>` · `url:<text>`. Metric and url are
   **recorded-only** — no verifier, and never any network.
-- Verifiers: commits resolve via `git rev-parse --verify <sha>^{commit}`; files, tests, and artifacts
-  verify as exists → readable (hashed) → named pass-line found. Statuses: `verified` · `failed` ·
-  `unreachable` (a pointer that cannot resolve *here* — not a failure) · `recorded`. Verification
-  runs when evidence is filed and on `ev verify`.
-- **`self_evident: true`** marks evidence auto-derived from the same repo it verifies against (a
-  session's own commits). Renderers show **⊙** for self-evident and **✓** for independent
-  verification — never the same mark. A pointer's existence is a fact; whether the evidence covers
+- Anchor resolution: commits resolve via `git rev-parse --verify <sha>^{commit}`; files, tests, and
+  artifacts resolve as exists → readable (hashed) → named pass-line found. Statuses: `resolves` ·
+  `failed` · `unreachable` (a pointer that cannot resolve *here* — not a failure) · `recorded`.
+  **Resolution is a fact about the pointer, never a verdict on the claim** — the status word is
+  chosen so a resolve-check cannot be read as "the claim is verified." (Ledgers are append-only;
+  events written before this word existed carry `verified` and are normalized on read, never
+  rewritten.) Resolution runs when evidence is filed and on `ev verify`.
+- **Drift:** every filed anchor records its `base` — the repo state (HEAD sha) it was filed against.
+  For path-bearing anchors, `ev verify` reports how far the world has moved underneath: the number of
+  commits between base and HEAD that touch the cited path. A structural fact, measured in world
+  movement, not clocks — zero means the cited path is exactly as the anchor saw it; a drifted anchor
+  can still resolve while the recommendation it supported has gone stale. The human judges what
+  drift means; the engine only counts it.
+- **`self_evident: true`** marks evidence auto-derived from the same repo it resolves against (a
+  session's own commits). Renderers show **⊙** for self-evident and **✓** for independently filed
+  anchors — never the same mark. A pointer's existence is a fact; whether the evidence covers
   the promise is the human's judgment at the pause. Evidence never self-certifies.
 
 ## Hooks, exhaust, the sweep
@@ -127,7 +137,7 @@ two raw counts, never a score · calm, plain output.
 
 ## Not yet built
 
-The human-capability indicator and its `rep` verb · `line --html` and publishing · fleet and
+The human-capability indicator and its `rep` verb · drift in the pause and brief surfaces (`ev verify` reports it today) · `line --html` and publishing · fleet and
 external-ledger enrollment · automatic transcript-region archival · rendering for custom-declared
 indicators · a pause-overdue pull line in the brief · multi-repo `pause --all` · session chunking ·
 torn-line reporting in doctor (scan already tolerates and heals torn tails).

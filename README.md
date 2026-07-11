@@ -4,8 +4,9 @@ Claims are cheap. Agents report "done", "fixed", "verified"; dashboards report g
 Evidence is not cheap, and almost nothing forces a claim through it before the claim is believed.
 
 `ev` is a small command-line closure engine for one person and the agents working alongside them.
-An agent files a **claim** with a typed **evidence pointer**. The engine **verifies the pointer**
-deterministically — it checks that the pointer resolves, never whether the work is good. Only the
+An agent files a **claim** with a typed **evidence pointer**. The engine **checks that the pointer
+resolves** — deterministically, never judging whether the work is good — and counts how far the
+world has since moved under each anchor (**drift**). Only the
 **human closes** a claim: with evidence, on hold, or declared dead. Nothing gates, nothing blocks —
 a short daily **pause** is where the judgment happens, and a **line** of what closed with evidence is
 what accumulates.

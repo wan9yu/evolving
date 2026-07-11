@@ -52,7 +52,8 @@ impl EvRef {
     }
 }
 
-/// Verify a ref against `repo_root`.
+/// Check whether a ref's anchor resolves against `repo_root`. Resolution is a
+/// fact about the pointer (exists, matches) — never a verdict on the claim.
 /// V1: Commit → `git rev-parse --verify`; Metric/Url → "recorded" (self-asserted).
 /// V2: Test/File/Artifact → exists→sha256→pass-line check.
 /// Never touches the network.
@@ -85,11 +86,11 @@ fn verify_v2(r: &EvRef, repo_root: &Path) -> String {
         format!("{:x}", h.finalize())
     };
     match &r.passline {
-        None => "verified".into(),
+        None => "resolves".into(),
         Some(pattern) => {
             let text = String::from_utf8_lossy(&content);
             if text.lines().any(|l| l.contains(pattern.as_str())) {
-                "verified".into()
+                "resolves".into()
             } else {
                 "failed".into()
             }
@@ -108,13 +109,15 @@ fn verify_commit(sha: &str, repo_root: &Path) -> String {
         .current_dir(repo_root)
         .output();
     match out {
-        Ok(o) if o.status.success() => "verified".into(),
+        Ok(o) if o.status.success() => "resolves".into(),
         Ok(_) => "failed".into(),
         Err(_) => "unreachable".into(),
     }
 }
 
-/// Attach evidence to a claim and record a verify verdict, in one atomic batch.
+/// Attach evidence to a claim and record whether its anchor resolves, in one
+/// atomic batch. The filing also records `base` — the repo state (HEAD sha)
+/// the anchor was filed against — so drift can be computed later.
 pub fn verify_and_record(
     ledger: &Ledger,
     repo_root: &Path,
@@ -125,15 +128,35 @@ pub fn verify_and_record(
 ) -> Result<String> {
     let r = EvRef::parse(raw_ref)?;
     let status = verify_ref(&r, repo_root);
+    let mut body = serde_json::json!({
+        "claim": claim_id,
+        "ref": raw_ref,
+        "status": status,
+        "self_evident": self_evident,
+    });
+    if let Some(base) = crate::git_output(repo_root, &["rev-parse", "HEAD"]) {
+        body["base"] = serde_json::json!(base);
+    }
     ledger.append_batch(vec![NewEvent {
         etype: "evidence".into(),
         actor,
-        body: serde_json::json!({
-            "claim": claim_id,
-            "ref": raw_ref,
-            "status": status,
-            "self_evident": self_evident,
-        }),
+        body,
     }])?;
     Ok(status)
+}
+
+/// Drift: how far the world has moved under a path-bearing anchor — the number
+/// of commits between the recorded filing base and HEAD that touch the cited
+/// path. A structural fact (no clocks, no dates); zero means the cited path is
+/// exactly as the anchor saw it. None when the ref carries no path, the base
+/// is unknown, or git cannot answer here.
+pub fn drift(repo_root: &Path, base: &str, r: &EvRef) -> Option<u32> {
+    let path = match r.kind {
+        RefKind::Test | RefKind::File => r.payload.clone(),
+        RefKind::Artifact => format!(".evolving/artifacts/{}", r.payload),
+        RefKind::Commit | RefKind::Metric | RefKind::Url => return None,
+    };
+    let range = format!("{base}..HEAD");
+    crate::git_output(repo_root, &["rev-list", "--count", &range, "--", &path])
+        .and_then(|n| n.parse::<u32>().ok())
 }

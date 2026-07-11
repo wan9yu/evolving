@@ -46,20 +46,28 @@ fn claim_json(c: &ClaimView) -> serde_json::Value {
         .evidence
         .iter()
         .map(|e| {
-            serde_json::json!({
+            let mut v = serde_json::json!({
                 "ref": e.eref,
                 "status": e.status,
                 "self_evident": e.self_evident,
-            })
+            });
+            if let Some(base) = &e.base {
+                v["base"] = serde_json::json!(base);
+            }
+            v
         })
         .collect();
-    serde_json::json!({
+    let mut v = serde_json::json!({
         "id": c.id,
         "label": c.label,
         "state": state_word(&c.state),
         "self_evident": c.self_evident,
         "evidence": evidence,
-    })
+    });
+    if let Some(kind) = &c.kind {
+        v["kind"] = serde_json::json!(kind);
+    }
+    v
 }
 
 fn ids(v: &[ClaimView]) -> Vec<String> {
@@ -68,8 +76,8 @@ fn ids(v: &[ClaimView]) -> Vec<String> {
 
 pub fn mark(self_evident: bool, state: &ClaimState) -> char {
     match state {
-        ClaimState::Verified if self_evident => '⊙',
-        ClaimState::Verified => '✓',
+        ClaimState::Anchored if self_evident => '⊙',
+        ClaimState::Anchored => '✓',
         ClaimState::Bare | ClaimState::ExpiredBare => '·',
         _ => '–',
     }
@@ -79,7 +87,7 @@ pub fn state_word(s: &ClaimState) -> &'static str {
     match s {
         ClaimState::Bare => "bare",
         ClaimState::Evidenced => "evidenced",
-        ClaimState::Verified => "verified",
+        ClaimState::Anchored => "anchored",
         ClaimState::Grey => "grey",
         ClaimState::Closed => "closed",
         ClaimState::Dead => "dead",

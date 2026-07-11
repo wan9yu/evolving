@@ -30,6 +30,9 @@ enum Command {
         by: String,
         #[arg(long = "source-ref")]
         source_ref: Option<String>,
+        /// Declare what kind of claim this is (e.g. defect, priority).
+        #[arg(long)]
+        kind: Option<String>,
     },
     /// Attach evidence to a claim (typed ref). Agents may do this.
     Evidence { claim: String, evidence_ref: String },
@@ -128,11 +131,13 @@ fn main() {
             evidence,
             by,
             source_ref,
+            kind,
         }) => evolving::cmd::claim(evolving::cmd::ClaimArgs {
             label,
             evidence,
             by_agent: by == "agent",
             source_ref,
+            kind,
         }),
         Some(Command::Evidence {
             claim,

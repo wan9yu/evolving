@@ -7,7 +7,7 @@ use std::collections::HashMap;
 pub enum ClaimState {
     Bare,
     Evidenced,
-    Verified,
+    Anchored,
     Grey,
     Closed,
     Dead,
@@ -17,8 +17,10 @@ pub enum ClaimState {
 #[derive(Serialize, Clone, Debug)]
 pub struct EvidenceView {
     pub eref: String,
-    pub status: String, // "verified" | "failed" | "unreachable" | "recorded"
+    pub status: String, // "resolves" | "failed" | "unreachable" | "recorded"
     pub self_evident: bool,
+    /// The repo state (HEAD sha) the anchor was filed against — drift's zero point.
+    pub base: Option<String>,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -30,6 +32,8 @@ pub struct ClaimView {
     pub self_evident: bool,
     pub boundaries_open: u32,
     pub source_ref: Option<String>,
+    /// Declared claim kind (e.g. "defect", "priority") — a filing fact, not a verdict.
+    pub kind: Option<String>,
     pub reason: Option<String>,
 }
 
@@ -72,6 +76,7 @@ struct ClaimAcc {
     id: String,
     label: String,
     source_ref: Option<String>,
+    kind: Option<String>,
     evidence: Vec<EvidenceView>,
     order: u64,
     held: Option<String>,
@@ -84,6 +89,16 @@ struct ClaimAcc {
 
 fn s(v: &serde_json::Value, k: &str) -> Option<String> {
     v.get(k).and_then(|x| x.as_str()).map(|x| x.to_string())
+}
+
+/// One vocabulary on read: the ledger is append-only, so events written before
+/// the anchor-resolution rename still carry "verified" — normalize, never rewrite.
+fn canon_status(raw: String) -> String {
+    if raw == "verified" {
+        "resolves".into()
+    } else {
+        raw
+    }
 }
 
 pub fn fold(events: &[Envelope]) -> Derived {
@@ -105,6 +120,7 @@ pub fn fold(events: &[Envelope]) -> Derived {
                     id,
                     label: s(&e.body, "label").unwrap_or_default(),
                     source_ref: s(&e.body, "source_ref"),
+                    kind: s(&e.body, "kind"),
                     evidence: vec![],
                     order: order_seq,
                     held: None,
@@ -120,12 +136,15 @@ pub fn fold(events: &[Envelope]) -> Derived {
                     if let Some(acc) = claims.get_mut(&cid) {
                         acc.evidence.push(EvidenceView {
                             eref: s(&e.body, "ref").unwrap_or_default(),
-                            status: s(&e.body, "status").unwrap_or_else(|| "recorded".into()),
+                            status: canon_status(
+                                s(&e.body, "status").unwrap_or_else(|| "recorded".into()),
+                            ),
                             self_evident: e
                                 .body
                                 .get("self_evident")
                                 .and_then(|b| b.as_bool())
                                 .unwrap_or(false),
+                            base: s(&e.body, "base"),
                         });
                         acc.held = None; // evidence revives a grey/held claim
                         acc.last_activity_seq = e.seq;
@@ -136,6 +155,7 @@ pub fn fold(events: &[Envelope]) -> Derived {
                 if let (Some(cid), Some(st)) = (s(&e.body, "claim"), s(&e.body, "status")) {
                     if let Some(acc) = claims.get_mut(&cid) {
                         // refs should be unique per claim; rev() picks the most recent if not.
+                        let st = canon_status(st);
                         if let Some(r) = e.body.get("ref").and_then(|v| v.as_str()) {
                             if let Some(item) =
                                 acc.evidence.iter_mut().rev().find(|ev| ev.eref == r)
@@ -252,6 +272,7 @@ pub fn fold(events: &[Envelope]) -> Derived {
             evidence: a.evidence.clone(),
             boundaries_open,
             source_ref: a.source_ref.clone(),
+            kind: a.kind.clone(),
             reason: a.held.clone(),
         };
         match state {
@@ -286,8 +307,8 @@ fn derive_state(a: &ClaimAcc, boundaries_open: u32) -> ClaimState {
         }
         return ClaimState::Bare;
     }
-    if a.evidence.iter().any(|e| e.status == "verified") {
-        ClaimState::Verified
+    if a.evidence.iter().any(|e| e.status == "resolves") {
+        ClaimState::Anchored
     } else {
         ClaimState::Evidenced
     }

@@ -53,3 +53,22 @@ fn same_source_ref_files_only_once() {
         1
     );
 }
+
+#[test]
+fn a_claim_may_declare_a_kind() {
+    let dir = fresh();
+    assert!(
+        run(&dir, &["claim", "mask leaks prefixes", "--kind", "defect"])
+            .status
+            .success()
+    );
+    let wid = std::fs::read_to_string(dir.join(".evolving/local/writer.toml")).unwrap();
+    let wid = wid.split('"').nth(1).unwrap();
+    let log =
+        std::fs::read_to_string(dir.join(".evolving/ledger").join(format!("{wid}.jsonl"))).unwrap();
+    assert!(
+        log.lines()
+            .any(|l| l.contains("\"type\":\"claim\"") && l.contains("\"kind\":\"defect\"")),
+        "claim event should carry the declared kind: {log}"
+    );
+}

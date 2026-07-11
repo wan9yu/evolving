@@ -45,7 +45,7 @@ fn a_real_commit_verifies_and_a_bogus_sha_fails() {
     use evolving::verify::{verify_ref, EvRef};
     assert_eq!(
         verify_ref(&EvRef::parse(&format!("commit:{head}")).unwrap(), &dir),
-        "verified"
+        "resolves"
     );
     assert_eq!(
         verify_ref(&EvRef::parse("commit:deadbeefdeadbeef").unwrap(), &dir),

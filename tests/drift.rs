@@ -66,3 +66,45 @@ fn a_file_anchor_reports_drift_after_the_cited_path_changes() {
         "evidence should carry its filing base: {v}"
     );
 }
+
+#[test]
+fn drift_reaches_every_reading_surface() {
+    let dir = std::env::temp_dir().join(format!("ev-drift2-{}", ulid::Ulid::new()));
+    std::fs::create_dir_all(&dir).unwrap();
+    git(&dir, &["init", "-q"]);
+    std::fs::write(dir.join("f.txt"), "the invariant\n").unwrap();
+    git(&dir, &["add", "."]);
+    git(&dir, &["commit", "-qm", "one"]);
+    assert!(run(&dir, &["init"]).status.success());
+    assert!(run(&dir, &["claim", "x", "--source-ref", "s1"])
+        .status
+        .success());
+    let b = run(&dir, &["brief", "--json"]);
+    let v: serde_json::Value = serde_json::from_slice(&b.stdout).unwrap();
+    let cid = v["open"][0]["id"].as_str().unwrap().to_string();
+    assert!(run(&dir, &["evidence", &cid, "file:f.txt"])
+        .status
+        .success());
+
+    // the world moves under the anchor
+    std::fs::write(dir.join("f.txt"), "rewritten\n").unwrap();
+    git(&dir, &["add", "f.txt"]);
+    git(&dir, &["commit", "-qm", "two"]);
+
+    // brief --json carries the computed drift (the agents' surface)
+    let b = run(&dir, &["brief", "--json"]);
+    let v: serde_json::Value = serde_json::from_slice(&b.stdout).unwrap();
+    assert_eq!(
+        v["open"][0]["evidence"][0]["drift"].as_u64(),
+        Some(1),
+        "brief --json should carry drift: {v}"
+    );
+
+    // verify --json carries resolution + base + drift (the scripted surface)
+    let out = run(&dir, &["verify", &cid, "--json"]);
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let check = &v["checks"][0];
+    assert_eq!(check["status"].as_str(), Some("resolves"));
+    assert!(check["base"].is_string());
+    assert_eq!(check["drift"].as_u64(), Some(1), "verify --json drift: {v}");
+}

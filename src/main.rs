@@ -37,7 +37,11 @@ enum Command {
     /// Attach evidence to a claim (typed ref). Agents may do this.
     Evidence { claim: String, evidence_ref: String },
     /// Re-verify a claim's evidence (or all open claims).
-    Verify { claim: Option<String> },
+    Verify {
+        claim: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
     /// The daily glance: returned demands, open claims, grey.
     Brief {
         #[arg(long)]
@@ -143,7 +147,7 @@ fn main() {
             claim,
             evidence_ref,
         }) => evolving::cmd::evidence(claim, evidence_ref),
-        Some(Command::Verify { claim }) => evolving::cmd::verify_cmd(claim),
+        Some(Command::Verify { claim, json }) => evolving::cmd::verify_cmd(claim, json),
         Some(Command::Brief { json }) => evolving::cmd::brief(json),
         Some(Command::Close {
             claim,

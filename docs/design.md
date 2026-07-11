@@ -58,8 +58,8 @@ Git is invoked as a subprocess; there is no git library, no TUI crate, no networ
 `init` · `think` (`--pin`) · `claim` (`--evidence <ref>`, `--by agent|human`, `--source-ref` as the
 idempotency key, `--kind` to declare what kind of claim this is — e.g. defect, priority) ·
 `evidence <claim> <ref>` (the demand-answer verb; agents permitted) ·
-`verify [<claim>]` (re-check anchors and report drift; each check appends a `verify` event, so
-disagreeing re-checks sit beside their history) · `close <claim>` (requires evidence, or the explicit exit
+`verify [<claim>]` (`--json`; re-check anchors and report drift; each check appends a `verify` event,
+so disagreeing re-checks sit beside their history) · `close <claim>` (requires evidence, or the explicit exit
 `--dead --reason <text>`; a bare close is refused) · `hold <claim> --reason` · `demand <claim>` ·
 `pause` (`--boundary` on the snapshot day; `--script` for piped stdin) · `brief` (`--json`; ≤2KB text) ·
 `line` (`--json [--stable]`) · `indicator declare|retire` (ceiling of four) ·
@@ -84,8 +84,9 @@ Exit codes: 0 done · 1 honest refusal · 2 error. State-reading output ends wit
   events written before this word existed carry `verified` and are normalized on read, never
   rewritten.) Resolution runs when evidence is filed and on `ev verify`.
 - **Drift:** every filed anchor records its `base` — the repo state (HEAD sha) it was filed against.
-  For path-bearing anchors, `ev verify` reports how far the world has moved underneath: the number of
-  commits between base and HEAD that touch the cited path. A structural fact, measured in world
+  For path-bearing anchors, the number of commits between base and HEAD touching the cited path is
+  reported wherever evidence is read: `ev verify` (text and `--json`), the brief's `--json` evidence
+  entries, and the pause's returned-demands screen. A structural fact, measured in world
   movement, not clocks — zero means the cited path is exactly as the anchor saw it; a drifted anchor
   can still resolve while the recommendation it supported has gone stale. The human judges what
   drift means; the engine only counts it.
@@ -103,8 +104,10 @@ Exit codes: 0 done · 1 honest refusal · 2 error. State-reading output ends wit
 - **The sweep** runs at session start and is writer-scoped: for each of this machine's session
   markers not yet swept, it files the commits in that session's window — from the previous swept
   marker's head (a resolved sha watermark) to this marker's head — as **one claim per session**,
-  every commit attached as `self_evident` evidence, idempotent on the session id. Windows never
-  overlap; an empty window files nothing.
+  every commit attached as `self_evident` evidence, idempotent on the session id. A claim orphaned
+  bare by a kill between the claim write and the evidence write is repaired on the next pass — the
+  evidence it never got is attached to it, never a second claim. Windows never overlap; an empty
+  window files nothing.
 - The label rule: the commit subject when the window holds exactly one commit; otherwise
   `"session <short-id>: N commits on <branch>"`.
 
@@ -137,7 +140,7 @@ two raw counts, never a score · calm, plain output.
 
 ## Not yet built
 
-The human-capability indicator and its `rep` verb · drift in the pause and brief surfaces (`ev verify` reports it today) · `line --html` and publishing · fleet and
+The human-capability indicator and its `rep` verb · `line --html` and publishing · fleet and
 external-ledger enrollment · automatic transcript-region archival · rendering for custom-declared
 indicators · a pause-overdue pull line in the brief · multi-repo `pause --all` · session chunking ·
 torn-line reporting in doctor (scan already tolerates and heals torn tails).

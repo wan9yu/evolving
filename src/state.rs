@@ -21,6 +21,9 @@ pub struct EvidenceView {
     pub self_evident: bool,
     /// The repo state (HEAD sha) the anchor was filed against — drift's zero point.
     pub base: Option<String>,
+    /// World movement under the anchor: commits touching the cited path beyond
+    /// the base. Filled by drift annotation at read time; the fold leaves it None.
+    pub drift: Option<u32>,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -145,6 +148,7 @@ pub fn fold(events: &[Envelope]) -> Derived {
                                 .and_then(|b| b.as_bool())
                                 .unwrap_or(false),
                             base: s(&e.body, "base"),
+                            drift: None,
                         });
                         acc.held = None; // evidence revives a grey/held claim
                         acc.last_activity_seq = e.seq;

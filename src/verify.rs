@@ -160,3 +160,20 @@ pub fn drift(repo_root: &Path, base: &str, r: &EvRef) -> Option<u32> {
     crate::git_output(repo_root, &["rev-list", "--count", &range, "--", &path])
         .and_then(|n| n.parse::<u32>().ok())
 }
+
+/// Fill in drift on every evidence view that can carry it (path-bearing ref
+/// with a recorded base). An explicit read-time step so the fold stays pure.
+pub fn annotate_drift(d: &mut crate::state::Derived, repo_root: &Path) {
+    let fill = |claims: &mut Vec<crate::state::ClaimView>| {
+        for c in claims.iter_mut() {
+            for ev in c.evidence.iter_mut() {
+                if let (Some(base), Ok(r)) = (ev.base.as_deref(), EvRef::parse(&ev.eref)) {
+                    ev.drift = drift(repo_root, base, &r);
+                }
+            }
+        }
+    };
+    fill(&mut d.claims);
+    fill(&mut d.grey);
+    fill(&mut d.demands_returned);
+}

@@ -12,7 +12,9 @@ pub struct PauseOpts {
 
 pub fn run_pause(root: &Path, opts: PauseOpts) -> Result<()> {
     let ledger = Ledger::open(root)?;
-    let d = crate::state::fold(&ledger.scan()?);
+    let mut d = crate::state::fold(&ledger.scan()?);
+    crate::verify::annotate_drift(&mut d, root);
+    let d = d;
     let started = Instant::now();
     let stdin = std::io::stdin();
     let mut lines = stdin.lock().lines();
@@ -32,13 +34,25 @@ pub fn run_pause(root: &Path, opts: PauseOpts) -> Result<()> {
     if !d.demands_returned.is_empty() {
         writeln!(out, "\n↩ answered demands:")?;
         for c in &d.demands_returned {
-            writeln!(
-                out,
-                "  {} {} — now has {} evidence",
-                crate::render::mark(c.self_evident, &c.state),
-                c.label,
-                c.evidence.len()
-            )?;
+            let drifted = c.evidence.iter().filter_map(|e| e.drift).max().unwrap_or(0);
+            if drifted > 0 {
+                writeln!(
+                    out,
+                    "  {} {} — now has {} evidence · drift: cited path changed in {} commit(s) beyond the anchor",
+                    crate::render::mark(c.self_evident, &c.state),
+                    c.label,
+                    c.evidence.len(),
+                    drifted
+                )?;
+            } else {
+                writeln!(
+                    out,
+                    "  {} {} — now has {} evidence",
+                    crate::render::mark(c.self_evident, &c.state),
+                    c.label,
+                    c.evidence.len()
+                )?;
+            }
         }
     }
 

@@ -181,8 +181,8 @@ pub fn evidence(claim_id: String, eref: String) -> Result<()> {
     Ok(())
 }
 
-/// Re-verify a single claim's evidence, or all open claims' evidence.
-pub fn verify_cmd(claim_id: Option<String>) -> Result<()> {
+/// Re-check anchors for one claim (or all open claims): resolution + drift.
+pub fn verify_cmd(claim_id: Option<String>, json: bool) -> Result<()> {
     let root = find_root();
     let ledger = Ledger::open(&root)?;
     let events = ledger.scan()?;
@@ -194,6 +194,7 @@ pub fn verify_cmd(claim_id: Option<String>) -> Result<()> {
         }
         None => d.claims.iter().collect(),
     };
+    let mut checks: Vec<serde_json::Value> = Vec::new();
     for c in targets {
         for ev in &c.evidence {
             if let Ok(r) = crate::verify::EvRef::parse(&ev.eref) {
@@ -213,16 +214,35 @@ pub fn verify_cmd(claim_id: Option<String>) -> Result<()> {
                     .base
                     .as_deref()
                     .and_then(|base| crate::verify::drift(&root, base, &r));
-                match moved {
-                    Some(k) if k > 0 => println!(
-                        "{} · {} → {status} · drift: cited path changed in {k} commit(s) beyond the anchor",
-                        short(&c.id),
-                        ev.eref
-                    ),
-                    _ => println!("{} · {} → {status}", short(&c.id), ev.eref),
+                if json {
+                    let mut check = serde_json::json!({
+                        "claim": c.id,
+                        "ref": ev.eref,
+                        "status": status,
+                    });
+                    if let Some(base) = &ev.base {
+                        check["base"] = serde_json::json!(base);
+                    }
+                    if let Some(k) = moved {
+                        check["drift"] = serde_json::json!(k);
+                    }
+                    checks.push(check);
+                } else {
+                    match moved {
+                        Some(k) if k > 0 => println!(
+                            "{} · {} → {status} · drift: cited path changed in {k} commit(s) beyond the anchor",
+                            short(&c.id),
+                            ev.eref
+                        ),
+                        _ => println!("{} · {} → {status}", short(&c.id), ev.eref),
+                    }
                 }
             }
         }
+    }
+    if json {
+        let v = serde_json::json!({ "checks": checks });
+        println!("{}", serde_json::to_string_pretty(&v).unwrap());
     }
     Ok(())
 }
@@ -368,7 +388,8 @@ pub fn exhaust(since: String, session: String) -> Result<()> {
 pub fn brief(json: bool) -> Result<()> {
     let root = find_root();
     let ledger = Ledger::open(&root)?;
-    let d = crate::state::fold(&ledger.scan()?);
+    let mut d = crate::state::fold(&ledger.scan()?);
+    crate::verify::annotate_drift(&mut d, &root);
     print!("{}", crate::render::brief(&d, json));
     Ok(())
 }

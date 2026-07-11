@@ -109,3 +109,63 @@ fn an_empty_window_files_nothing() {
     let v: serde_json::Value = serde_json::from_slice(&b.stdout).unwrap();
     assert_eq!(v["open"].as_array().unwrap().len(), 0);
 }
+
+#[test]
+fn a_killed_sweep_orphan_is_repaired_on_the_next_pass() {
+    // a kill between the claim write and the evidence write leaves a bare
+    // exhaust claim; the next pass must attach the evidence it never got,
+    // not skip the session forever — and not file a second claim.
+    let dir = repo();
+    std::fs::write(dir.join("a.txt"), "1").unwrap();
+    git(&dir, &["add", "."]);
+    git(&dir, &["commit", "-qm", "one"]);
+    // simulate the orphan: the claim exists (session source_ref), no evidence
+    assert!(run(
+        &dir,
+        &["claim", "orphaned by a kill", "--source-ref", "session:s9"]
+    )
+    .status
+    .success());
+    let b = run(&dir, &["brief", "--json"]);
+    let v: serde_json::Value = serde_json::from_slice(&b.stdout).unwrap();
+    assert_eq!(v["open"][0]["evidence"].as_array().unwrap().len(), 0);
+
+    assert!(
+        run(&dir, &["exhaust", "--since", "ROOT", "--session", "s9"])
+            .status
+            .success()
+    );
+    let b = run(&dir, &["brief", "--json"]);
+    let v: serde_json::Value = serde_json::from_slice(&b.stdout).unwrap();
+    assert_eq!(
+        v["open"].as_array().unwrap().len(),
+        1,
+        "repair must not file a second claim: {v}"
+    );
+    assert!(
+        !v["open"][0]["evidence"].as_array().unwrap().is_empty(),
+        "the orphan should now carry its evidence: {v}"
+    );
+
+    // and a repaired session stays idempotent
+    assert!(
+        run(&dir, &["exhaust", "--since", "ROOT", "--session", "s9"])
+            .status
+            .success()
+    );
+    let b = run(&dir, &["brief", "--json"]);
+    let v: serde_json::Value = serde_json::from_slice(&b.stdout).unwrap();
+    let n = v["open"][0]["evidence"].as_array().unwrap().len();
+    assert!(
+        run(&dir, &["exhaust", "--since", "ROOT", "--session", "s9"])
+            .status
+            .success()
+    );
+    let b = run(&dir, &["brief", "--json"]);
+    let v: serde_json::Value = serde_json::from_slice(&b.stdout).unwrap();
+    assert_eq!(
+        v["open"][0]["evidence"].as_array().unwrap().len(),
+        n,
+        "a repaired session must not accumulate duplicate evidence: {v}"
+    );
+}

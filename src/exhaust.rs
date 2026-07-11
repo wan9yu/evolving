@@ -89,23 +89,40 @@ pub fn file_window(
     }
     let source_ref = format!("session:{}", w.session);
     let events = ledger.scan()?;
-    if events.iter().any(|e| {
+    let actor = Actor::agent("exhaust");
+
+    // Idempotent on the session, self-repairing on a kill: a claim that exists
+    // WITH evidence is done; one that exists without evidence was orphaned by a
+    // kill between the claim write and the evidence write — attach the evidence
+    // it never got instead of skipping it forever.
+    let existing = events.iter().find(|e| {
         e.etype == "claim"
             && e.body.get("source_ref").and_then(|s| s.as_str()) == Some(source_ref.as_str())
-    }) {
-        return Ok(None);
-    }
-    let actor = Actor::agent("exhaust");
-    let minted = ledger.append_batch(vec![NewEvent {
-        etype: "claim".into(),
-        actor: actor.clone(),
-        body: serde_json::json!({
-            "label": label(w, closing_summary),
-            "source_ref": source_ref,
-        }),
-    }])?;
-    let claim_id = minted[0].id.clone();
-    // one evidence event per sha, all self_evident (verified against this repo)
+    });
+    let claim_id = match existing {
+        Some(claim) => {
+            let has_evidence = events.iter().any(|e| {
+                e.etype == "evidence"
+                    && e.body.get("claim").and_then(|s| s.as_str()) == Some(claim.id.as_str())
+            });
+            if has_evidence {
+                return Ok(None);
+            }
+            claim.id.clone()
+        }
+        None => {
+            let minted = ledger.append_batch(vec![NewEvent {
+                etype: "claim".into(),
+                actor: actor.clone(),
+                body: serde_json::json!({
+                    "label": label(w, closing_summary),
+                    "source_ref": source_ref,
+                }),
+            }])?;
+            minted[0].id.clone()
+        }
+    };
+    // one evidence event per sha, all self_evident (resolved against this repo)
     let mut batch = Vec::new();
     for sha in &w.shas {
         let status = crate::verify::verify_ref(

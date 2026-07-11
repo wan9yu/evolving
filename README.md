@@ -4,6 +4,8 @@
 [![coverage](https://codecov.io/gh/wan9yu/evolving/branch/main/graph/badge.svg)](https://codecov.io/gh/wan9yu/evolving)
 [![crates.io](https://img.shields.io/crates/v/evolving.svg)](https://crates.io/crates/evolving)
 
+English | [简体中文](README.zh-CN.md)
+
 Claims are cheap. Agents report "done", "fixed", "verified"; dashboards report green.
 Evidence is not cheap, and almost nothing forces a claim through it before the claim is believed.
 

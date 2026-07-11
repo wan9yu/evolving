@@ -3,7 +3,6 @@
 [![CI](https://github.com/wan9yu/evolving/actions/workflows/ci.yml/badge.svg)](https://github.com/wan9yu/evolving/actions/workflows/ci.yml)
 [![coverage](https://codecov.io/gh/wan9yu/evolving/branch/main/graph/badge.svg)](https://codecov.io/gh/wan9yu/evolving)
 [![crates.io](https://img.shields.io/crates/v/evolving.svg)](https://crates.io/crates/evolving)
-[![license](https://img.shields.io/crates/l/evolving.svg)](LICENSE)
 
 Claims are cheap. Agents report "done", "fixed", "verified"; dashboards report green.
 Evidence is not cheap, and almost nothing forces a claim through it before the claim is believed.

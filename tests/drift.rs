@@ -20,17 +20,16 @@ fn git(dir: &std::path::Path, args: &[&str]) {
         .unwrap();
 }
 
-#[test]
-fn a_file_anchor_reports_drift_after_the_cited_path_changes() {
-    let dir = std::env::temp_dir().join(format!("ev-drift-{}", ulid::Ulid::new()));
+/// git repo + enrolled ledger + one claim anchored to file:f.txt — the base
+/// records the world-state at filing.
+fn anchored_repo(tag: &str) -> (std::path::PathBuf, String) {
+    let dir = std::env::temp_dir().join(format!("ev-{tag}-{}", ulid::Ulid::new()));
     std::fs::create_dir_all(&dir).unwrap();
     git(&dir, &["init", "-q"]);
     std::fs::write(dir.join("f.txt"), "the invariant\n").unwrap();
     git(&dir, &["add", "."]);
     git(&dir, &["commit", "-qm", "one"]);
     assert!(run(&dir, &["init"]).status.success());
-
-    // file the claim + a file anchor: base records the world-state at filing
     assert!(run(&dir, &["claim", "x", "--source-ref", "s1"])
         .status
         .success());
@@ -40,6 +39,12 @@ fn a_file_anchor_reports_drift_after_the_cited_path_changes() {
     assert!(run(&dir, &["evidence", &cid, "file:f.txt"])
         .status
         .success());
+    (dir, cid)
+}
+
+#[test]
+fn a_file_anchor_reports_drift_after_the_cited_path_changes() {
+    let (dir, cid) = anchored_repo("drift");
 
     // no drift yet: the cited path is exactly as the anchor saw it
     let out = run(&dir, &["verify", &cid]);
@@ -69,22 +74,7 @@ fn a_file_anchor_reports_drift_after_the_cited_path_changes() {
 
 #[test]
 fn drift_reaches_every_reading_surface() {
-    let dir = std::env::temp_dir().join(format!("ev-drift2-{}", ulid::Ulid::new()));
-    std::fs::create_dir_all(&dir).unwrap();
-    git(&dir, &["init", "-q"]);
-    std::fs::write(dir.join("f.txt"), "the invariant\n").unwrap();
-    git(&dir, &["add", "."]);
-    git(&dir, &["commit", "-qm", "one"]);
-    assert!(run(&dir, &["init"]).status.success());
-    assert!(run(&dir, &["claim", "x", "--source-ref", "s1"])
-        .status
-        .success());
-    let b = run(&dir, &["brief", "--json"]);
-    let v: serde_json::Value = serde_json::from_slice(&b.stdout).unwrap();
-    let cid = v["open"][0]["id"].as_str().unwrap().to_string();
-    assert!(run(&dir, &["evidence", &cid, "file:f.txt"])
-        .status
-        .success());
+    let (dir, cid) = anchored_repo("drift2");
 
     // the world moves under the anchor
     std::fs::write(dir.join("f.txt"), "rewritten\n").unwrap();

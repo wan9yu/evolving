@@ -14,7 +14,6 @@ pub fn run_pause(root: &Path, opts: PauseOpts) -> Result<()> {
     let ledger = Ledger::open(root)?;
     let mut d = crate::state::fold(&ledger.scan()?);
     crate::verify::annotate_drift(&mut d, root);
-    let d = d;
     let started = Instant::now();
     let stdin = std::io::stdin();
     let mut lines = stdin.lock().lines();
@@ -38,11 +37,11 @@ pub fn run_pause(root: &Path, opts: PauseOpts) -> Result<()> {
             if drifted > 0 {
                 writeln!(
                     out,
-                    "  {} {} — now has {} evidence · drift: cited path changed in {} commit(s) beyond the anchor",
+                    "  {} {} — now has {} evidence · {}",
                     crate::render::mark(c.self_evident, &c.state),
                     c.label,
                     c.evidence.len(),
-                    drifted
+                    crate::verify::drift_phrase(drifted)
                 )?;
             } else {
                 writeln!(

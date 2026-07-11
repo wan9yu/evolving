@@ -230,9 +230,10 @@ pub fn verify_cmd(claim_id: Option<String>, json: bool) -> Result<()> {
                 } else {
                     match moved {
                         Some(k) if k > 0 => println!(
-                            "{} · {} → {status} · drift: cited path changed in {k} commit(s) beyond the anchor",
+                            "{} · {} → {status} · {}",
                             short(&c.id),
-                            ev.eref
+                            ev.eref,
+                            crate::verify::drift_phrase(k)
                         ),
                         _ => println!("{} · {} → {status}", short(&c.id), ev.eref),
                     }

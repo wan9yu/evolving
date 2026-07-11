@@ -88,6 +88,8 @@ pub fn uninstall(root: &Path) -> Result<()> {
 pub fn session_start(root: &Path) -> Result<()> {
     let _ = drain_stdin();
     if let Ok(ledger) = Ledger::open(root) {
+        // The text brief shows no drift, so no annotation here; if drift ever
+        // reaches the text surface, annotate before rendering.
         if let Ok(events) = ledger.scan() {
             let d = crate::state::fold(&events);
             print!("{}", crate::render::brief(&d, false));

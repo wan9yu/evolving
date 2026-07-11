@@ -8,5 +8,10 @@ fn version_flag_prints_semver() {
         .expect("binary runs");
     let s = String::from_utf8_lossy(&out.stdout);
     assert!(out.status.success());
-    assert!(s.contains("0.2.0"), "version output was: {s}");
+    // no version literal here — the test asserts the binary reports the
+    // crate's own version, whatever it currently is.
+    assert!(
+        s.contains(env!("CARGO_PKG_VERSION")),
+        "version output was: {s}"
+    );
 }

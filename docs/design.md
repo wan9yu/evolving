@@ -59,7 +59,9 @@ Git is invoked as a subprocess; there is no git library, no TUI crate, no networ
 idempotency key, `--kind` to declare what kind of claim this is — e.g. defect, priority) ·
 `evidence <claim> <ref>` (the demand-answer verb; agents permitted) ·
 `verify [<claim>]` (`--json`; re-check anchors and report drift; each check appends a `verify` event,
-so disagreeing re-checks sit beside their history) · `close <claim>` (requires evidence, or the explicit exit
+so disagreeing re-checks sit beside their history; self-evident evidence — the `commit:` refs exhaust
+files about itself — is not re-checked, since it cannot fail; `--full` re-checks it anyway) ·
+`close <claim>` (requires evidence, or the explicit exit
 `--dead --reason <text>`; a bare close is refused) · `hold <claim> --reason` · `demand <claim>` ·
 `pause` (`--boundary` on the snapshot day; `--script` for piped stdin) · `brief` (`--json`; ≤2KB text) ·
 `line` (`--json [--stable]`) · `indicator declare|retire` (ceiling of four) ·

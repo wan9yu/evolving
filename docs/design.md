@@ -60,7 +60,9 @@ idempotency key, `--kind` to declare what kind of claim this is — e.g. defect,
 `evidence <claim> <ref>` (the demand-answer verb; agents permitted) ·
 `verify [<claim>]` (`--json`; re-check anchors and report drift; each check appends a `verify` event,
 so disagreeing re-checks sit beside their history; self-evident evidence — the `commit:` refs exhaust
-files about itself — is not re-checked, since it cannot fail; `--full` re-checks it anyway) ·
+files about itself — is not re-checked by default, since it is content-addressed and fails only on a
+history rewrite; `--full` re-checks it anyway. By default, ev verify no longer detects history rewrites
+touching old exhaust windows; `ev verify --full` is the path that still detects them.) ·
 `close <claim>` (requires evidence, or the explicit exit
 `--dead --reason <text>`; a bare close is refused) · `hold <claim> --reason` · `demand <claim>` ·
 `pause` (`--boundary` on the snapshot day; `--script` for piped stdin) · `brief` (`--json`; ≤2KB text) ·

@@ -122,9 +122,8 @@ pub fn guard_attach(raw: &str) -> Result<()> {
                 _ => "file",
             };
             return Err(EvError::Refusal(format!(
-                "{raw} — path not found.\n    \
-                 If {tail} is a line number: ev anchors by content, not by line \
-                 (a line number stays green after the code moves).\n    \
+                "{raw} — refused: looks like a line number, not a content anchor.\n    \
+                 ev anchors by content, not by line (a line number stays green after the code moves).\n    \
                  Use {scheme}:{path}::<text on that line>."
             )));
         }

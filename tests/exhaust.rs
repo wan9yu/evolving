@@ -94,6 +94,30 @@ fn init_should_record_root_as_the_baseline_in_an_empty_repo() {
 }
 
 #[test]
+fn init_run_twice_records_exactly_one_baseline_marker() {
+    // A re-run of `ev init` is harmless for every sibling write (write_if_absent,
+    // ensure_line). It must be equally harmless for the baseline: a second
+    // marker at a later HEAD would jump the watermark forward and drop the
+    // commits made between the two `init` runs from every future sweep.
+    let dir = fresh_git();
+    std::fs::write(dir.join("a.txt"), "1\n").unwrap();
+    git_commit(&dir, "pre-existing history");
+
+    assert!(run(&dir, &["init"]).status.success());
+    assert!(run(&dir, &["init"]).status.success());
+
+    let markers: Vec<_> = ledger_events(&dir)
+        .into_iter()
+        .filter(|e| e["type"] == "session" && e["body"]["marker"] == "baseline")
+        .collect();
+    assert_eq!(
+        markers.len(),
+        1,
+        "init run twice must record exactly one baseline marker: {markers:?}"
+    );
+}
+
+#[test]
 fn exhaust_should_refuse_when_the_ledger_has_no_baseline() {
     // A ledger written by 0.2.1 has no baseline marker. Filing ROOT..HEAD would
     // record pre-existing commits as this session's output — refuse, do not guess.
@@ -132,17 +156,50 @@ fn baseline_should_write_the_marker_so_exhaust_proceeds() {
     assert!(run(&dir, &["init"]).status.success());
     let head = head_sha(&dir);
 
-    // a second baseline is legal (append-only); it re-pins the watermark
+    // strip the baseline `init` wrote, so exhaust starts out refusing —
+    // the same simulated-0.2.1-ledger state as the refusal test above.
+    let p = ledger_path(&dir);
+    let kept: Vec<String> = std::fs::read_to_string(&p)
+        .unwrap()
+        .lines()
+        .filter(|l| {
+            let v: serde_json::Value = serde_json::from_str(l).unwrap();
+            v["body"]["marker"] != "baseline"
+        })
+        .map(|s| s.to_string())
+        .collect();
+    let stripped = if kept.is_empty() {
+        String::new()
+    } else {
+        kept.join("\n") + "\n"
+    };
+    std::fs::write(&p, stripped).unwrap();
+    let before = run(&dir, &["exhaust", "--since", "ROOT", "--session", "s1"]);
+    assert_eq!(
+        before.status.code(),
+        Some(1),
+        "exhaust must refuse before a baseline exists"
+    );
+
+    // `ev baseline` writes the marker...
     let out = run(&dir, &["baseline"]);
     assert!(out.status.success());
     let markers: Vec<_> = ledger_events(&dir)
         .into_iter()
         .filter(|e| e["body"]["marker"] == "baseline")
         .collect();
-    assert!(markers.len() >= 2);
+    assert_eq!(markers.len(), 1);
     assert_eq!(
         markers.last().unwrap()["body"]["head"].as_str().unwrap(),
         head
+    );
+
+    // ...and exhaust now proceeds where it previously refused.
+    let after = run(&dir, &["exhaust", "--since", "ROOT", "--session", "s1"]);
+    assert!(
+        after.status.success(),
+        "{}",
+        String::from_utf8_lossy(&after.stderr)
     );
 }
 

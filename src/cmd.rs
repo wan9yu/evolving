@@ -39,7 +39,12 @@ pub fn init() -> Result<()> {
     let ledger = crate::ledger::Ledger::open(&root)?;
     // The baseline: where this ledger began. Without it, the first sweep would
     // file every pre-existing commit as this session's output — a false fact.
-    write_baseline(&ledger, &root)?;
+    // init is idempotent (write_if_absent, ensure_line above): a re-run must
+    // not append a second baseline, or the watermark jumps forward and the
+    // commits between the two runs are never filed by any future sweep.
+    if !has_baseline(&ledger.scan()?) {
+        write_baseline(&ledger, &root)?;
+    }
     println!("initialized .evolving/ at {}", root.display());
     println!("ev refreshes when invoked, not in the background.");
     Ok(())
@@ -87,6 +92,16 @@ pub fn baseline(sha: Option<String>) -> Result<()> {
 
 fn short_sha(s: &str) -> String {
     s.chars().take(8).collect()
+}
+
+/// Whether the ledger already carries a baseline marker: a `session` event
+/// whose body is `{"marker":"baseline", ...}`. The one predicate for the two
+/// sites that must agree on it: `init` (skip a redundant write) and `exhaust`
+/// (refuse `--since ROOT` without one).
+fn has_baseline(events: &[crate::ledger::Envelope]) -> bool {
+    events.iter().any(|e| {
+        e.etype == "session" && e.body.get("marker").and_then(|s| s.as_str()) == Some("baseline")
+    })
 }
 
 fn write_if_absent(path: &Path, contents: &str) -> Result<()> {
@@ -449,11 +464,7 @@ pub fn exhaust(since: String, session: String) -> Result<()> {
     // `--since ROOT` on a ledger with no baseline is the Run-14 false fact.
     if since == "ROOT" {
         let events = ledger.scan()?;
-        let has_baseline = events.iter().any(|e| {
-            e.etype == "session"
-                && e.body.get("marker").and_then(|s| s.as_str()) == Some("baseline")
-        });
-        if !has_baseline {
+        if !has_baseline(&events) {
             return Err(EvError::Refusal(
                 "no baseline marker in this ledger — filing --since ROOT would record \
                  pre-existing commits as this session's output.\n    \

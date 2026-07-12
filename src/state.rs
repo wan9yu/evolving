@@ -24,6 +24,9 @@ pub struct EvidenceView {
     /// World movement under the anchor: commits touching the cited path beyond
     /// the base. Filled by drift annotation at read time; the fold leaves it None.
     pub drift: Option<u32>,
+    /// What it would take for this anchor to go red — a fact about the pointer's
+    /// shape. Derived from the ref, so the fold stays pure.
+    pub liveness: String,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -137,8 +140,14 @@ pub fn fold(events: &[Envelope]) -> Derived {
             "evidence" => {
                 if let Some(cid) = s(&e.body, "claim") {
                     if let Some(acc) = claims.get_mut(&cid) {
+                        let eref = s(&e.body, "ref").unwrap_or_default();
+                        // "unparseable" is the honest fallback for a ref no current
+                        // grammar accepts — an old ledger must never panic the fold.
+                        let liveness = crate::verify::EvRef::parse(&eref)
+                            .map(|r| crate::verify::Liveness::of(&r).as_str().to_string())
+                            .unwrap_or_else(|_| "unparseable".into());
                         acc.evidence.push(EvidenceView {
-                            eref: s(&e.body, "ref").unwrap_or_default(),
+                            eref,
                             status: canon_status(
                                 s(&e.body, "status").unwrap_or_else(|| "recorded".into()),
                             ),
@@ -149,6 +158,7 @@ pub fn fold(events: &[Envelope]) -> Derived {
                                 .unwrap_or(false),
                             base: s(&e.body, "base"),
                             drift: None,
+                            liveness,
                         });
                         acc.held = None; // evidence revives a grey/held claim
                         acc.last_activity_seq = e.seq;

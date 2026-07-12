@@ -293,34 +293,34 @@ pub fn verify_cmd(claim_id: Option<String>, json: bool, full: bool) -> Result<()
             }
             if let Ok(r) = crate::verify::EvRef::parse(&ev.eref) {
                 let status = crate::verify::verify_ref(&r, &root);
-                ledger.append_batch(vec![NewEvent {
-                    etype: "verify".into(),
-                    actor: Actor::engine(),
-                    body: serde_json::json!({
-                        "claim": c.id,
-                        "ref": ev.eref,
-                        "status": status,
-                    }),
-                }])?;
+                let liveness = crate::verify::Liveness::of(&r);
                 // drift: the world's movement under the anchor, in commits touching
                 // the cited path — a structural fact, judged by the human.
                 let moved = ev
                     .base
                     .as_deref()
                     .and_then(|base| crate::verify::drift(&root, base, &r));
+
+                let mut body = serde_json::json!({
+                    "claim": c.id,
+                    "ref": ev.eref,
+                    "status": status,
+                    "liveness": liveness.as_str(),
+                });
+                if let Some(base) = &ev.base {
+                    body["base"] = serde_json::json!(base);
+                }
+                if let Some(k) = moved {
+                    body["drift"] = serde_json::json!(k);
+                }
+                ledger.append_batch(vec![NewEvent {
+                    etype: "verify".into(),
+                    actor: Actor::engine(),
+                    body: body.clone(),
+                }])?;
+
                 if json {
-                    let mut check = serde_json::json!({
-                        "claim": c.id,
-                        "ref": ev.eref,
-                        "status": status,
-                    });
-                    if let Some(base) = &ev.base {
-                        check["base"] = serde_json::json!(base);
-                    }
-                    if let Some(k) = moved {
-                        check["drift"] = serde_json::json!(k);
-                    }
-                    checks.push(check);
+                    checks.push(body);
                 } else {
                     match moved {
                         Some(k) if k > 0 => println!(

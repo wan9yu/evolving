@@ -34,17 +34,27 @@ fn git_commit(dir: &std::path::Path, msg: &str) {
     git(dir, &["-c", "commit.gpgsign=false", "commit", "-qm", msg]);
 }
 
-/// The id of the most recently filed claim — the one the test just made.
-fn claim_id(dir: &std::path::Path) -> String {
-    let ledger = std::fs::read_dir(dir.join(".evolving/ledger"))
+fn ledger_path(dir: &std::path::Path) -> std::path::PathBuf {
+    std::fs::read_dir(dir.join(".evolving/ledger"))
         .unwrap()
         .filter_map(|e| e.ok())
         .find(|e| e.path().extension().is_some_and(|x| x == "jsonl"))
         .unwrap()
-        .path();
+        .path()
+}
+
+fn ledger_events(dir: &std::path::Path) -> Vec<serde_json::Value> {
+    std::fs::read_to_string(ledger_path(dir))
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect()
+}
+
+/// The id of the most recently filed claim — the one the test just made.
+fn claim_id(dir: &std::path::Path) -> String {
     let mut last = None;
-    for line in std::fs::read_to_string(&ledger).unwrap().lines() {
-        let v: serde_json::Value = serde_json::from_str(line).unwrap();
+    for v in ledger_events(dir) {
         if v["type"] == "claim" {
             last = Some(v["id"].as_str().unwrap().to_string());
         }
@@ -99,4 +109,57 @@ fn verify_should_skip_self_evident_evidence_by_default_and_include_it_under_full
             .any(|c| c["ref"].as_str().unwrap().starts_with("commit:")),
         "--full must restore the old shape: {fchecks:?}"
     );
+}
+
+#[test]
+fn the_verify_event_should_carry_base_drift_and_liveness() {
+    let dir = fresh_git();
+    std::fs::write(dir.join("a.txt"), "hello\n").unwrap();
+    git_commit(&dir, "one");
+    assert!(run(&dir, &["init"]).status.success());
+    assert!(run(&dir, &["claim", "c", "--by", "agent"]).status.success());
+    let id = claim_id(&dir);
+    assert!(run(&dir, &["evidence", &id, "file:a.txt::hello"])
+        .status
+        .success());
+
+    // move the world under the anchor
+    std::fs::write(dir.join("a.txt"), "hello\nworld\n").unwrap();
+    git_commit(&dir, "two");
+    assert!(run(&dir, &["verify"]).status.success());
+
+    let ev = ledger_events(&dir)
+        .into_iter()
+        .rfind(|e| e["type"] == "verify")
+        .expect("verify must append an event");
+    assert_eq!(ev["body"]["liveness"].as_str().unwrap(), "content");
+    assert_eq!(
+        ev["body"]["drift"].as_u64().unwrap(),
+        1,
+        "one commit touched the cited path"
+    );
+    assert!(
+        ev["body"]["base"].as_str().is_some(),
+        "the filing base must be recorded"
+    );
+}
+
+#[test]
+fn brief_json_should_expose_the_liveness_of_every_anchor() {
+    let dir = fresh_git();
+    std::fs::write(dir.join("a.txt"), "hello\n").unwrap();
+    git_commit(&dir, "one");
+    assert!(run(&dir, &["init"]).status.success());
+    assert!(run(&dir, &["claim", "c", "--by", "agent"]).status.success());
+    let id = claim_id(&dir);
+    assert!(run(&dir, &["evidence", &id, "file:a.txt"]).status.success());
+
+    let out = run(&dir, &["brief", "--json"]);
+    assert!(out.status.success());
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        text.contains("\"liveness\""),
+        "brief --json must carry liveness: {text}"
+    );
+    assert!(text.contains("existence"));
 }

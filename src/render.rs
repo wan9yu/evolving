@@ -50,6 +50,7 @@ fn claim_json(c: &ClaimView) -> serde_json::Value {
                 "ref": e.eref,
                 "status": e.status,
                 "self_evident": e.self_evident,
+                "liveness": e.liveness,
             });
             if let Some(base) = &e.base {
                 v["base"] = serde_json::json!(base);

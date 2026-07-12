@@ -52,6 +52,53 @@ impl EvRef {
     }
 }
 
+/// What it would take for an anchor to go red. A fact about the pointer's
+/// shape — never a judgement about the claim.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Liveness {
+    /// Fails when the cited text changes. The only class that can go red in a
+    /// read-only audit of a tree the agent never writes.
+    Content,
+    /// Fails only if the cited path disappears.
+    Existence,
+    /// Content-addressed; fails only on a history rewrite.
+    Immutable,
+    /// Self-asserted; cannot fail by construction.
+    Asserted,
+}
+
+impl Liveness {
+    pub fn of(r: &EvRef) -> Liveness {
+        match r.kind {
+            RefKind::Metric | RefKind::Url => Liveness::Asserted,
+            RefKind::Commit => Liveness::Immutable,
+            RefKind::Test | RefKind::File | RefKind::Artifact => match r.passline {
+                Some(_) => Liveness::Content,
+                None => Liveness::Existence,
+            },
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Liveness::Content => "content",
+            Liveness::Existence => "existence",
+            Liveness::Immutable => "immutable",
+            Liveness::Asserted => "asserted",
+        }
+    }
+
+    /// One phrasing for the liveness fact everywhere it is shown.
+    pub fn why(&self) -> &'static str {
+        match self {
+            Liveness::Content => "fails when the cited text changes",
+            Liveness::Existence => "fails only if the cited path disappears",
+            Liveness::Immutable => "content-addressed; fails only on a history rewrite",
+            Liveness::Asserted => "self-asserted; cannot fail by construction",
+        }
+    }
+}
+
 /// Check whether a ref's anchor resolves against `repo_root`. Resolution is a
 /// fact about the pointer (exists, matches) — never a verdict on the claim.
 /// V1: Commit → `git rev-parse --verify`; Metric/Url → "recorded" (self-asserted).

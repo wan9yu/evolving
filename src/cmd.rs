@@ -269,7 +269,7 @@ pub fn evidence(claim_id: String, eref: String) -> Result<()> {
 }
 
 /// Re-check anchors for one claim (or all open claims): resolution + drift.
-pub fn verify_cmd(claim_id: Option<String>, json: bool) -> Result<()> {
+pub fn verify_cmd(claim_id: Option<String>, json: bool, full: bool) -> Result<()> {
     let root = find_root();
     let ledger = Ledger::open(&root)?;
     let events = ledger.scan()?;
@@ -284,6 +284,13 @@ pub fn verify_cmd(claim_id: Option<String>, json: bool) -> Result<()> {
     let mut checks: Vec<serde_json::Value> = Vec::new();
     for c in targets {
         for ev in &c.evidence {
+            // Self-evident evidence is not a verification claim — ev says so itself
+            // at the pause: "acknowledging records that work happened; it does not
+            // verify the assertions." Replaying it every round drowns the real
+            // checks in forever-green noise (Run-14: 92.7% of all output).
+            if ev.self_evident && !full {
+                continue;
+            }
             if let Ok(r) = crate::verify::EvRef::parse(&ev.eref) {
                 let status = crate::verify::verify_ref(&r, &root);
                 ledger.append_batch(vec![NewEvent {

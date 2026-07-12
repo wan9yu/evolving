@@ -41,6 +41,10 @@ enum Command {
         claim: Option<String>,
         #[arg(long)]
         json: bool,
+        /// Also re-check self-evident evidence (exhaust commits). Restores the
+        /// pre-0.2.2 output shape.
+        #[arg(long)]
+        full: bool,
     },
     /// The daily glance: returned demands, open claims, grey.
     Brief {
@@ -152,7 +156,7 @@ fn main() {
             claim,
             evidence_ref,
         }) => evolving::cmd::evidence(claim, evidence_ref),
-        Some(Command::Verify { claim, json }) => evolving::cmd::verify_cmd(claim, json),
+        Some(Command::Verify { claim, json, full }) => evolving::cmd::verify_cmd(claim, json, full),
         Some(Command::Brief { json }) => evolving::cmd::brief(json),
         Some(Command::Close {
             claim,

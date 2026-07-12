@@ -1,5 +1,5 @@
 use crate::ledger::{Actor, Ledger, NewEvent};
-use crate::Result;
+use crate::{EvError, Result};
 use std::collections::HashSet;
 use std::io::Read;
 use std::path::Path;
@@ -144,10 +144,12 @@ pub fn sweep(root: &Path, ledger: &Ledger) -> Result<()> {
         })
         .collect();
 
-    // the watermark starts at the head recorded on the most-recent SWEPT marker (not the end
-    // marker); swept markers always carry a concrete resolved sha, so this is unambiguous.
-    // Fall back to ROOT when no swept markers exist yet.
-    let mut watermark: String = events
+    // The watermark is the head of the most recent SWEPT marker (not the end marker);
+    // swept markers always carry a concrete resolved sha, so this is unambiguous. Failing
+    // that, the ledger's BASELINE (where this ledger began). A ledger with neither is a
+    // 0.2.1 ledger: filing ROOT..HEAD there would record every pre-existing commit as this
+    // session's output — a false fact. Refuse and name the remedy.
+    let swept_head: Option<String> = events
         .iter()
         .filter(|e| {
             e.etype == "session"
@@ -159,9 +161,34 @@ pub fn sweep(root: &Path, ledger: &Ledger) -> Result<()> {
             e.body
                 .get("head")
                 .and_then(|h| h.as_str())
-                .map(|h| h.to_string())
+                .map(String::from)
+        });
+
+    let baseline_head: Option<String> = events
+        .iter()
+        .filter(|e| {
+            e.etype == "session"
+                && e.body.get("marker").and_then(|s| s.as_str()) == Some("baseline")
         })
-        .unwrap_or_else(|| "ROOT".to_string());
+        .max_by_key(|e| (e.ts.clone(), e.seq))
+        .and_then(|e| {
+            e.body
+                .get("head")
+                .and_then(|h| h.as_str())
+                .map(String::from)
+        });
+
+    let mut watermark: String = match swept_head.or(baseline_head) {
+        Some(w) => w,
+        None => {
+            return Err(EvError::Refusal(
+                "no baseline marker in this ledger — filing would record pre-existing \
+                 commits as this session's output.\n    \
+                 Run `ev baseline [<sha>]` to record where the ledger began."
+                    .into(),
+            ))
+        }
+    };
 
     // collect unswept end-markers for this writer, ordered by (ts, seq)
     let mut pending: Vec<_> = events

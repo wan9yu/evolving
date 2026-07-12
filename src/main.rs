@@ -78,6 +78,11 @@ enum Command {
         #[arg(long)]
         session: String,
     },
+    /// Record where this ledger began, so exhaust never files pre-existing history.
+    Baseline {
+        /// The commit the ledger started at (default: current HEAD).
+        sha: Option<String>,
+    },
     /// Draw the work line (terminal, or --json [--stable]).
     Line {
         #[arg(long)]
@@ -175,6 +180,7 @@ fn main() {
             i_am_the_human,
         }) => evolving::cmd::pause(boundary, script, i_am_the_human),
         Some(Command::Exhaust { since, session }) => evolving::cmd::exhaust(since, session),
+        Some(Command::Baseline { sha }) => evolving::cmd::baseline(sha),
         Some(Command::Line { json, stable }) => evolving::cmd::line(json, stable),
         Some(Command::Indicator(IndicatorCmd::Declare {
             name,

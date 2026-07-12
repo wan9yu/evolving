@@ -25,6 +25,127 @@ fn repo() -> std::path::PathBuf {
     dir
 }
 
+/// A bare git repo: no commits, no `ev init`. The baseline tests need to observe
+/// what `ev init` itself writes, so they must run it themselves.
+fn fresh_git() -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("ev-exh-{}", ulid::Ulid::new()));
+    std::fs::create_dir_all(&dir).unwrap();
+    git(&dir, &["init", "-q"]);
+    dir
+}
+
+fn git_commit(dir: &std::path::Path, msg: &str) {
+    git(dir, &["add", "-A"]);
+    git(dir, &["-c", "commit.gpgsign=false", "commit", "-qm", msg]);
+}
+
+fn head_sha(dir: &std::path::Path) -> String {
+    let out = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+fn ledger_path(dir: &std::path::Path) -> std::path::PathBuf {
+    std::fs::read_dir(dir.join(".evolving/ledger"))
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .find(|e| e.path().extension().is_some_and(|x| x == "jsonl"))
+        .unwrap()
+        .path()
+}
+
+fn ledger_events(dir: &std::path::Path) -> Vec<serde_json::Value> {
+    std::fs::read_to_string(ledger_path(dir))
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect()
+}
+
+#[test]
+fn init_should_record_a_baseline_at_the_current_head() {
+    let dir = fresh_git();
+    std::fs::write(dir.join("a.txt"), "1\n").unwrap();
+    git_commit(&dir, "pre-existing history");
+    let head = head_sha(&dir);
+
+    assert!(run(&dir, &["init"]).status.success());
+
+    let baseline = ledger_events(&dir)
+        .into_iter()
+        .find(|e| e["type"] == "session" && e["body"]["marker"] == "baseline")
+        .expect("init must record a baseline marker");
+    assert_eq!(baseline["body"]["head"].as_str().unwrap(), head);
+}
+
+#[test]
+fn init_should_record_root_as_the_baseline_in_an_empty_repo() {
+    let dir = fresh_git(); // git init, no commits
+    assert!(run(&dir, &["init"]).status.success());
+
+    let baseline = ledger_events(&dir)
+        .into_iter()
+        .find(|e| e["type"] == "session" && e["body"]["marker"] == "baseline")
+        .expect("init must record a baseline even with no HEAD");
+    assert_eq!(baseline["body"]["head"].as_str().unwrap(), "ROOT");
+}
+
+#[test]
+fn exhaust_should_refuse_when_the_ledger_has_no_baseline() {
+    // A ledger written by 0.2.1 has no baseline marker. Filing ROOT..HEAD would
+    // record pre-existing commits as this session's output — refuse, do not guess.
+    let dir = fresh_git();
+    std::fs::write(dir.join("a.txt"), "1\n").unwrap();
+    git_commit(&dir, "pre-existing history");
+    assert!(run(&dir, &["init"]).status.success());
+
+    // strip the baseline marker to simulate a 0.2.1 ledger
+    let p = ledger_path(&dir);
+    let kept: Vec<String> = std::fs::read_to_string(&p)
+        .unwrap()
+        .lines()
+        .filter(|l| {
+            let v: serde_json::Value = serde_json::from_str(l).unwrap();
+            v["body"]["marker"] != "baseline"
+        })
+        .map(|s| s.to_string())
+        .collect();
+    std::fs::write(&p, kept.join("\n") + "\n").unwrap();
+
+    let out = run(&dir, &["exhaust", "--since", "ROOT", "--session", "s1"]);
+    assert_eq!(out.status.code(), Some(1), "no baseline must be a refusal");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("ev baseline"),
+        "the refusal must name the remedy: {err}"
+    );
+}
+
+#[test]
+fn baseline_should_write_the_marker_so_exhaust_proceeds() {
+    let dir = fresh_git();
+    std::fs::write(dir.join("a.txt"), "1\n").unwrap();
+    git_commit(&dir, "pre-existing history");
+    assert!(run(&dir, &["init"]).status.success());
+    let head = head_sha(&dir);
+
+    // a second baseline is legal (append-only); it re-pins the watermark
+    let out = run(&dir, &["baseline"]);
+    assert!(out.status.success());
+    let markers: Vec<_> = ledger_events(&dir)
+        .into_iter()
+        .filter(|e| e["body"]["marker"] == "baseline")
+        .collect();
+    assert!(markers.len() >= 2);
+    assert_eq!(
+        markers.last().unwrap()["body"]["head"].as_str().unwrap(),
+        head
+    );
+}
+
 #[test]
 fn a_single_commit_window_files_one_self_evident_claim_labeled_by_the_subject() {
     let dir = repo();

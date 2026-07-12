@@ -36,10 +36,57 @@ pub fn init() -> Result<()> {
     )?;
     register_repo(&root)?;
     // touch the writer id so the ledger is usable immediately
-    let _ = crate::ledger::Ledger::open(&root)?;
+    let ledger = crate::ledger::Ledger::open(&root)?;
+    // The baseline: where this ledger began. Without it, the first sweep would
+    // file every pre-existing commit as this session's output — a false fact.
+    write_baseline(&ledger, &root)?;
     println!("initialized .evolving/ at {}", root.display());
     println!("ev refreshes when invoked, not in the background.");
     Ok(())
+}
+
+/// Record where this ledger began: the current HEAD, or the honest literal
+/// "ROOT" when the repo carries no commits yet.
+fn write_baseline(ledger: &Ledger, root: &Path) -> Result<String> {
+    let head = crate::git_output(root, &["rev-parse", "HEAD"]).unwrap_or_else(|| "ROOT".into());
+    ledger.append_batch(vec![NewEvent {
+        etype: "session".into(),
+        actor: Actor::engine(),
+        body: serde_json::json!({ "marker": "baseline", "head": head }),
+    }])?;
+    Ok(head)
+}
+
+/// Record a baseline for a ledger that predates it (0.2.1 and earlier), or
+/// re-pin it. Append-only: an earlier baseline is never rewritten.
+pub fn baseline(sha: Option<String>) -> Result<()> {
+    let root = find_root();
+    let ledger = Ledger::open(&root)?;
+    // the sha the marker actually carries — the message must state that, not HEAD
+    let recorded = match sha {
+        None => write_baseline(&ledger, &root)?,
+        Some(s) => {
+            let resolved =
+                crate::git_output(&root, &["rev-parse", "--verify", &s]).ok_or_else(|| {
+                    EvError::Refusal(format!("{s} does not resolve to a commit in this repo"))
+                })?;
+            ledger.append_batch(vec![NewEvent {
+                etype: "session".into(),
+                actor: Actor::engine(),
+                body: serde_json::json!({ "marker": "baseline", "head": resolved }),
+            }])?;
+            resolved
+        }
+    };
+    println!(
+        "baseline recorded; exhaust windows start after {}",
+        short_sha(&recorded)
+    );
+    Ok(())
+}
+
+fn short_sha(s: &str) -> String {
+    s.chars().take(8).collect()
 }
 
 fn write_if_absent(path: &Path, contents: &str) -> Result<()> {
@@ -399,6 +446,22 @@ pub fn pause(boundary: bool, script: bool, i_am_the_human: bool) -> Result<()> {
 pub fn exhaust(since: String, session: String) -> Result<()> {
     let root = find_root();
     let ledger = Ledger::open(&root)?;
+    // `--since ROOT` on a ledger with no baseline is the Run-14 false fact.
+    if since == "ROOT" {
+        let events = ledger.scan()?;
+        let has_baseline = events.iter().any(|e| {
+            e.etype == "session"
+                && e.body.get("marker").and_then(|s| s.as_str()) == Some("baseline")
+        });
+        if !has_baseline {
+            return Err(EvError::Refusal(
+                "no baseline marker in this ledger — filing --since ROOT would record \
+                 pre-existing commits as this session's output.\n    \
+                 Run `ev baseline [<sha>]` to record where the ledger began."
+                    .into(),
+            ));
+        }
+    }
     let window = crate::exhaust::discover(&root, &since, "HEAD", &session)?;
     match crate::exhaust::file_window(&ledger, &root, &window, None)? {
         Some(id) => println!(

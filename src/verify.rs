@@ -99,6 +99,39 @@ impl Liveness {
     }
 }
 
+/// The attach-time guard. Refuses shapes ev cannot mean, and teaches the form
+/// it can. Called ONLY from `verify_and_record` — never from `EvRef::parse`,
+/// which must stay total so a 0.2.1 ledger holding `file:<path>:150` still
+/// reads back (as `unreachable`) instead of erroring.
+pub fn guard_attach(raw: &str) -> Result<()> {
+    let r = EvRef::parse(raw)?;
+    if !matches!(r.kind, RefKind::Test | RefKind::File | RefKind::Artifact) {
+        return Ok(());
+    }
+    if r.passline.is_some() {
+        return Ok(());
+    }
+    // A single-colon `<path>:<N>` tail: the caller almost certainly meant a line
+    // number. ev anchors by content, so `:N` would silently become part of the
+    // path and the anchor would resolve to nothing.
+    if let Some((path, tail)) = r.payload.rsplit_once(':') {
+        if !tail.is_empty() && tail.chars().all(|c| c.is_ascii_digit()) {
+            let scheme = match r.kind {
+                RefKind::Test => "test",
+                RefKind::Artifact => "artifact",
+                _ => "file",
+            };
+            return Err(EvError::Refusal(format!(
+                "{raw} — path not found.\n    \
+                 If {tail} is a line number: ev anchors by content, not by line \
+                 (a line number stays green after the code moves).\n    \
+                 Use {scheme}:{path}::<text on that line>."
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Check whether a ref's anchor resolves against `repo_root`. Resolution is a
 /// fact about the pointer (exists, matches) — never a verdict on the claim.
 /// V1: Commit → `git rev-parse --verify`; Metric/Url → "recorded" (self-asserted).
@@ -173,6 +206,7 @@ pub fn verify_and_record(
     self_evident: bool,
     actor: Actor,
 ) -> Result<String> {
+    guard_attach(raw_ref)?;
     let r = EvRef::parse(raw_ref)?;
     let status = verify_ref(&r, repo_root);
     let mut body = serde_json::json!({

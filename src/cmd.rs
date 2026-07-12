@@ -133,6 +133,9 @@ pub fn claim(args: ClaimArgs) -> Result<()> {
             eref,
             verdict
         );
+        if let Some(h) = anchor_hint(eref) {
+            println!("{h}");
+        }
     } else {
         println!(
             "claim {} (bare — needs evidence to close)",
@@ -170,6 +173,25 @@ fn agent_id() -> Option<String> {
 
 // ── evidence + verify verbs ───────────────────────────────────────────────────
 
+/// The advisory line for an anchor that can only fail on deletion. `None` for
+/// every other class — a hint that fires on everything teaches nothing.
+pub fn anchor_hint(eref: &str) -> Option<String> {
+    let r = crate::verify::EvRef::parse(eref).ok()?;
+    if crate::verify::Liveness::of(&r) != crate::verify::Liveness::Existence {
+        return None;
+    }
+    let scheme = match r.kind {
+        crate::verify::RefKind::Test => "test",
+        crate::verify::RefKind::Artifact => "artifact",
+        _ => "file",
+    };
+    Some(format!(
+        "  ⚠ existence anchor: {}.\n    For an anchor that fails when the cited code changes: {scheme}:{}::<text>",
+        crate::verify::Liveness::Existence.why(),
+        r.payload
+    ))
+}
+
 /// Attach a typed evidence ref to a claim. Agents are permitted.
 pub fn evidence(claim_id: String, eref: String) -> Result<()> {
     let root = find_root();
@@ -178,6 +200,9 @@ pub fn evidence(claim_id: String, eref: String) -> Result<()> {
     let actor = evidence_actor();
     let verdict = crate::verify::verify_and_record(&ledger, &root, &full, &eref, false, actor)?;
     println!("evidence attached to {} → {verdict}", short(&full));
+    if let Some(h) = anchor_hint(&eref) {
+        println!("{h}");
+    }
     Ok(())
 }
 

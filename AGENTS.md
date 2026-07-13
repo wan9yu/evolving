@@ -19,14 +19,19 @@ When you finish a unit of work:
 Filing discipline — match the pointer to the kind of claim (declare it with `--kind`):
 
 - A **defect** claim ("X is broken / leaks / is unreachable") should carry a runnable pointer —
-  `test:<path>::<line>` naming a test or reproduction, not just the file where the bug lives.
+  `test:<path>::<text from the reproducing line>` naming a test or reproduction, not just the file
+  where the bug lives. ev anchors by **content, not by line number**: `::<text>` goes red when the
+  cited line changes, while a bare `file:<path>` goes red only if the file is deleted.
 - A **priority** claim ("the next version should X") cannot be proven by a resolving anchor: the
   anchor only shows the gap's neighborhood exists. Before filing one, search the target for X
   already shipped or already rejected (code, docs, design notes), and attach what you searched and
   found as additional evidence. If X already exists, do not file the claim.
 
-Evidence pointer types: `commit:<sha>` · `test:<path>[::<pass-line>]` · `file:<path>[::<line>]` ·
-`artifact:<name>` · `metric:<text>` (recorded, not verified) · `url:<text>` (recorded, not verified).
+Evidence pointer types: `commit:<sha>` · `test:<path>[::<text on the cited line>]` ·
+`file:<path>[::<text on the cited line>]` · `artifact:<name>` · `metric:<text>` (recorded, not
+verified) · `url:<text>` (recorded, not verified). The `::` payload is **text to match, never a line
+number** — `file:src/x.rs:56` is refused, `file:src/x.rs::fn parse(` is the anchor that goes red when
+that line changes.
 
 On machines where the session hooks are wired (`ev hook install`, once per machine), your session's
 commits are captured automatically as self-evident claims — so you do not have to file a claim for

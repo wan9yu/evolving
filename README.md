@@ -57,8 +57,13 @@ Sessions also leave exhaust: your commits are captured automatically as self-evi
 don't file one for every commit — you file one when you want to assert something a bare commit doesn't
 say, and back it with a pointer.
 
-Evidence pointer types: `commit:<sha>` · `test:<path>[::<pass-line>]` · `file:<path>[::<line>]` ·
-`artifact:<name>[::<line>]` · `metric:<text>` and `url:<text>` (recorded, not checked).
+Evidence pointer types: `commit:<sha>` · `test:<path>[::<text on the cited line>]` ·
+`file:<path>[::<text on the cited line>]` · `artifact:<name>[::<text on the cited line>]` ·
+`metric:<text>` and `url:<text>` (recorded, not checked).
+
+The `::` payload is text to match, **never a line number** — ev anchors by content. `file:src/x.rs:56`
+is refused; `file:src/x.rs::fn parse(` goes red when that line changes, while a bare `file:src/x.rs`
+goes red only if the file is deleted.
 
 ## How it works
 

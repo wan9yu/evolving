@@ -77,11 +77,16 @@ Exit codes: 0 done · 1 honest refusal · 2 error. State-reading output ends wit
 
 ## Evidence, resolution, drift
 
-- Typed refs: `commit:<sha>` · `test:<path>[::<pass-line>]` · `file:<path>[::<line>]` ·
-  `artifact:<name>[::<pass-line>]` · `metric:<text>` · `url:<text>`. Metric and url are
+- Typed refs: `commit:<sha>` · `test:<path>[::<text on the cited line>]` ·
+  `file:<path>[::<text on the cited line>]` · `artifact:<name>[::<text on the cited line>]` ·
+  `metric:<text>` · `url:<text>`. Metric and url are
   **recorded-only** — no verifier, and never any network.
+- The `::` payload is text to match, **never a line number**: ev anchors by content, so a line number
+  would stay green after the code moved. `file:<path>:<N>` and `test:<path>:<N>` are refused at filing
+  (0.2.2; before that the `:<N>` was silently folded into the path and the anchor resolved to nothing).
+  `::<text>` fails when the cited line changes; a bare `file:<path>` fails only if the path disappears.
 - Anchor resolution: commits resolve via `git rev-parse --verify <sha>^{commit}`; files, tests, and
-  artifacts resolve as exists → readable (hashed) → named pass-line found. Statuses: `resolves` ·
+  artifacts resolve as exists → readable (hashed) → the named text found on some line. Statuses: `resolves` ·
   `failed` · `unreachable` (a pointer that cannot resolve *here* — not a failure) · `recorded`.
   **Resolution is a fact about the pointer, never a verdict on the claim** — the status word is
   chosen so a resolve-check cannot be read as "the claim is verified." (Ledgers are append-only;

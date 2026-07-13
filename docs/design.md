@@ -60,15 +60,18 @@ idempotency key, `--kind` to declare what kind of claim this is — e.g. defect,
 `evidence <claim> <ref>` (the demand-answer verb; agents permitted) ·
 `verify [<claim>]` (`--json`; re-check anchors and report drift; each check appends a `verify` event,
 so disagreeing re-checks sit beside their history; self-evident evidence — the `commit:` refs exhaust
-files about itself — is not re-checked by default, since it is content-addressed and fails only on a
-history rewrite; `--full` re-checks it anyway. By default, ev verify no longer detects history rewrites
-touching old exhaust windows; `ev verify --full` is the path that still detects them.) ·
+files about itself — is not re-checked by default, since it is content-addressed and fails only if the
+commit is absent from this clone; `--full` re-checks it anyway. By default, ev verify no longer polls
+for that absence on old exhaust windows; `ev verify --full` is the path that still does.) ·
 `close <claim>` (requires evidence, or the explicit exit
 `--dead --reason <text>`; a bare close is refused) · `hold <claim> --reason` · `demand <claim>` ·
 `pause` (`--boundary` on the snapshot day; `--script` for piped stdin) · `brief` (`--json`; ≤2KB text) ·
 `line` (`--json [--stable]`) · `indicator declare|retire` (ceiling of four) ·
-`hook install|uninstall|session-start|session-end` · `doctor` · `exhaust --since <ref> --session <id>`
-(plumbing).
+`hook install|uninstall|session-start|session-end` · `doctor` (ledger integrity, plus two
+never-gating census lines: anchor liveness and ref types in use) ·
+`baseline [<sha>]` (record where the ledger began; default HEAD — `ev init` records it, an upgraded
+0.2.1 ledger needs it once) · `exhaust --since <ref> --session <id>` (plumbing; `--since ROOT` starts
+the window at the baseline, so a repo's pre-existing history is never filed as a session's output).
 
 Closure verbs (`close`, `hold`, `demand`, `pause`, `indicator`) refuse under the `CLAUDECODE`
 environment variable unless `--i-am-the-human` is passed — a provenance courtesy, not security.

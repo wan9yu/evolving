@@ -128,14 +128,20 @@ pub fn sweep(root: &Path, ledger: &Ledger) -> Result<()> {
     let events = ledger.scan()?;
     let my_writer = ledger.writer_id();
 
-    // collect session ids already marked swept by this writer
-    let swept: HashSet<String> = events
+    // this writer's swept markers — one filter: the swept session ids and the
+    // watermark below are two readings of the same rows.
+    let swept_markers: Vec<&crate::ledger::Envelope> = events
         .iter()
         .filter(|e| {
             e.etype == "session"
                 && e.writer == my_writer
                 && e.body.get("marker").and_then(|s| s.as_str()) == Some("swept")
         })
+        .collect();
+
+    // session ids already marked swept by this writer
+    let swept: HashSet<String> = swept_markers
+        .iter()
         .filter_map(|e| {
             e.body
                 .get("session")
@@ -150,13 +156,8 @@ pub fn sweep(root: &Path, ledger: &Ledger) -> Result<()> {
     // lookup, so the sweep and `ev exhaust` can never disagree about it. A ledger with
     // neither is a 0.2.1 ledger: it cannot say where this session's commits begin, so the
     // sweep refuses rather than guess, and names the remedy.
-    let swept_head: Option<String> = events
+    let swept_head: Option<String> = swept_markers
         .iter()
-        .filter(|e| {
-            e.etype == "session"
-                && e.writer == my_writer
-                && e.body.get("marker").and_then(|s| s.as_str()) == Some("swept")
-        })
         .max_by_key(|e| (e.ts.clone(), e.seq))
         .and_then(|e| {
             e.body

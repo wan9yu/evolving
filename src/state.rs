@@ -25,8 +25,9 @@ pub struct EvidenceView {
     /// the base. Filled by drift annotation at read time; the fold leaves it None.
     pub drift: Option<u32>,
     /// What it would take for this anchor to go red — a fact about the pointer's
-    /// shape. Derived from the ref, so the fold stays pure.
-    pub liveness: String,
+    /// shape. Derived from the ref, so the fold stays pure. Carried as the class
+    /// itself, so a reader that counts them cannot silently bucket an unknown one.
+    pub liveness: crate::verify::Liveness,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -141,11 +142,11 @@ pub fn fold(events: &[Envelope]) -> Derived {
                 if let Some(cid) = s(&e.body, "claim") {
                     if let Some(acc) = claims.get_mut(&cid) {
                         let eref = s(&e.body, "ref").unwrap_or_default();
-                        // "unparseable" is the honest fallback for a ref no current
+                        // Unparseable is the honest fallback for a ref no current
                         // grammar accepts — an old ledger must never panic the fold.
                         let liveness = crate::verify::EvRef::parse(&eref)
-                            .map(|r| crate::verify::Liveness::of(&r).as_str().to_string())
-                            .unwrap_or_else(|_| "unparseable".into());
+                            .map(|r| crate::verify::Liveness::of(&r))
+                            .unwrap_or(crate::verify::Liveness::Unparseable);
                         acc.evidence.push(EvidenceView {
                             eref,
                             status: canon_status(

@@ -50,15 +50,22 @@ pub fn init() -> Result<()> {
     Ok(())
 }
 
-/// Record where this ledger began: the current HEAD, or the honest literal
-/// "ROOT" when the repo carries no commits yet.
-fn write_baseline(ledger: &Ledger, root: &Path) -> Result<String> {
-    let head = crate::git_output(root, &["rev-parse", "HEAD"]).unwrap_or_else(|| "ROOT".into());
+/// Write the baseline marker for an already-resolved sha — the one construction
+/// of the marker, so every path that records a beginning writes the same shape.
+fn write_baseline_at(ledger: &Ledger, head: &str) -> Result<()> {
     ledger.append_batch(vec![NewEvent {
         etype: "session".into(),
         actor: Actor::engine(),
         body: serde_json::json!({ "marker": "baseline", "head": head }),
     }])?;
+    Ok(())
+}
+
+/// Record where this ledger began: the current HEAD, or the honest literal
+/// "ROOT" when the repo carries no commits yet.
+fn write_baseline(ledger: &Ledger, root: &Path) -> Result<String> {
+    let head = crate::git_output(root, &["rev-parse", "HEAD"]).unwrap_or_else(|| "ROOT".into());
+    write_baseline_at(ledger, &head)?;
     Ok(head)
 }
 
@@ -75,11 +82,7 @@ pub fn baseline(sha: Option<String>) -> Result<()> {
                 crate::git_output(&root, &["rev-parse", "--verify", &s]).ok_or_else(|| {
                     EvError::Refusal(format!("{s} does not resolve to a commit in this repo"))
                 })?;
-            ledger.append_batch(vec![NewEvent {
-                etype: "session".into(),
-                actor: Actor::engine(),
-                body: serde_json::json!({ "marker": "baseline", "head": resolved }),
-            }])?;
+            write_baseline_at(&ledger, &resolved)?;
             resolved
         }
     };
@@ -285,11 +288,7 @@ pub fn anchor_hint(eref: &str) -> Option<String> {
     if crate::verify::Liveness::of(&r) != crate::verify::Liveness::Existence {
         return None;
     }
-    let scheme = match r.kind {
-        crate::verify::RefKind::Test => "test",
-        crate::verify::RefKind::Artifact => "artifact",
-        _ => "file",
-    };
+    let scheme = r.kind.scheme();
     Some(format!(
         "  ⚠ existence anchor: {}.\n    For an anchor that fails when the cited code changes: {scheme}:{}::<text>",
         crate::verify::Liveness::Existence.why(),
@@ -679,7 +678,7 @@ pub fn doctor() -> Result<()> {
 /// `closed` (closed or dead). A census over the open bucket alone would undercount
 /// in silence — the exact failure this command exists to surface.
 fn print_liveness_census(events: &[crate::ledger::Envelope]) {
-    use crate::verify::{EvRef, RefKind};
+    use crate::verify::{EvRef, Liveness, RefKind};
     let d = crate::state::fold(events);
     let mut content = 0usize;
     let mut existence = 0usize;
@@ -710,15 +709,17 @@ fn print_liveness_census(events: &[crate::ledger::Envelope]) {
         for ev in &c.evidence {
             // the fold already carries the class; re-deriving it here is a second
             // source of truth that can drift from the one `brief --json` renders.
-            match ev.liveness.as_str() {
-                "content" => {
+            // Exhaustive: a `_` arm in the one command that exists to prevent
+            // silent undercounts would file a new class as `unparseable` unsaid.
+            match ev.liveness {
+                Liveness::Content => {
                     content += 1;
                     has_content = true;
                 }
-                "existence" => existence += 1,
-                "immutable" => immutable += 1,
-                "asserted" => asserted += 1,
-                _ => unparseable += 1,
+                Liveness::Existence => existence += 1,
+                Liveness::Immutable => immutable += 1,
+                Liveness::Asserted => asserted += 1,
+                Liveness::Unparseable => unparseable += 1,
             }
             if let Ok(r) = EvRef::parse(&ev.eref) {
                 match r.kind {
@@ -751,7 +752,8 @@ fn print_liveness_census(events: &[crate::ledger::Envelope]) {
     }
     if asserted > 0 {
         println!(
-            "  ⚠ {asserted} anchor(s) are metric:/url: — self-asserted; cannot fail by construction."
+            "  ⚠ {asserted} anchor(s) are metric:/url: — {}.",
+            Liveness::Asserted.why()
         );
     }
 }

@@ -1,5 +1,6 @@
 use crate::ledger::{Actor, Ledger, NewEvent};
 use crate::{EvError, Result};
+use serde::Serialize;
 use std::path::Path;
 use std::process::Command;
 
@@ -11,6 +12,22 @@ pub enum RefKind {
     Artifact,
     Metric,
     Url,
+}
+
+impl RefKind {
+    /// The scheme word a ref of this kind is written with — one spelling for every
+    /// site that prints one back. Exhaustive: a new variant names itself here
+    /// rather than being printed as some other scheme's word.
+    pub fn scheme(&self) -> &'static str {
+        match self {
+            RefKind::Commit => "commit",
+            RefKind::Test => "test",
+            RefKind::File => "file",
+            RefKind::Artifact => "artifact",
+            RefKind::Metric => "metric",
+            RefKind::Url => "url",
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -53,8 +70,10 @@ impl EvRef {
 }
 
 /// What it would take for an anchor to go red. A fact about the pointer's
-/// shape — never a judgement about the claim.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// shape — never a judgement about the claim. The five names are the ones the
+/// JSON surfaces carry; kebab-case leaves each single word exactly as written.
+#[derive(Serialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
 pub enum Liveness {
     /// Fails when the cited text changes. The only class that can go red in a
     /// read-only audit of a tree the agent never writes.
@@ -67,6 +86,10 @@ pub enum Liveness {
     Immutable,
     /// Self-asserted; cannot fail by construction.
     Asserted,
+    /// A ref no current grammar accepts — the honest reading of a shape an older
+    /// ledger recorded. `Liveness::of` never returns it; the fold assigns it where
+    /// the parse itself fails, so the class is carried rather than dropped.
+    Unparseable,
 }
 
 impl Liveness {
@@ -87,6 +110,7 @@ impl Liveness {
             Liveness::Existence => "existence",
             Liveness::Immutable => "immutable",
             Liveness::Asserted => "asserted",
+            Liveness::Unparseable => "unparseable",
         }
     }
 
@@ -99,6 +123,7 @@ impl Liveness {
                 "content-addressed; fails only if the commit is absent from this clone"
             }
             Liveness::Asserted => "self-asserted; cannot fail by construction",
+            Liveness::Unparseable => "no current ref grammar accepts this pointer",
         }
     }
 }
@@ -106,25 +131,23 @@ impl Liveness {
 /// The attach-time guard. Refuses shapes ev cannot mean, and teaches the form
 /// it can. Called ONLY from `verify_and_record` — never from `EvRef::parse`,
 /// which must stay total so a 0.2.1 ledger holding `file:<path>:150` still
-/// reads back (as `unreachable`) instead of erroring.
-pub fn guard_attach(raw: &str) -> Result<()> {
+/// reads back (as `unreachable`) instead of erroring. Returns the ref it cleared,
+/// so the caller need not parse the string twice; `cmd::claim` wants only the
+/// refusal and drops the value.
+pub fn guard_attach(raw: &str) -> Result<EvRef> {
     let r = EvRef::parse(raw)?;
     if !matches!(r.kind, RefKind::Test | RefKind::File | RefKind::Artifact) {
-        return Ok(());
+        return Ok(r);
     }
     if r.passline.is_some() {
-        return Ok(());
+        return Ok(r);
     }
     // A single-colon `<path>:<N>` tail: the caller almost certainly meant a line
     // number. ev anchors by content, so `:N` would silently become part of the
     // path and the anchor would resolve to nothing.
     if let Some((path, tail)) = r.payload.rsplit_once(':') {
         if !tail.is_empty() && tail.chars().all(|c| c.is_ascii_digit()) {
-            let scheme = match r.kind {
-                RefKind::Test => "test",
-                RefKind::Artifact => "artifact",
-                _ => "file",
-            };
+            let scheme = r.kind.scheme();
             return Err(EvError::Refusal(format!(
                 "{raw} — refused: looks like a line number, not a content anchor.\n    \
                  ev anchors by content, not by line (a line number stays green after the code moves).\n    \
@@ -132,7 +155,7 @@ pub fn guard_attach(raw: &str) -> Result<()> {
             )));
         }
     }
-    Ok(())
+    Ok(r)
 }
 
 /// Check whether a ref's anchor resolves against `repo_root`. Resolution is a
@@ -209,8 +232,7 @@ pub fn verify_and_record(
     self_evident: bool,
     actor: Actor,
 ) -> Result<String> {
-    guard_attach(raw_ref)?;
-    let r = EvRef::parse(raw_ref)?;
+    let r = guard_attach(raw_ref)?;
     let status = verify_ref(&r, repo_root);
     let mut body = serde_json::json!({
         "claim": claim_id,

@@ -306,6 +306,56 @@ pub fn fold(events: &[Envelope]) -> Derived {
     out
 }
 
+// ── the baseline: where the ledger began ──────────────────────────────────────
+// A fact about an event stream, not a verb — so it reads off `&[Envelope]` here,
+// beside the fold, rather than from the CLI layer that happens to print it.
+
+/// The `head` recorded by the most recent baseline marker — a `session` event
+/// whose body is `{"marker":"baseline","head":<sha|"ROOT">}`. `None` when the
+/// ledger carries no baseline at all.
+///
+/// The one lookup for every site that must agree on where the ledger began:
+/// `hooks::sweep` (the watermark's fallback), `cmd::exhaust` (the start of a
+/// `--since ROOT` window), `cmd::init` (skip a redundant write) and `cmd::doctor`
+/// (report the ledger's shape). Two lookups could disagree; one cannot.
+///
+/// `"ROOT"` is a truthful value, not an absence: an `ev init` in a repo with no
+/// commits records it, and a window that starts there covers the whole history
+/// precisely because the ledger predates none of it.
+pub(crate) fn baseline_head(events: &[Envelope]) -> Option<String> {
+    events
+        .iter()
+        .filter(|e| {
+            e.etype == "session"
+                && e.body.get("marker").and_then(|s| s.as_str()) == Some("baseline")
+        })
+        .max_by_key(|e| (e.ts.clone(), e.seq))
+        .and_then(|e| {
+            e.body
+                .get("head")
+                .and_then(|h| h.as_str())
+                .map(String::from)
+        })
+}
+
+/// Whether the ledger already carries a baseline marker. Expressed in terms of
+/// `baseline_head` so the predicate and the value can never disagree.
+pub(crate) fn has_baseline(events: &[Envelope]) -> bool {
+    baseline_head(events).is_some()
+}
+
+/// The refusal a ledger with no baseline earns: the shape fact ev has checked
+/// (the marker is absent), never a consequence it has not (what would be filed).
+/// One string, so `cmd::exhaust` and `hooks::sweep` refuse in the same words.
+pub(crate) fn no_baseline_refusal() -> crate::EvError {
+    crate::EvError::Refusal(
+        "this ledger carries no baseline marker; ev cannot tell where the session's own \
+         commits begin.\n    \
+         Run `ev baseline [<sha>]` to record where the ledger began."
+            .into(),
+    )
+}
+
 fn derive_state(a: &ClaimAcc, boundaries_open: u32) -> ClaimState {
     if a.dead {
         return ClaimState::Dead;

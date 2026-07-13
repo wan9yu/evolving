@@ -1,5 +1,5 @@
 use crate::ledger::{Actor, Ledger, NewEvent};
-use crate::{EvError, Result};
+use crate::Result;
 use std::collections::HashSet;
 use std::io::Read;
 use std::path::Path;
@@ -166,17 +166,9 @@ pub fn sweep(root: &Path, ledger: &Ledger) -> Result<()> {
                 .map(String::from)
         });
 
-    let mut watermark: String = match swept_head.or_else(|| crate::cmd::baseline_head(&events)) {
-        Some(w) => w,
-        None => {
-            return Err(EvError::Refusal(
-                "this ledger carries no baseline marker; ev cannot tell where the session's \
-                 own commits begin.\n    \
-                 Run `ev baseline [<sha>]` to record where the ledger began."
-                    .into(),
-            ))
-        }
-    };
+    let mut watermark: String = swept_head
+        .or_else(|| crate::state::baseline_head(&events))
+        .ok_or_else(crate::state::no_baseline_refusal)?;
 
     // collect unswept end-markers for this writer, ordered by (ts, seq)
     let mut pending: Vec<_> = events

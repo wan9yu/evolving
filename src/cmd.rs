@@ -42,7 +42,7 @@ pub fn init() -> Result<()> {
     // init is idempotent (write_if_absent, ensure_line above): a re-run must
     // not append a second baseline, or the watermark jumps forward and the
     // commits between the two runs are never filed by any future sweep.
-    if !has_baseline(&ledger.scan()?) {
+    if !crate::state::has_baseline(&ledger.scan()?) {
         write_baseline(&ledger, &root)?;
     }
     println!("initialized .evolving/ at {}", root.display());
@@ -95,51 +95,6 @@ pub fn baseline(sha: Option<String>) -> Result<()> {
 
 fn short_sha(s: &str) -> String {
     s.chars().take(8).collect()
-}
-
-/// The `head` recorded by the most recent baseline marker — a `session` event
-/// whose body is `{"marker":"baseline","head":<sha|"ROOT">}`. `None` when the
-/// ledger carries no baseline at all.
-///
-/// The one lookup for every site that must agree on where the ledger began:
-/// `hooks::sweep` (the watermark's fallback), `cmd::exhaust` (the start of a
-/// `--since ROOT` window), `cmd::init` (skip a redundant write) and `cmd::doctor`
-/// (report the ledger's shape). Two lookups could disagree; one cannot.
-///
-/// `"ROOT"` is a truthful value, not an absence: an `ev init` in a repo with no
-/// commits records it, and a window that starts there covers the whole history
-/// precisely because the ledger predates none of it.
-pub(crate) fn baseline_head(events: &[crate::ledger::Envelope]) -> Option<String> {
-    events
-        .iter()
-        .filter(|e| {
-            e.etype == "session"
-                && e.body.get("marker").and_then(|s| s.as_str()) == Some("baseline")
-        })
-        .max_by_key(|e| (e.ts.clone(), e.seq))
-        .and_then(|e| {
-            e.body
-                .get("head")
-                .and_then(|h| h.as_str())
-                .map(String::from)
-        })
-}
-
-/// Whether the ledger already carries a baseline marker. Expressed in terms of
-/// `baseline_head` so the predicate and the value can never disagree.
-fn has_baseline(events: &[crate::ledger::Envelope]) -> bool {
-    baseline_head(events).is_some()
-}
-
-/// The refusal a ledger with no baseline earns: the shape fact ev has checked
-/// (the marker is absent), never a consequence it has not (what would be filed).
-fn no_baseline_refusal() -> EvError {
-    EvError::Refusal(
-        "this ledger carries no baseline marker; ev cannot tell where the session's own \
-         commits begin.\n    \
-         Run `ev baseline [<sha>]` to record where the ledger began."
-            .into(),
-    )
 }
 
 fn write_if_absent(path: &Path, contents: &str) -> Result<()> {
@@ -517,7 +472,8 @@ pub fn exhaust(since: String, session: String) -> Result<()> {
     // repo's first commit IS the ledger's beginning and the whole history is the
     // truthful window. A ledger with no baseline cannot answer the question at all.
     let since = if since == "ROOT" {
-        baseline_head(&ledger.scan()?).ok_or_else(no_baseline_refusal)?
+        crate::state::baseline_head(&ledger.scan()?)
+            .ok_or_else(crate::state::no_baseline_refusal)?
     } else {
         since
     };
@@ -651,7 +607,7 @@ pub fn doctor() -> Result<()> {
     // Facts, not verdicts: the two lines below never gate. They report what the
     // ledger's shape already implies but no command has been saying out loud.
     print_liveness_census(&events);
-    if !has_baseline(&events) {
+    if !crate::state::has_baseline(&events) {
         // The two paths that need the baseline are the session-end sweep and
         // `ev exhaust --since ROOT`; `ev exhaust --since <sha>` carries its own
         // start and files without one. State only what is checked here.

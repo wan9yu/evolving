@@ -217,8 +217,16 @@ pub fn claim(args: ClaimArgs) -> Result<()> {
         body,
     }];
 
+    // The attach guard runs BEFORE the claim is written. `verify_and_record` can refuse
+    // an inline --evidence ref (a line number, an unknown scheme); the claim's batch is a
+    // separate atomic write, so refusing after it would leave a bare claim behind on every
+    // attempt — a refused ref must cost the ledger nothing.
+    if let Some(eref) = &args.evidence {
+        crate::verify::guard_attach(eref)?;
+    }
+
     // an inline --evidence attaches an evidence event referencing the just-minted claim.
-    // Because the batch is one atomic write, we mint the claim first, then reference it.
+    // Because the batch is one atomic write, the claim is minted first, then referenced.
     let minted = ledger.append_batch(batch)?;
     if let Some(eref) = &args.evidence {
         let claim_id = &minted[0].id;

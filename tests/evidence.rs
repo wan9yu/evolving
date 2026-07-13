@@ -98,6 +98,51 @@ fn evidence_should_refuse_a_line_number_ref_and_teach_the_content_anchor() {
     );
 }
 
+/// A refused ref must cost the ledger nothing. `ev claim --evidence` writes the claim
+/// and the evidence in two separate atomic batches, so a guard that fired after the
+/// first would leave a bare claim behind on every attempt — and the guard fires on the
+/// single likeliest typo this release exists to catch. Append-only means an orphan is
+/// forever.
+#[test]
+fn a_refused_inline_evidence_ref_leaves_no_claim_in_the_ledger() {
+    let dir = fresh_git();
+    std::fs::write(dir.join("foo.rs"), "fn bar() {}\n").unwrap();
+
+    let out = run(
+        &dir,
+        &[
+            "claim",
+            "typo",
+            "--by",
+            "agent",
+            "--evidence",
+            "file:foo.rs:42",
+        ],
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "a line-number ref must be refused"
+    );
+
+    let ledger = std::fs::read_dir(dir.join(".evolving/ledger"))
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .find(|e| e.path().extension().is_some_and(|x| x == "jsonl"))
+        .unwrap()
+        .path();
+    let claims: Vec<serde_json::Value> = std::fs::read_to_string(&ledger)
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap())
+        .filter(|v| v["type"] == "claim" || v["type"] == "evidence")
+        .collect();
+    assert!(
+        claims.is_empty(),
+        "the refusal must write nothing at all: {claims:?}"
+    );
+}
+
 #[test]
 fn evidence_should_hint_when_an_anchor_can_only_fail_on_deletion() {
     let dir = fresh_git();

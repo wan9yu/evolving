@@ -601,15 +601,89 @@ pub fn doctor() -> Result<()> {
             events.len(),
             claim_ids.len()
         );
-        Ok(())
     } else {
         for p in &problems {
             println!("• {p}");
         }
+    }
+
+    // Facts, not verdicts: the two lines below never gate. They report what the
+    // ledger's shape already implies but no command has been saying out loud.
+    print_liveness_census(&events);
+    if !has_baseline(&events) {
+        println!(
+            "no baseline marker: exhaust will not file a window. \
+             Run `ev baseline [<sha>]` to record where the ledger began."
+        );
+    }
+
+    if problems.is_empty() {
+        Ok(())
+    } else {
         Err(EvError::Failure(format!(
             "{} problem(s) found",
             problems.len()
         )))
+    }
+}
+
+/// The liveness census: what it would take for each recorded anchor to go red.
+/// Facts only — a count and one plain sentence. Never a score, never a gate.
+///
+/// Scope is every claim the fold knows: `claims` (open), `grey` (held) and
+/// `closed` (closed or dead). A census over the open bucket alone would undercount
+/// in silence — the exact failure this command exists to surface.
+fn print_liveness_census(events: &[crate::ledger::Envelope]) {
+    use crate::verify::{EvRef, Liveness};
+    let d = crate::state::fold(events);
+    let mut content = 0usize;
+    let mut existence = 0usize;
+    let mut immutable = 0usize;
+    let mut asserted = 0usize;
+    // claims whose every anchor is incapable of failing short of a deletion
+    let mut claims_total = 0usize;
+    let mut claims_deletion_only = 0usize;
+
+    for c in d.claims.iter().chain(&d.grey).chain(&d.closed) {
+        if c.evidence.is_empty() {
+            continue;
+        }
+        claims_total += 1;
+        let mut has_content = false;
+        for ev in &c.evidence {
+            let class = match EvRef::parse(&ev.eref) {
+                Ok(r) => Liveness::of(&r),
+                Err(_) => continue,
+            };
+            match class {
+                Liveness::Content => {
+                    content += 1;
+                    has_content = true;
+                }
+                Liveness::Existence => existence += 1,
+                Liveness::Immutable => immutable += 1,
+                Liveness::Asserted => asserted += 1,
+            }
+        }
+        if !has_content {
+            claims_deletion_only += 1;
+        }
+    }
+    if claims_total == 0 {
+        return;
+    }
+    println!(
+        "anchor liveness (every claim, open and closed): content {content} · existence {existence} · immutable {immutable} · asserted {asserted}"
+    );
+    if claims_deletion_only > 0 {
+        println!(
+            "  ⚠ {claims_deletion_only} of {claims_total} claims rest only on anchors that cannot fail unless a file is deleted."
+        );
+    }
+    if asserted > 0 {
+        println!(
+            "  ⚠ {asserted} anchor(s) are metric:/url: — self-asserted; cannot fail by construction."
+        );
     }
 }
 

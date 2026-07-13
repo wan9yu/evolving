@@ -147,7 +147,7 @@ fn doctor_should_report_the_liveness_census_of_every_anchor() {
     assert!(sout.contains("content 1"), "one content anchor: {sout}");
     assert!(sout.contains("existence 1"), "one existence anchor: {sout}");
     assert!(
-        sout.contains("cannot fail unless a file is deleted"),
+        sout.contains("cannot fail from an ordinary code change"),
         "the census must state the fact plainly: {sout}"
     );
 }

@@ -677,7 +677,7 @@ fn print_liveness_census(events: &[crate::ledger::Envelope]) {
     );
     if claims_deletion_only > 0 {
         println!(
-            "  ⚠ {claims_deletion_only} of {claims_total} claims rest only on anchors that cannot fail unless a file is deleted."
+            "  ⚠ {claims_deletion_only} of {claims_total} claims rest only on anchors that cannot fail from an ordinary code change."
         );
     }
     if asserted > 0 {

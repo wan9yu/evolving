@@ -147,8 +147,90 @@ fn doctor_should_report_the_liveness_census_of_every_anchor() {
     assert!(sout.contains("content 1"), "one content anchor: {sout}");
     assert!(sout.contains("existence 1"), "one existence anchor: {sout}");
     assert!(
-        sout.contains("cannot fail from an ordinary code change"),
+        sout.contains("cannot fail when the cited code changes"),
         "the census must state the fact plainly: {sout}"
+    );
+}
+
+/// The ref-TYPE census is a different question from the liveness census: liveness
+/// buckets `artifact:x::t` with `file:x::t` (both `content`) and `metric:` with
+/// `url:` (both `asserted`). 0.2.3 decides whether `artifact:`/`url:`/`metric:`
+/// have earned their existence, and that question is answerable only from counts
+/// per scheme.
+#[test]
+fn doctor_should_report_the_ref_type_census() {
+    let dir = fresh_git_doctor();
+    std::fs::write(dir.join("a.txt"), "hello\n").unwrap();
+    git_commit_doctor(&dir, "one");
+    assert!(run(&dir, &["init"]).status.success());
+
+    assert!(run(&dir, &["claim", "c", "--by", "agent"]).status.success());
+    let c = claim_id_doctor(&dir, "c");
+    assert!(run(&dir, &["evidence", &c, "file:a.txt::hello"])
+        .status
+        .success());
+    assert!(run(&dir, &["evidence", &c, "metric:coverage=0.91"])
+        .status
+        .success());
+
+    let out = run(&dir, &["doctor"]);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "the census never changes the exit code"
+    );
+    let sout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        sout.contains("ref types in use"),
+        "expected a ref-type census: {sout}"
+    );
+    assert!(sout.contains("file 1"), "one file: ref: {sout}");
+    assert!(sout.contains("metric 1"), "one metric: ref: {sout}");
+    assert!(
+        sout.contains("url 0"),
+        "url: is unused, and says so: {sout}"
+    );
+    assert!(
+        sout.contains("artifact 0"),
+        "artifact: is unused, and says so: {sout}"
+    );
+}
+
+/// A ref no current grammar accepts is counted, not dropped. The fold degrades it
+/// to `unparseable`; a census that silently skipped it would undercount — the exact
+/// failure this command exists to surface.
+#[test]
+fn doctor_census_counts_an_unparseable_ref_rather_than_dropping_it() {
+    let dir = fresh_git_doctor();
+    assert!(run(&dir, &["init"]).status.success());
+    assert!(run(&dir, &["claim", "legacy", "--by", "agent"])
+        .status
+        .success());
+    let id = claim_id_doctor(&dir, "legacy");
+
+    // the shape a ledger can carry but no scheme accepts, hand-written as an older
+    // ev would have left it. The attach guard refuses it now; the read path may not.
+    let p = ledger_path_doctor(&dir);
+    let mut text = std::fs::read_to_string(&p).unwrap();
+    let last: serde_json::Value = serde_json::from_str(text.lines().last().unwrap()).unwrap();
+    let legacy = serde_json::json!({
+        "v": last["v"], "id": "evd_01UNPARSEABLE00000000000",
+        "ts": last["ts"], "writer": last["writer"],
+        "seq": last["seq"].as_u64().unwrap() + 1,
+        "actor": { "kind": "agent", "id": "legacy" },
+        "type": "evidence",
+        "body": { "claim": id, "ref": "no-scheme-at-all", "status": "unreachable", "self_evident": false }
+    });
+    text.push_str(&serde_json::to_string(&legacy).unwrap());
+    text.push('\n');
+    std::fs::write(&p, text).unwrap();
+
+    let out = run(&dir, &["doctor"]);
+    assert_eq!(out.status.code(), Some(0));
+    let sout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        sout.contains("unparseable 1"),
+        "an unparseable ref must be counted out loud: {sout}"
     );
 }
 
@@ -245,8 +327,9 @@ fn doctor_reports_a_ledger_with_no_baseline_marker_without_failing() {
         "doctor must state the missing baseline: {sout}"
     );
     assert!(
-        sout.contains("exhaust will not file a window"),
-        "doctor must state the consequence: {sout}"
+        sout.contains("the session-end sweep will not file a window"),
+        "doctor must state the consequence it has actually checked — `ev exhaust --since \
+         <sha>` carries its own start and files without a baseline: {sout}"
     );
     assert!(
         sout.contains("ev baseline"),

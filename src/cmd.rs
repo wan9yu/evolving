@@ -653,8 +653,11 @@ pub fn doctor() -> Result<()> {
     // ledger's shape already implies but no command has been saying out loud.
     print_liveness_census(&events);
     if !has_baseline(&events) {
+        // The two paths that need the baseline are the session-end sweep and
+        // `ev exhaust --since ROOT`; `ev exhaust --since <sha>` carries its own
+        // start and files without one. State only what is checked here.
         println!(
-            "no baseline marker: exhaust will not file a window. \
+            "no baseline marker: the session-end sweep will not file a window. \
              Run `ev baseline [<sha>]` to record where the ledger began."
         );
     }
@@ -676,15 +679,27 @@ pub fn doctor() -> Result<()> {
 /// `closed` (closed or dead). A census over the open bucket alone would undercount
 /// in silence — the exact failure this command exists to surface.
 fn print_liveness_census(events: &[crate::ledger::Envelope]) {
-    use crate::verify::{EvRef, Liveness};
+    use crate::verify::{EvRef, RefKind};
     let d = crate::state::fold(events);
     let mut content = 0usize;
     let mut existence = 0usize;
     let mut immutable = 0usize;
     let mut asserted = 0usize;
-    // claims whose every anchor is incapable of failing short of a deletion
+    // a ref no current grammar accepts. Counted out loud: a census that dropped it
+    // would be the silent undercount this command exists to expose.
+    let mut unparseable = 0usize;
+    // the ref schemes actually in use — the count 0.2.3 judges `artifact:`/`url:`/
+    // `metric:` with. Liveness is not the same question: an `artifact:…::text` and a
+    // `file:…::text` are both `content`, and `metric:` and `url:` are both `asserted`.
+    let mut commit = 0usize;
+    let mut file = 0usize;
+    let mut test = 0usize;
+    let mut artifact = 0usize;
+    let mut url = 0usize;
+    let mut metric = 0usize;
+    // claims whose every anchor is incapable of failing when the cited code changes
     let mut claims_total = 0usize;
-    let mut claims_deletion_only = 0usize;
+    let mut claims_no_content = 0usize;
 
     for c in d.claims.iter().chain(&d.grey).chain(&d.closed) {
         if c.evidence.is_empty() {
@@ -693,33 +708,45 @@ fn print_liveness_census(events: &[crate::ledger::Envelope]) {
         claims_total += 1;
         let mut has_content = false;
         for ev in &c.evidence {
-            let class = match EvRef::parse(&ev.eref) {
-                Ok(r) => Liveness::of(&r),
-                Err(_) => continue,
-            };
-            match class {
-                Liveness::Content => {
+            // the fold already carries the class; re-deriving it here is a second
+            // source of truth that can drift from the one `brief --json` renders.
+            match ev.liveness.as_str() {
+                "content" => {
                     content += 1;
                     has_content = true;
                 }
-                Liveness::Existence => existence += 1,
-                Liveness::Immutable => immutable += 1,
-                Liveness::Asserted => asserted += 1,
+                "existence" => existence += 1,
+                "immutable" => immutable += 1,
+                "asserted" => asserted += 1,
+                _ => unparseable += 1,
+            }
+            if let Ok(r) = EvRef::parse(&ev.eref) {
+                match r.kind {
+                    RefKind::Commit => commit += 1,
+                    RefKind::File => file += 1,
+                    RefKind::Test => test += 1,
+                    RefKind::Artifact => artifact += 1,
+                    RefKind::Url => url += 1,
+                    RefKind::Metric => metric += 1,
+                }
             }
         }
         if !has_content {
-            claims_deletion_only += 1;
+            claims_no_content += 1;
         }
     }
     if claims_total == 0 {
         return;
     }
     println!(
-        "anchor liveness (every claim, open and closed): content {content} · existence {existence} · immutable {immutable} · asserted {asserted}"
+        "anchor liveness (every claim, open and closed): content {content} · existence {existence} · immutable {immutable} · asserted {asserted} · unparseable {unparseable}"
     );
-    if claims_deletion_only > 0 {
+    println!(
+        "ref types in use: commit {commit} · file {file} · test {test} · artifact {artifact} · url {url} · metric {metric}"
+    );
+    if claims_no_content > 0 {
         println!(
-            "  ⚠ {claims_deletion_only} of {claims_total} claims rest only on anchors that cannot fail from an ordinary code change."
+            "  ⚠ {claims_no_content} of {claims_total} claims rest only on anchors that cannot fail when the cited code changes."
         );
     }
     if asserted > 0 {

@@ -146,9 +146,10 @@ pub fn sweep(root: &Path, ledger: &Ledger) -> Result<()> {
 
     // The watermark is the head of the most recent SWEPT marker (not the end marker);
     // swept markers always carry a concrete resolved sha, so this is unambiguous. Failing
-    // that, the ledger's BASELINE (where this ledger began). A ledger with neither is a
-    // 0.2.1 ledger: filing ROOT..HEAD there would record every pre-existing commit as this
-    // session's output — a false fact. Refuse and name the remedy.
+    // that, the ledger's BASELINE (where this ledger began) — read through the one shared
+    // lookup, so the sweep and `ev exhaust` can never disagree about it. A ledger with
+    // neither is a 0.2.1 ledger: it cannot say where this session's commits begin, so the
+    // sweep refuses rather than guess, and names the remedy.
     let swept_head: Option<String> = events
         .iter()
         .filter(|e| {
@@ -164,26 +165,12 @@ pub fn sweep(root: &Path, ledger: &Ledger) -> Result<()> {
                 .map(String::from)
         });
 
-    let baseline_head: Option<String> = events
-        .iter()
-        .filter(|e| {
-            e.etype == "session"
-                && e.body.get("marker").and_then(|s| s.as_str()) == Some("baseline")
-        })
-        .max_by_key(|e| (e.ts.clone(), e.seq))
-        .and_then(|e| {
-            e.body
-                .get("head")
-                .and_then(|h| h.as_str())
-                .map(String::from)
-        });
-
-    let mut watermark: String = match swept_head.or(baseline_head) {
+    let mut watermark: String = match swept_head.or_else(|| crate::cmd::baseline_head(&events)) {
         Some(w) => w,
         None => {
             return Err(EvError::Refusal(
-                "no baseline marker in this ledger — filing would record pre-existing \
-                 commits as this session's output.\n    \
+                "this ledger carries no baseline marker; ev cannot tell where the session's \
+                 own commits begin.\n    \
                  Run `ev baseline [<sha>]` to record where the ledger began."
                     .into(),
             ))

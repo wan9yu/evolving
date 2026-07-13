@@ -94,14 +94,49 @@ fn short_sha(s: &str) -> String {
     s.chars().take(8).collect()
 }
 
-/// Whether the ledger already carries a baseline marker: a `session` event
-/// whose body is `{"marker":"baseline", ...}`. The one predicate for the two
-/// sites that must agree on it: `init` (skip a redundant write) and `exhaust`
-/// (refuse `--since ROOT` without one).
+/// The `head` recorded by the most recent baseline marker — a `session` event
+/// whose body is `{"marker":"baseline","head":<sha|"ROOT">}`. `None` when the
+/// ledger carries no baseline at all.
+///
+/// The one lookup for every site that must agree on where the ledger began:
+/// `hooks::sweep` (the watermark's fallback), `cmd::exhaust` (the start of a
+/// `--since ROOT` window), `cmd::init` (skip a redundant write) and `cmd::doctor`
+/// (report the ledger's shape). Two lookups could disagree; one cannot.
+///
+/// `"ROOT"` is a truthful value, not an absence: an `ev init` in a repo with no
+/// commits records it, and a window that starts there covers the whole history
+/// precisely because the ledger predates none of it.
+pub(crate) fn baseline_head(events: &[crate::ledger::Envelope]) -> Option<String> {
+    events
+        .iter()
+        .filter(|e| {
+            e.etype == "session"
+                && e.body.get("marker").and_then(|s| s.as_str()) == Some("baseline")
+        })
+        .max_by_key(|e| (e.ts.clone(), e.seq))
+        .and_then(|e| {
+            e.body
+                .get("head")
+                .and_then(|h| h.as_str())
+                .map(String::from)
+        })
+}
+
+/// Whether the ledger already carries a baseline marker. Expressed in terms of
+/// `baseline_head` so the predicate and the value can never disagree.
 fn has_baseline(events: &[crate::ledger::Envelope]) -> bool {
-    events.iter().any(|e| {
-        e.etype == "session" && e.body.get("marker").and_then(|s| s.as_str()) == Some("baseline")
-    })
+    baseline_head(events).is_some()
+}
+
+/// The refusal a ledger with no baseline earns: the shape fact ev has checked
+/// (the marker is absent), never a consequence it has not (what would be filed).
+fn no_baseline_refusal() -> EvError {
+    EvError::Refusal(
+        "this ledger carries no baseline marker; ev cannot tell where the session's own \
+         commits begin.\n    \
+         Run `ev baseline [<sha>]` to record where the ledger began."
+            .into(),
+    )
 }
 
 fn write_if_absent(path: &Path, contents: &str) -> Result<()> {
@@ -468,18 +503,17 @@ pub fn pause(boundary: bool, script: bool, i_am_the_human: bool) -> Result<()> {
 pub fn exhaust(since: String, session: String) -> Result<()> {
     let root = find_root();
     let ledger = Ledger::open(&root)?;
-    // `--since ROOT` on a ledger with no baseline is the Run-14 false fact.
-    if since == "ROOT" {
-        let events = ledger.scan()?;
-        if !has_baseline(&events) {
-            return Err(EvError::Refusal(
-                "no baseline marker in this ledger — filing --since ROOT would record \
-                 pre-existing commits as this session's output.\n    \
-                 Run `ev baseline [<sha>]` to record where the ledger began."
-                    .into(),
-            ));
-        }
-    }
+    // `--since ROOT` names the ledger's own beginning, not the repo's. Passing the
+    // literal through to `discover` would file every pre-existing commit as this
+    // session's output — the Run-14 false fact. Resolve it to the baseline marker's
+    // head; when the baseline honestly says "ROOT" (an empty repo at init time) the
+    // repo's first commit IS the ledger's beginning and the whole history is the
+    // truthful window. A ledger with no baseline cannot answer the question at all.
+    let since = if since == "ROOT" {
+        baseline_head(&ledger.scan()?).ok_or_else(no_baseline_refusal)?
+    } else {
+        since
+    };
     let window = crate::exhaust::discover(&root, &since, "HEAD", &session)?;
     match crate::exhaust::file_window(&ledger, &root, &window, None)? {
         Some(id) => println!(

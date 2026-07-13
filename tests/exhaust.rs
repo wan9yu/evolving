@@ -194,12 +194,79 @@ fn baseline_should_write_the_marker_so_exhaust_proceeds() {
         head
     );
 
-    // ...and exhaust now proceeds where it previously refused.
+    // ...and exhaust now proceeds where it previously refused — filing a window that
+    // starts AFTER the baseline, not at the repo's root. Success alone would not prove
+    // that: the refusal it replaces existed to stop the pre-existing commit being filed
+    // as this session's output, and only the window's contents show whether it was.
+    std::fs::write(dir.join("b.txt"), "2\n").unwrap();
+    git_commit(&dir, "this session's own work");
+    let session_sha = head_sha(&dir);
+
     let after = run(&dir, &["exhaust", "--since", "ROOT", "--session", "s1"]);
     assert!(
         after.status.success(),
         "{}",
         String::from_utf8_lossy(&after.stderr)
+    );
+
+    let filed: Vec<String> = ledger_events(&dir)
+        .into_iter()
+        .filter(|e| e["type"] == "evidence")
+        .filter_map(|e| e["body"]["ref"].as_str().map(|s| s.to_string()))
+        .collect();
+    assert_eq!(
+        filed,
+        vec![format!("commit:{session_sha}")],
+        "the window must hold this session's commit and nothing else: {filed:?}"
+    );
+    assert!(
+        !filed.contains(&format!("commit:{head}")),
+        "the pre-existing commit must not be filed as this session's output: {filed:?}"
+    );
+}
+
+/// `--since ROOT` names where the LEDGER began, not where the repo did. On a ledger
+/// baselined at an existing HEAD, the whole 0.2.2 release rests on this: filing the
+/// pre-existing history as one session's output is the Run-14 false fact, and a
+/// baseline that merely EXISTS without being read would reproduce it verbatim.
+#[test]
+fn exhaust_since_root_starts_the_window_at_the_baseline_not_at_the_repos_root() {
+    let dir = fresh_git();
+    std::fs::write(dir.join("a.txt"), "1\n").unwrap();
+    git_commit(&dir, "pre-existing history");
+    let pre = head_sha(&dir);
+
+    // `ev init` baselines the ledger at the pre-existing HEAD — no `ev baseline` needed.
+    assert!(run(&dir, &["init"]).status.success());
+
+    std::fs::write(dir.join("b.txt"), "2\n").unwrap();
+    git_commit(&dir, "this session's own work");
+    let mine = head_sha(&dir);
+
+    let out = run(&dir, &["exhaust", "--since", "ROOT", "--session", "s1"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("1 commits"),
+        "only the post-baseline commit is this session's: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+
+    let filed: Vec<String> = ledger_events(&dir)
+        .into_iter()
+        .filter(|e| e["type"] == "evidence")
+        .filter_map(|e| e["body"]["ref"].as_str().map(|s| s.to_string()))
+        .collect();
+    assert!(
+        filed.contains(&format!("commit:{mine}")),
+        "the session's own commit must be filed: {filed:?}"
+    );
+    assert!(
+        !filed.contains(&format!("commit:{pre}")),
+        "a commit made before `ev init` must never be filed as this session's output: {filed:?}"
     );
 }
 

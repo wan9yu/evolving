@@ -61,7 +61,9 @@ pub enum Liveness {
     Content,
     /// Fails only if the cited path disappears.
     Existence,
-    /// Content-addressed; fails only on a history rewrite.
+    /// Content-addressed; fails only if the commit is absent from this clone.
+    /// `verify_commit` asks this clone's object store, so a rewritten history, a
+    /// shallow clone or an un-fetched branch all read the same way: absent.
     Immutable,
     /// Self-asserted; cannot fail by construction.
     Asserted,
@@ -93,7 +95,9 @@ impl Liveness {
         match self {
             Liveness::Content => "fails when the cited text changes",
             Liveness::Existence => "fails only if the cited path disappears",
-            Liveness::Immutable => "content-addressed; fails only on a history rewrite",
+            Liveness::Immutable => {
+                "content-addressed; fails only if the commit is absent from this clone"
+            }
             Liveness::Asserted => "self-asserted; cannot fail by construction",
         }
     }

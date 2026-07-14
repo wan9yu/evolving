@@ -446,16 +446,10 @@ pub fn at_verify_snapshot(root: &Path, ledger: &Ledger, claim_id: &str) -> serde
                 c.evidence
                     .iter()
                     .map(|e| {
-                        let mut v = serde_json::json!({
-                            "ref": e.eref,
-                            "status": e.status,
-                        });
-                        if let Some(k) = e.drift {
-                            v["drift"] = serde_json::json!(k);
-                        }
-                        if let Some(cell) = e.cell {
-                            v["cell"] = serde_json::json!(cell);
-                        }
+                        let mut v = serde_json::json!({ "ref": e.eref });
+                        // The pair, serialized once — the same shape `brief --json` and
+                        // `ev verify` carry, around a different field set.
+                        e.pair().merge_into(&mut v);
                         v
                     })
                     .collect(),

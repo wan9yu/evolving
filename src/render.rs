@@ -48,19 +48,15 @@ fn claim_json(c: &ClaimView) -> serde_json::Value {
         .map(|e| {
             let mut v = serde_json::json!({
                 "ref": e.eref,
-                "status": e.status,
                 "self_evident": e.self_evident,
                 "liveness": e.liveness,
             });
             if let Some(base) = &e.base {
                 v["base"] = serde_json::json!(base);
             }
-            if let Some(k) = e.drift {
-                v["drift"] = serde_json::json!(k);
-            }
-            if let Some(cell) = e.cell {
-                v["cell"] = serde_json::json!(cell);
-            }
+            // status + drift + cell: the pair, serialized once. serde omits an unmeasured
+            // drift and an unclassified cell exactly as the hand-written `if let`s did.
+            e.pair().merge_into(&mut v);
             v
         })
         .collect();

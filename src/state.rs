@@ -60,6 +60,15 @@ pub struct EvidenceView {
     pub liveness: crate::verify::Liveness,
 }
 
+impl EvidenceView {
+    /// The pair this view already holds — what ev found, how far the world moved, and the
+    /// join. Carries; derives nothing. Every surface that prints the pair serializes THIS,
+    /// so the three envelopes differ only in the fields around it.
+    pub fn pair(&self) -> crate::verify::Pair {
+        crate::verify::Pair::carried(self.status, self.drift, self.cell)
+    }
+}
+
 #[derive(Serialize, Clone, Debug)]
 pub struct ClaimView {
     pub id: String,

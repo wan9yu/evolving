@@ -201,28 +201,37 @@ pub fn apply_bare_answer(
     let a = ans.trim();
     let human = Actor::human();
     if a == "d" {
-        let snap = crate::cmd::at_verify_snapshot(root, ledger, &c.id);
-        ledger.append_batch(vec![NewEvent {
-            etype: "demand".into(),
-            actor: human,
-            body: serde_json::json!({ "claim": c.id, "at_verify": snap }),
-        }])?;
+        crate::cmd::dispose(
+            ledger,
+            root,
+            "demand",
+            &c.id,
+            human,
+            serde_json::json!({}),
+            None,
+        )?;
     } else if let Some(rest) = a.strip_prefix("a ") {
         crate::verify::verify_and_record(ledger, root, &c.id, rest.trim(), false, human)?;
     } else if a == "h" {
-        let snap = crate::cmd::at_verify_snapshot(root, ledger, &c.id);
-        ledger.append_batch(vec![NewEvent {
-            etype: "hold".into(),
-            actor: human,
-            body: serde_json::json!({ "claim": c.id, "reason": "held at pause", "at_verify": snap }),
-        }])?;
+        crate::cmd::dispose(
+            ledger,
+            root,
+            "hold",
+            &c.id,
+            human,
+            serde_json::json!({ "reason": "held at pause" }),
+            None,
+        )?;
     } else if a == "x" {
-        let snap = crate::cmd::at_verify_snapshot(root, ledger, &c.id);
-        ledger.append_batch(vec![NewEvent {
-            etype: "prune".into(),
-            actor: human,
-            body: serde_json::json!({ "claim": c.id, "reason": "declared dead at pause", "at_verify": snap }),
-        }])?;
+        crate::cmd::dispose(
+            ledger,
+            root,
+            "prune",
+            &c.id,
+            human,
+            serde_json::json!({ "reason": "declared dead at pause" }),
+            None,
+        )?;
     }
     // "c" (carry) or anything else: no event written
     Ok(())
@@ -255,32 +264,33 @@ fn apply_moved_answer(
         }
         "k" => {
             let head = crate::git_output(root, &["rev-parse", "HEAD"]);
-            let snap = crate::cmd::at_verify_snapshot(root, ledger, claim_id);
-            let mut body = serde_json::json!({ "claim": claim_id, "at_verify": snap });
+            let mut extra = serde_json::json!({});
             if let Some(h) = &head {
-                body["head"] = serde_json::json!(h);
+                extra["head"] = serde_json::json!(h);
             }
-            ledger.append_batch(vec![NewEvent {
-                etype: "ack".into(),
-                actor: human,
-                body,
-            }])?;
+            crate::cmd::dispose(ledger, root, "ack", claim_id, human, extra, None)?;
         }
         "h" => {
-            let snap = crate::cmd::at_verify_snapshot(root, ledger, claim_id);
-            ledger.append_batch(vec![NewEvent {
-                etype: "hold".into(),
-                actor: human,
-                body: serde_json::json!({ "claim": claim_id, "reason": "held at pause after movement", "at_verify": snap }),
-            }])?;
+            crate::cmd::dispose(
+                ledger,
+                root,
+                "hold",
+                claim_id,
+                human,
+                serde_json::json!({ "reason": "held at pause after movement" }),
+                None,
+            )?;
         }
         "d" => {
-            let snap = crate::cmd::at_verify_snapshot(root, ledger, claim_id);
-            ledger.append_batch(vec![NewEvent {
-                etype: "demand".into(),
-                actor: human,
-                body: serde_json::json!({ "claim": claim_id, "at_verify": snap }),
-            }])?;
+            crate::cmd::dispose(
+                ledger,
+                root,
+                "demand",
+                claim_id,
+                human,
+                serde_json::json!({}),
+                None,
+            )?;
         }
         _ => {} // enter, or anything else: carry. No event written.
     }

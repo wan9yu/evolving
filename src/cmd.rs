@@ -427,11 +427,11 @@ fn resolve_claim_id(ledger: &Ledger, prefix: &str) -> Result<String> {
 /// annotating the whole ledger to render it made every disposition pay for every other claim's
 /// anchors. The reading is the same one `annotate` gives — it reads `Cell::of`'s output and
 /// re-derives nothing — and it is still taken BEFORE the disposition event is appended.
-pub fn at_verify_snapshot(root: &Path, ledger: &Ledger, claim_id: &str) -> serde_json::Value {
-    let mut d = match ledger.scan() {
-        Ok(events) => crate::state::fold(&events),
-        Err(_) => return serde_json::json!([]),
-    };
+fn at_verify_snapshot(
+    root: &Path,
+    d: &mut crate::state::Derived,
+    claim_id: &str,
+) -> serde_json::Value {
     let found = d
         .claims
         .iter_mut()
@@ -456,6 +456,51 @@ pub fn at_verify_snapshot(root: &Path, ledger: &Ledger, claim_id: &str) -> serde
             )
         }
     }
+}
+
+/// THE ONE disposition write. `close`, `prune`, `hold`, `demand`, `ack` and every pause
+/// disposition append through here, so the snapshot is a property of DISPOSING of a claim
+/// rather than eleven copies of the same three lines — and a twelfth disposition verb cannot
+/// forget it.
+///
+/// `extra` carries whatever the verb adds beyond the claim (`reason`, `head`); the claim and
+/// the snapshot are the shape every disposition shares. The snapshot is taken BEFORE the
+/// event is appended: `at_verify` is the pair as it stood when the human decided, and an
+/// event appended first would move nothing but would make that a claim about a ledger the
+/// human never saw.
+///
+/// `seen` is a fold the caller ALREADY has. Nothing can mutate the ledger between that fold
+/// and this write — one process, one invocation — so re-scanning to build the same view
+/// again is work with no reader. `None` takes the fold here.
+pub(crate) fn dispose(
+    ledger: &Ledger,
+    root: &Path,
+    etype: &str,
+    claim_id: &str,
+    actor: Actor,
+    extra: serde_json::Value,
+    seen: Option<&mut crate::state::Derived>,
+) -> Result<()> {
+    let snap = match seen {
+        Some(d) => at_verify_snapshot(root, d, claim_id),
+        None => match ledger.scan() {
+            Ok(events) => at_verify_snapshot(root, &mut crate::state::fold(&events), claim_id),
+            // ev could not read the ledger: it records the disposition and asserts no pair.
+            Err(_) => serde_json::json!([]),
+        },
+    };
+    let mut body = serde_json::json!({ "claim": claim_id, "at_verify": snap });
+    if let serde_json::Value::Object(fields) = extra {
+        for (k, v) in fields {
+            body[k] = v;
+        }
+    }
+    ledger.append_batch(vec![NewEvent {
+        etype: etype.into(),
+        actor,
+        body,
+    }])?;
+    Ok(())
 }
 
 fn evidence_actor() -> Actor {
@@ -491,39 +536,49 @@ pub fn close(args: CloseArgs) -> Result<()> {
     let root = find_root();
     let ledger = Ledger::open(&root)?;
     let full = resolve_claim_id(&ledger, &args.claim)?;
-    let d = crate::state::fold(&ledger.scan()?);
-    let view = d
+    // The one fold this verb takes, and the one the disposition writes from: nothing can
+    // mutate the ledger in between.
+    let mut d = crate::state::fold(&ledger.scan()?);
+    let bare = d
         .claims
         .iter()
         .find(|c| c.id == full)
-        .ok_or_else(|| EvError::Refusal(format!("{} is not an open claim", short(&full))))?;
+        .ok_or_else(|| EvError::Refusal(format!("{} is not an open claim", short(&full))))?
+        .evidence
+        .is_empty();
 
     if args.dead {
         let reason = args
             .reason
             .ok_or_else(|| EvError::Refusal("--dead needs --reason".into()))?;
-        let snap = at_verify_snapshot(&root, &ledger, &full);
-        ledger.append_batch(vec![NewEvent {
-            etype: "prune".into(),
-            actor: Actor::human(),
-            body: serde_json::json!({ "claim": full, "reason": reason, "at_verify": snap }),
-        }])?;
+        dispose(
+            &ledger,
+            &root,
+            "prune",
+            &full,
+            Actor::human(),
+            serde_json::json!({ "reason": reason }),
+            Some(&mut d),
+        )?;
         println!("declared dead: {} — {reason}", short(&full));
         return Ok(());
     }
 
-    if view.evidence.is_empty() {
+    if bare {
         return Err(EvError::Refusal(format!(
             "{} has no evidence. A claim closes with a pointer, or it is declared dead (--dead --reason).\nClosed-anyway does not exist here.",
             short(&full)
         )));
     }
-    let snap = at_verify_snapshot(&root, &ledger, &full);
-    ledger.append_batch(vec![NewEvent {
-        etype: "close".into(),
-        actor: Actor::human(),
-        body: serde_json::json!({ "claim": full, "at_verify": snap }),
-    }])?;
+    dispose(
+        &ledger,
+        &root,
+        "close",
+        &full,
+        Actor::human(),
+        serde_json::json!({}),
+        Some(&mut d),
+    )?;
     println!("closed {} with evidence.", short(&full));
     Ok(())
 }
@@ -533,12 +588,15 @@ pub fn hold(claim: String, reason: String, i_am_the_human: bool) -> Result<()> {
     let root = find_root();
     let ledger = Ledger::open(&root)?;
     let full = resolve_claim_id(&ledger, &claim)?;
-    let snap = at_verify_snapshot(&root, &ledger, &full);
-    ledger.append_batch(vec![NewEvent {
-        etype: "hold".into(),
-        actor: Actor::human(),
-        body: serde_json::json!({ "claim": full, "reason": reason, "at_verify": snap }),
-    }])?;
+    dispose(
+        &ledger,
+        &root,
+        "hold",
+        &full,
+        Actor::human(),
+        serde_json::json!({ "reason": reason }),
+        None,
+    )?;
     println!("held (grey): {} — {reason}", short(&full));
     Ok(())
 }
@@ -559,16 +617,11 @@ pub fn ack(claim: String, i_am_the_human: bool) -> Result<()> {
     let ledger = Ledger::open(&root)?;
     let full = resolve_claim_id(&ledger, &claim)?;
     let head = crate::git_output(&root, &["rev-parse", "HEAD"]);
-    let snap = at_verify_snapshot(&root, &ledger, &full);
-    let mut body = serde_json::json!({ "claim": full, "at_verify": snap });
+    let mut extra = serde_json::json!({});
     if let Some(h) = &head {
-        body["head"] = serde_json::json!(h);
+        extra["head"] = serde_json::json!(h);
     }
-    ledger.append_batch(vec![NewEvent {
-        etype: "ack".into(),
-        actor: Actor::human(),
-        body,
-    }])?;
+    dispose(&ledger, &root, "ack", &full, Actor::human(), extra, None)?;
     match &head {
         Some(h) => println!("{} acknowledged at {}", short(&full), &h[..h.len().min(8)]),
         None => println!(
@@ -584,12 +637,15 @@ pub fn demand(claim: String, i_am_the_human: bool) -> Result<()> {
     let root = find_root();
     let ledger = Ledger::open(&root)?;
     let full = resolve_claim_id(&ledger, &claim)?;
-    let snap = at_verify_snapshot(&root, &ledger, &full);
-    ledger.append_batch(vec![NewEvent {
-        etype: "demand".into(),
-        actor: Actor::human(),
-        body: serde_json::json!({ "claim": full, "at_verify": snap }),
-    }])?;
+    dispose(
+        &ledger,
+        &root,
+        "demand",
+        &full,
+        Actor::human(),
+        serde_json::json!({}),
+        None,
+    )?;
     println!(
         "demanded evidence for {}. It leads the next brief.",
         short(&full)

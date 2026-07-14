@@ -22,7 +22,7 @@ fn a_metric_ref_is_recorded_only() {
 }
 
 #[test]
-fn a_real_commit_verifies_and_a_bogus_sha_fails() {
+fn a_real_commit_resolves_and_a_bogus_sha_reads_gone() {
     let dir = std::env::temp_dir().join(format!("ev-vc-{}", ulid::Ulid::new()));
     std::fs::create_dir_all(&dir).unwrap();
     let git = |args: &[&str]| {
@@ -42,13 +42,14 @@ fn a_real_commit_verifies_and_a_bogus_sha_fails() {
     git(&["commit", "-qm", "first"]);
     let head = String::from_utf8(git(&["rev-parse", "HEAD"]).stdout).unwrap();
     let head = head.trim();
-    use evolving::verify::{verify_ref, EvRef};
+    use evolving::verify::{verify_ref, EvRef, Status};
     assert_eq!(
         verify_ref(&EvRef::parse(&format!("commit:{head}")).unwrap(), &dir),
-        "resolves"
+        Status::Resolves
     );
     assert_eq!(
         verify_ref(&EvRef::parse("commit:deadbeefdeadbeef").unwrap(), &dir),
-        "failed"
+        // The object is absent from this clone — the commit's container is gone.
+        Status::Gone
     );
 }

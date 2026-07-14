@@ -185,7 +185,8 @@ fn evidence_should_not_hint_for_a_content_anchor() {
 #[test]
 fn verify_should_still_read_a_legacy_line_number_ref_without_erroring() {
     // A 0.2.1 ledger holds `file:<path>:150` evidence events. The attach guard
-    // must never leak into the read path: `ev verify` reads them as unreachable.
+    // must never leak into the read path: `ev verify` reads them as gone (the
+    // path `src/x.py:150` does not exist), not as an error.
     let dir = fresh_git();
     assert!(run(&dir, &["init"]).status.success());
     assert!(run(&dir, &["claim", "legacy", "--by", "agent"])
@@ -229,7 +230,7 @@ fn verify_should_still_read_a_legacy_line_number_ref_without_erroring() {
         sout.contains("file:src/x.py:150"),
         "the legacy ref must still be reported: {sout}"
     );
-    assert!(sout.contains("unreachable"));
+    assert!(sout.contains("gone"));
 }
 
 fn event_id(dir: &std::path::Path, etype: &str) -> String {

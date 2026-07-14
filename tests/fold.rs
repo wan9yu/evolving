@@ -124,5 +124,8 @@ fn a_legacy_verified_status_reads_as_resolves() {
     ];
     let d = fold(&events);
     assert!(matches!(d.claims[0].state, ClaimState::Anchored));
-    assert_eq!(d.claims[0].evidence[0].status, "resolves");
+    assert_eq!(
+        d.claims[0].evidence[0].status,
+        evolving::verify::Status::Resolves
+    );
 }

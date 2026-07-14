@@ -163,3 +163,84 @@ fn brief_json_should_expose_the_liveness_of_every_anchor() {
     );
     assert!(text.contains("existence"));
 }
+
+#[test]
+fn a_changed_line_should_read_changed_not_failed() {
+    let dir = fresh_git();
+    std::fs::write(dir.join("a.txt"), "hello\n").unwrap();
+    git_commit(&dir, "one");
+    assert!(run(&dir, &["init"]).status.success());
+    assert!(run(&dir, &["claim", "c", "--by", "agent"]).status.success());
+    let id = claim_id(&dir);
+    assert!(run(&dir, &["evidence", &id, "file:a.txt::hello"])
+        .status
+        .success());
+
+    std::fs::write(dir.join("a.txt"), "goodbye\n").unwrap();
+    git_commit(&dir, "the world moves");
+
+    let out = run(&dir, &["verify", "--json"]);
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let c = &v["checks"][0];
+    assert_eq!(
+        c["status"], "changed",
+        "the cited text is gone, the file is not: {c}"
+    );
+}
+
+#[test]
+fn a_deleted_file_should_read_gone_not_unreachable() {
+    let dir = fresh_git();
+    std::fs::write(dir.join("a.txt"), "hello\n").unwrap();
+    git_commit(&dir, "one");
+    assert!(run(&dir, &["init"]).status.success());
+    assert!(run(&dir, &["claim", "c", "--by", "agent"]).status.success());
+    let id = claim_id(&dir);
+    assert!(run(&dir, &["evidence", &id, "file:a.txt::hello"])
+        .status
+        .success());
+
+    std::fs::remove_file(dir.join("a.txt")).unwrap();
+    git_commit(&dir, "the file is deleted");
+
+    let out = run(&dir, &["verify", "--json"]);
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let c = &v["checks"][0];
+    assert_eq!(
+        c["status"], "gone",
+        "the container is gone, not merely unreadable: {c}"
+    );
+}
+
+#[test]
+fn a_legacy_failed_status_should_read_back_as_failed() {
+    // Append-only: a value written by an older ev is never rewritten.
+    let dir = fresh_git();
+    std::fs::write(dir.join("a.txt"), "hello\n").unwrap();
+    git_commit(&dir, "one");
+    assert!(run(&dir, &["init"]).status.success());
+    assert!(run(&dir, &["claim", "c", "--by", "agent"]).status.success());
+    let id = claim_id(&dir);
+
+    let p = ledger_path(&dir);
+    let mut text = std::fs::read_to_string(&p).unwrap();
+    let last: serde_json::Value = serde_json::from_str(text.lines().last().unwrap()).unwrap();
+    let legacy = serde_json::json!({
+        "v": last["v"], "id": "evd_01LEGACY0000000000000000",
+        "ts": last["ts"], "writer": last["writer"],
+        "seq": last["seq"].as_u64().unwrap() + 1,
+        "actor": { "kind": "agent", "id": "legacy" },
+        "type": "evidence",
+        "body": { "claim": id, "ref": "file:a.txt::hello", "status": "failed", "self_evident": false }
+    });
+    text.push_str(&serde_json::to_string(&legacy).unwrap());
+    text.push('\n');
+    std::fs::write(&p, text).unwrap();
+
+    let out = run(&dir, &["brief", "--json"]);
+    assert!(out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("\"failed\""),
+        "a legacy status must survive the read path unrewritten"
+    );
+}

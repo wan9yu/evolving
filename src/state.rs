@@ -17,7 +17,9 @@ pub enum ClaimState {
 #[derive(Serialize, Clone, Debug)]
 pub struct EvidenceView {
     pub eref: String,
-    pub status: String, // "resolves" | "failed" | "unreachable" | "recorded"
+    /// What ev found at the anchor. Carried as the class itself, so a reader that
+    /// buckets it cannot silently fold a value it does not know into one it does.
+    pub status: crate::verify::Status,
     pub self_evident: bool,
     /// The repo state (HEAD sha) the anchor was filed against — drift's zero point.
     pub base: Option<String>,
@@ -98,16 +100,6 @@ fn s(v: &serde_json::Value, k: &str) -> Option<String> {
     v.get(k).and_then(|x| x.as_str()).map(|x| x.to_string())
 }
 
-/// One vocabulary on read: the ledger is append-only, so events written before
-/// the anchor-resolution rename still carry "verified" — normalize, never rewrite.
-fn canon_status(raw: String) -> String {
-    if raw == "verified" {
-        "resolves".into()
-    } else {
-        raw
-    }
-}
-
 pub fn fold(events: &[Envelope]) -> Derived {
     let mut claims: HashMap<String, ClaimAcc> = HashMap::new();
     let mut order_seq = 0u64;
@@ -149,9 +141,11 @@ pub fn fold(events: &[Envelope]) -> Derived {
                             .unwrap_or(crate::verify::Liveness::Unparseable);
                         acc.evidence.push(EvidenceView {
                             eref,
-                            status: canon_status(
-                                s(&e.body, "status").unwrap_or_else(|| "recorded".into()),
-                            ),
+                            // An event with no status at all predates the field:
+                            // it recorded the ref and nothing more.
+                            status: s(&e.body, "status")
+                                .map(|raw| crate::verify::Status::parse(&raw))
+                                .unwrap_or(crate::verify::Status::Recorded),
                             self_evident: e
                                 .body
                                 .get("self_evident")
@@ -170,7 +164,7 @@ pub fn fold(events: &[Envelope]) -> Derived {
                 if let (Some(cid), Some(st)) = (s(&e.body, "claim"), s(&e.body, "status")) {
                     if let Some(acc) = claims.get_mut(&cid) {
                         // refs should be unique per claim; rev() picks the most recent if not.
-                        let st = canon_status(st);
+                        let st = crate::verify::Status::parse(&st);
                         if let Some(r) = e.body.get("ref").and_then(|v| v.as_str()) {
                             if let Some(item) =
                                 acc.evidence.iter_mut().rev().find(|ev| ev.eref == r)
@@ -372,7 +366,10 @@ fn derive_state(a: &ClaimAcc, boundaries_open: u32) -> ClaimState {
         }
         return ClaimState::Bare;
     }
-    if a.evidence.iter().any(|e| e.status == "resolves") {
+    if a.evidence
+        .iter()
+        .any(|e| e.status == crate::verify::Status::Resolves)
+    {
         ClaimState::Anchored
     } else {
         ClaimState::Evidenced

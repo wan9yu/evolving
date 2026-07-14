@@ -194,7 +194,7 @@ pub fn claim(args: ClaimArgs) -> Result<()> {
             "claim {} · evidence {} → {}",
             short(claim_id),
             eref,
-            verdict
+            verdict.as_str()
         );
         if let Some(h) = anchor_hint(eref) {
             println!("{h}");
@@ -258,7 +258,11 @@ pub fn evidence(claim_id: String, eref: String) -> Result<()> {
     let full = resolve_claim_id(&ledger, &claim_id)?;
     let actor = evidence_actor();
     let verdict = crate::verify::verify_and_record(&ledger, &root, &full, &eref, false, actor)?;
-    println!("evidence attached to {} → {verdict}", short(&full));
+    println!(
+        "evidence attached to {} → {}",
+        short(&full),
+        verdict.as_str()
+    );
     if let Some(h) = anchor_hint(&eref) {
         println!("{h}");
     }
@@ -321,12 +325,13 @@ pub fn verify_cmd(claim_id: Option<String>, json: bool, full: bool) -> Result<()
                 } else {
                     match moved {
                         Some(k) if k > 0 => println!(
-                            "{} · {} → {status} · {}",
+                            "{} · {} → {} · {}",
                             short(&c.id),
                             ev.eref,
+                            status.as_str(),
                             crate::verify::drift_phrase(k)
                         ),
-                        _ => println!("{} · {} → {status}", short(&c.id), ev.eref),
+                        _ => println!("{} · {} → {}", short(&c.id), ev.eref, status.as_str()),
                     }
                 }
             }

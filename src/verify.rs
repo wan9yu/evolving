@@ -1,6 +1,6 @@
 use crate::ledger::{Actor, Ledger, NewEvent};
 use crate::{EvError, Result};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::process::Command;
 
@@ -128,6 +128,53 @@ impl Liveness {
     }
 }
 
+/// What ev found when it looked at the anchor. A fact about the pointer — never a
+/// verdict on the claim. `Failed` is the pre-0.2.3 conflated value: it is READ from
+/// older ledgers and never written, because it hid three different findings behind
+/// one word.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Status {
+    /// The anchor holds.
+    Resolves,
+    /// The file is there; the cited text is not. The line ev was pointed at changed.
+    Changed,
+    /// The path is absent, or the commit is absent from this clone.
+    Gone,
+    /// The path exists but ev could not read it — not a fact about the code.
+    Unreachable,
+    /// `metric:` / `url:` — self-asserted; cannot fail by construction.
+    Recorded,
+    /// Legacy only. Written by ev before 0.2.3; never produced by this version.
+    Failed,
+}
+
+impl Status {
+    /// Read a status out of a ledger event. `verified` is the 0.1.x spelling of
+    /// `resolves`. An unrecognised value reads as `Failed` — ev does not guess.
+    pub fn parse(raw: &str) -> Status {
+        match raw {
+            "resolves" | "verified" => Status::Resolves,
+            "changed" => Status::Changed,
+            "gone" => Status::Gone,
+            "unreachable" => Status::Unreachable,
+            "recorded" => Status::Recorded,
+            _ => Status::Failed,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Status::Resolves => "resolves",
+            Status::Changed => "changed",
+            Status::Gone => "gone",
+            Status::Unreachable => "unreachable",
+            Status::Recorded => "recorded",
+            Status::Failed => "failed",
+        }
+    }
+}
+
 /// The attach-time guard. Refuses anchors ev cannot mean, and anchors that
 /// cannot carry a signal. Called ONLY from `verify_and_record` and `cmd::claim`
 /// — never from `EvRef::parse`, which must stay total so a ledger written by an
@@ -188,51 +235,49 @@ pub fn guard_attach(raw: &str, repo_root: &Path) -> Result<EvRef> {
 
 /// Check whether a ref's anchor resolves against `repo_root`. Resolution is a
 /// fact about the pointer (exists, matches) — never a verdict on the claim.
-/// V1: Commit → `git rev-parse --verify`; Metric/Url → "recorded" (self-asserted).
-/// V2: Test/File/Artifact → exists→sha256→pass-line check.
-/// Never touches the network.
-pub fn verify_ref(r: &EvRef, repo_root: &Path) -> String {
+/// Commit → `git rev-parse --verify`; Metric/Url → `Recorded` (self-asserted);
+/// Test/File/Artifact → exists → pass-line check.
+///
+/// The finding is a class, not a word: a `Gone` container and a `Changed` line
+/// are different facts and read differently. Never touches the network.
+pub fn verify_ref(r: &EvRef, repo_root: &Path) -> Status {
     match r.kind {
         RefKind::Commit => verify_commit(&r.payload, repo_root),
-        RefKind::Metric | RefKind::Url => "recorded".into(),
+        RefKind::Metric | RefKind::Url => Status::Recorded,
         RefKind::Test | RefKind::File | RefKind::Artifact => verify_v2(r, repo_root),
     }
 }
 
-fn verify_v2(r: &EvRef, repo_root: &Path) -> String {
+fn verify_v2(r: &EvRef, repo_root: &Path) -> Status {
     let path = if r.kind == RefKind::Artifact {
         repo_root.join(".evolving/artifacts").join(&r.payload)
     } else {
         repo_root.join(&r.payload)
     };
+    // The container is absent — a rename, a delete. Distinct from a path ev can
+    // see but cannot read, which is a fact about ev's reach, not about the code.
     if !path.exists() {
-        return "unreachable".into();
+        return Status::Gone;
     }
-    // existence is established; hash it (proves readability), then the pass-line.
     let content = match std::fs::read(&path) {
         Ok(c) => c,
-        Err(_) => return "unreachable".into(),
-    };
-    let _digest = {
-        use sha2::{Digest, Sha256};
-        let mut h = Sha256::new();
-        h.update(&content);
-        format!("{:x}", h.finalize())
+        Err(_) => return Status::Unreachable,
     };
     match &r.passline {
-        None => "resolves".into(),
+        None => Status::Resolves,
         Some(pattern) => {
             let text = String::from_utf8_lossy(&content);
             if text.lines().any(|l| l.contains(pattern.as_str())) {
-                "resolves".into()
+                Status::Resolves
             } else {
-                "failed".into()
+                // The file is there; the cited text is not. The line moved.
+                Status::Changed
             }
         }
     }
 }
 
-fn verify_commit(sha: &str, repo_root: &Path) -> String {
+fn verify_commit(sha: &str, repo_root: &Path) -> Status {
     let out = Command::new("git")
         .args([
             "rev-parse",
@@ -243,9 +288,12 @@ fn verify_commit(sha: &str, repo_root: &Path) -> String {
         .current_dir(repo_root)
         .output();
     match out {
-        Ok(o) if o.status.success() => "resolves".into(),
-        Ok(_) => "failed".into(),
-        Err(_) => "unreachable".into(),
+        Ok(o) if o.status.success() => Status::Resolves,
+        // The object is absent from this clone: a rewritten history, a shallow
+        // clone, an un-fetched branch all read the same way.
+        Ok(_) => Status::Gone,
+        // ev could not run git — not a fact about the object.
+        Err(_) => Status::Unreachable,
     }
 }
 
@@ -259,7 +307,7 @@ pub fn verify_and_record(
     raw_ref: &str,
     self_evident: bool,
     actor: Actor,
-) -> Result<String> {
+) -> Result<Status> {
     let r = guard_attach(raw_ref, repo_root)?;
     let status = verify_ref(&r, repo_root);
     let mut body = serde_json::json!({

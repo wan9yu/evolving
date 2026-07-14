@@ -89,12 +89,19 @@ Exit codes: 0 done · 1 honest refusal · 2 error. State-reading output ends wit
   (0.2.2; before that the `:<N>` was silently folded into the path and the anchor resolved to nothing).
   `::<text>` fails when the cited line changes; a bare `file:<path>` fails only if the path disappears.
 - Anchor resolution: commits resolve via `git rev-parse --verify <sha>^{commit}`; files, tests, and
-  artifacts resolve as exists → readable (hashed) → the named text found on some line. Statuses: `resolves` ·
-  `failed` · `unreachable` (a pointer that cannot resolve *here* — not a failure) · `recorded`.
+  artifacts resolve as exists → readable → the named text found on some line. The status is a typed
+  class (`verify::Status`), so a reader that buckets it cannot silently fold a value it does not know
+  into one it does. Statuses: `resolves` · `changed` (the file is there, the cited text is not — the
+  line the anchor pointed at moved) · `gone` (the path is absent, or the commit is absent from this
+  clone — the container is gone) · `unreachable` (the path exists but ev could not read it — a fact
+  about ev's reach, not about the code) · `recorded` (self-asserted; cannot fail by construction).
   **Resolution is a fact about the pointer, never a verdict on the claim** — the status word is
-  chosen so a resolve-check cannot be read as "the claim is verified." (Ledgers are append-only;
-  events written before this word existed carry `verified` and are normalized on read, never
-  rewritten.) Resolution runs when evidence is filed and on `ev verify`.
+  chosen so a resolve-check cannot be read as "the claim is verified." Resolution runs when evidence
+  is filed and on `ev verify`.
+- Ledgers are append-only, so the read path carries what older versions wrote and never rewrites it:
+  0.1.x's `verified` normalizes to `resolves`, and `failed` — the pre-0.2.3 value that conflated
+  `changed`, `gone` and a never-valid anchor behind one word — reads back as `failed`, forever.
+  0.2.3 never produces it. An unrecognised status also reads as `failed`: ev does not guess.
 - **Drift:** every filed anchor records its `base` — the repo state (HEAD sha) it was filed against.
   For path-bearing anchors, the number of commits between base and HEAD touching the cited path is
   reported wherever evidence is read: `ev verify` (text and `--json`), the brief's `--json` evidence

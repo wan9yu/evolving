@@ -231,3 +231,57 @@ fn verify_should_still_read_a_legacy_line_number_ref_without_erroring() {
     );
     assert!(sout.contains("unreachable"));
 }
+
+fn event_id(dir: &std::path::Path, etype: &str) -> String {
+    let p = std::fs::read_dir(dir.join(".evolving/ledger"))
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .find(|e| e.path().extension().is_some_and(|x| x == "jsonl"))
+        .unwrap()
+        .path();
+    for line in std::fs::read_to_string(p).unwrap().lines() {
+        let v: serde_json::Value = serde_json::from_str(line).unwrap();
+        if v["type"] == etype {
+            return v["id"].as_str().unwrap().to_string();
+        }
+    }
+    panic!("no {etype} event in the ledger");
+}
+
+#[test]
+fn evidence_should_refuse_a_think_event_id() {
+    let dir = fresh_git();
+    std::fs::write(dir.join("f.txt"), "hello\n").unwrap();
+    assert!(run(&dir, &["init"]).status.success());
+    assert!(run(&dir, &["think", "a thought, not a claim"])
+        .status
+        .success());
+    let thk = event_id(&dir, "thought");
+
+    let out = run(&dir, &["evidence", &thk, "file:f.txt::hello"]);
+    assert_eq!(out.status.code(), Some(1), "a think id is not a claim id");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("not a claim"),
+        "the refusal must name the type error: {err}"
+    );
+}
+
+#[test]
+fn evidence_should_still_accept_a_real_claim_id() {
+    let dir = fresh_git();
+    std::fs::write(dir.join("f.txt"), "hello\n").unwrap();
+    assert!(run(&dir, &["init"]).status.success());
+    assert!(run(&dir, &["think", "a thought"]).status.success());
+    assert!(run(&dir, &["claim", "a claim", "--by", "agent"])
+        .status
+        .success());
+    let cid = event_id(&dir, "claim");
+
+    let out = run(&dir, &["evidence", &cid, "file:f.txt::hello"]);
+    assert!(
+        out.status.success(),
+        "a claim id must still work: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}

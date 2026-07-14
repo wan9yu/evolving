@@ -1,4 +1,4 @@
-use crate::ledger::{Actor, ActorKind, Ledger, NewEvent};
+use crate::ledger::{Actor, ActorKind, Envelope, Ledger, NewEvent};
 use crate::{EvError, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -255,7 +255,7 @@ pub fn anchor_hint(eref: &str) -> Option<String> {
 pub fn evidence(claim_id: String, eref: String) -> Result<()> {
     let root = find_root();
     let ledger = Ledger::open(&root)?;
-    let full = resolve_id(&ledger, &claim_id)?;
+    let full = resolve_claim_id(&ledger, &claim_id)?;
     let actor = evidence_actor();
     let verdict = crate::verify::verify_and_record(&ledger, &root, &full, &eref, false, actor)?;
     println!("evidence attached to {} → {verdict}", short(&full));
@@ -273,7 +273,7 @@ pub fn verify_cmd(claim_id: Option<String>, json: bool, full: bool) -> Result<()
     let d = crate::state::fold(&events);
     let targets: Vec<&crate::state::ClaimView> = match &claim_id {
         Some(cid) => {
-            let full = resolve_id(&ledger, cid)?;
+            let full = resolve_claim_id(&ledger, cid)?;
             d.claims.iter().filter(|c| c.id == full).collect()
         }
         None => d.claims.iter().collect(),
@@ -357,6 +357,26 @@ fn resolve_id(ledger: &Ledger, prefix: &str) -> Result<String> {
     }
 }
 
+/// Resolve an id prefix against CLAIM events only. A type prefix (`thk_`, `clm_`)
+/// makes an id unambiguous; it never makes it the right kind. Evidence, closure and
+/// demands all attach to claims — an id of any other kind is a caller error, and
+/// accepting it writes an event the fold can never reach.
+fn resolve_claim_id(ledger: &Ledger, prefix: &str) -> Result<String> {
+    let events = ledger.scan()?;
+    let matches: Vec<&Envelope> = events.iter().filter(|e| e.id.starts_with(prefix)).collect();
+    match matches.len() {
+        0 => Err(EvError::Refusal(format!("no event matches id {prefix}"))),
+        1 if matches[0].etype == "claim" => Ok(matches[0].id.clone()),
+        1 => Err(EvError::Refusal(format!(
+            "{} is a {} event, not a claim. Evidence, closure and demands attach to claims.",
+            matches[0].id, matches[0].etype
+        ))),
+        n => Err(EvError::Refusal(format!(
+            "ambiguous id {prefix} — {n} matches"
+        ))),
+    }
+}
+
 fn evidence_actor() -> Actor {
     // Evidence is creation-only; agents are permitted. Provenance is recorded.
     if std::env::var("CLAUDECODE").is_ok() {
@@ -389,7 +409,7 @@ pub fn close(args: CloseArgs) -> Result<()> {
     assert_human(args.i_am_the_human)?;
     let root = find_root();
     let ledger = Ledger::open(&root)?;
-    let full = resolve_id(&ledger, &args.claim)?;
+    let full = resolve_claim_id(&ledger, &args.claim)?;
     let d = crate::state::fold(&ledger.scan()?);
     let view = d
         .claims
@@ -429,7 +449,7 @@ pub fn hold(claim: String, reason: String, i_am_the_human: bool) -> Result<()> {
     assert_human(i_am_the_human)?;
     let root = find_root();
     let ledger = Ledger::open(&root)?;
-    let full = resolve_id(&ledger, &claim)?;
+    let full = resolve_claim_id(&ledger, &claim)?;
     ledger.append_batch(vec![NewEvent {
         etype: "hold".into(),
         actor: Actor::human(),
@@ -443,7 +463,7 @@ pub fn demand(claim: String, i_am_the_human: bool) -> Result<()> {
     assert_human(i_am_the_human)?;
     let root = find_root();
     let ledger = Ledger::open(&root)?;
-    let full = resolve_id(&ledger, &claim)?;
+    let full = resolve_claim_id(&ledger, &claim)?;
     ledger.append_batch(vec![NewEvent {
         etype: "demand".into(),
         actor: Actor::human(),

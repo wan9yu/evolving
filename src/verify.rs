@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -311,24 +311,16 @@ pub fn guard_attach(raw: &str, repo_root: &Path) -> Result<EvRef> {
             "{raw} — refused: the pass-line after `::` is empty.\n    \
              An empty pass-line matches every line, so the anchor can never go red."
         ))),
-        Some(text) => {
+        Some(_) => {
             // The cited text must exist NOW. An anchor on absent text is born red and
             // stays red forever — it carries no signal and never will.
-            let path = if r.kind == RefKind::Artifact {
-                repo_root.join(".evolving/artifacts").join(&r.payload)
-            } else {
-                repo_root.join(&r.payload)
-            };
-            let present = std::fs::read(&path)
-                .map(|c| {
-                    String::from_utf8_lossy(&c)
-                        .lines()
-                        .any(|l| l.contains(text.as_str()))
-                })
-                .unwrap_or(false);
-            if !present {
-                // The guard read the WORKING TREE (`std::fs::read` above), not a commit —
-                // it must name what it read, or the refusal asserts a check ev never made.
+            //
+            // "Exists now" is exactly what the checker answers: the guard asks IT, rather
+            // than re-deriving presence with a second read and a second line scan that
+            // could drift from the one every later reading uses.
+            if verify_v2(&r, repo_root) != Status::Resolves {
+                // The checker read the WORKING TREE, not a commit — the refusal must name
+                // what was read, or it asserts a check ev never made.
                 return Err(EvError::Refusal(format!(
                     "{raw} — the cited text is not in {} as it stands in the working tree.\n    \
                      A content anchor must quote text that exists now; it goes red when that text changes.",
@@ -385,10 +377,12 @@ pub fn verify_ref(r: &EvRef, repo_root: &Path, seen: &Commits) -> Status {
 }
 
 fn verify_v2(r: &EvRef, repo_root: &Path) -> Status {
-    let path = if r.kind == RefKind::Artifact {
-        repo_root.join(".evolving/artifacts").join(&r.payload)
-    } else {
-        repo_root.join(&r.payload)
+    let path = match anchor_path(r, repo_root) {
+        Some(p) => p,
+        // A ref with no path under it never arrives here — `verify_ref` sends only
+        // test/file/artifact this way. There is nothing on disk to read, and ev says so
+        // rather than reading some other path.
+        None => return Status::Unreachable,
     };
     // The container is absent — a rename, a delete. Distinct from a path ev can
     // see but cannot read, which is a fact about ev's reach, not about the code.
@@ -586,6 +580,13 @@ fn anchor_rel(r: &EvRef) -> Option<String> {
         RefKind::Artifact => Some(format!(".evolving/artifacts/{}", r.payload)),
         RefKind::Commit | RefKind::Metric | RefKind::Url => None,
     }
+}
+
+/// WHERE an anchor lives on disk. THE ONE join of an anchor and the tree it is read in —
+/// the guard, the checker and the drift count all asked the same question and each spelled
+/// the `.evolving/artifacts` case for itself.
+pub fn anchor_path(r: &EvRef, repo_root: &Path) -> Option<PathBuf> {
+    anchor_rel(r).map(|rel| repo_root.join(rel))
 }
 
 /// Drift: how far the world has moved under a path-bearing anchor — the number

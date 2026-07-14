@@ -835,12 +835,25 @@ pub fn doctor() -> Result<()> {
     }
 }
 
+/// THE census scope, in one signature rather than in two doc comments that promise each
+/// other they match: every claim the fold knows — `claims` (open), `grey` (held) and
+/// `closed` (closed or dead) — that carries any evidence at all.
+///
+/// A census over the open bucket alone would undercount in silence, which is the exact
+/// failure `ev doctor` exists to surface. Both censuses read this, so neither can drift from
+/// the other's denominator.
+fn claims_with_evidence(
+    d: &crate::state::Derived,
+) -> impl Iterator<Item = &crate::state::ClaimView> {
+    d.claims
+        .iter()
+        .chain(&d.grey)
+        .chain(&d.closed)
+        .filter(|c| !c.evidence.is_empty())
+}
+
 /// The liveness census: what it would take for each recorded anchor to go red.
 /// Facts only — a count and one plain sentence. Never a score, never a gate.
-///
-/// Scope is every claim the fold knows: `claims` (open), `grey` (held) and
-/// `closed` (closed or dead). A census over the open bucket alone would undercount
-/// in silence — the exact failure this command exists to surface.
 fn print_liveness_census(d: &crate::state::Derived) {
     use crate::verify::{EvRef, Liveness, RefKind};
     let mut content = 0usize;
@@ -863,10 +876,7 @@ fn print_liveness_census(d: &crate::state::Derived) {
     let mut claims_total = 0usize;
     let mut claims_no_content = 0usize;
 
-    for c in d.claims.iter().chain(&d.grey).chain(&d.closed) {
-        if c.evidence.is_empty() {
-            continue;
-        }
+    for c in claims_with_evidence(d) {
         claims_total += 1;
         let mut has_content = false;
         for ev in &c.evidence {
@@ -926,12 +936,11 @@ fn print_liveness_census(d: &crate::state::Derived) {
 /// that adds code beside the anchored line leaves the anchor green — and never says so.
 /// Never changes the exit code.
 ///
-/// Scope matches the liveness census exactly: every claim carrying evidence, across
-/// `claims` (open), `grey` (held) and `closed` (closed or dead) — the same full set, so
-/// this census cannot undercount where the other does not. A claim ev could place on no
-/// cell at all is counted as `unmeasured` and stays in the denominator: dropping it would
-/// shrink the census's own total in silence and call the remainder "claims" — the exact
-/// undercount this command exists to expose.
+/// Scope is `claims_with_evidence` — the same iterator the liveness census reads, so the two
+/// cannot disagree about what they are counting. A claim ev could place on no cell at all is
+/// counted as `unmeasured` and stays in the denominator: dropping it would shrink the
+/// census's own total in silence and call the remainder "claims" — the exact undercount this
+/// command exists to expose.
 fn print_movement_census(d: &crate::state::Derived) {
     use crate::verify::Cell;
     let mut still = 0usize;
@@ -944,10 +953,7 @@ fn print_movement_census(d: &crate::state::Derived) {
     let mut unmeasured = 0usize;
     let mut total = 0usize;
 
-    for c in d.claims.iter().chain(&d.grey).chain(&d.closed) {
-        if c.evidence.is_empty() {
-            continue;
-        }
+    for c in claims_with_evidence(d) {
         // The same reduction the pause makes, through the same ONE ordering.
         match c.worst_cell() {
             None => unmeasured += 1,

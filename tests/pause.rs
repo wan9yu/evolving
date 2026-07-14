@@ -255,3 +255,54 @@ fn pause_dead_on_a_bare_claim_removes_it_from_open() {
         "open should be empty after claiming dead: {v}"
     );
 }
+
+#[test]
+fn pause_displays_most_severe_movement_when_claim_has_multiple_evidence_entries() {
+    let dir = fresh_git_pause();
+    // Create two files, each with an anchor
+    std::fs::write(dir.join("file1.txt"), "anchor1\n").unwrap();
+    std::fs::write(dir.join("file2.txt"), "anchor2\n").unwrap();
+    git_commit_pause(&dir, "initial");
+    assert!(run(&dir, &["init"]).status.success());
+    assert!(run(&dir, &["claim", "multi-evidence", "--by", "agent"])
+        .status
+        .success());
+    let id = claim_id_pause(&dir, "multi-evidence");
+
+    // Attach first evidence: file1 with anchor1
+    assert!(run(&dir, &["evidence", &id, "file:file1.txt::anchor1"])
+        .status
+        .success());
+    // Attach second evidence: file2 with anchor2
+    assert!(run(&dir, &["evidence", &id, "file:file2.txt::anchor2"])
+        .status
+        .success());
+
+    // Change file1: add a line beside the anchor (NeighborhoodMoved)
+    std::fs::write(dir.join("file1.txt"), "anchor1\nnew line\n").unwrap();
+    // Change file2: replace the anchor line itself (AnchorChanged)
+    std::fs::write(dir.join("file2.txt"), "replaced\n").unwrap();
+    git_commit_pause(&dir, "modify both");
+
+    // Re-verify to update status of the changed anchor
+    assert!(run(&dir, &["verify"]).status.success());
+
+    // Pause should show the claim with the more severe condition (AnchorChanged)
+    let out = run_with_stdin(&dir, &["pause", "--script", "--i-am-the-human"], "k\n");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let s = String::from_utf8_lossy(&out.stdout);
+
+    // The claim should be displayed
+    assert!(s.contains("multi-evidence"), "the claim must be named: {s}");
+
+    // The reason line should show the most severe condition: AnchorChanged
+    // not the less severe NeighborhoodMoved
+    assert!(
+        s.contains("the cited line itself changed"),
+        "should display AnchorChanged message, not NeighborhoodMoved: {s}"
+    );
+}

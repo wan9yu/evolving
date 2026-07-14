@@ -78,20 +78,26 @@ pub fn run_pause(root: &Path, opts: PauseOpts) -> Result<()> {
             "\n↗ code moved under these claims since the last look:"
         )?;
         for c in &moved {
-            let why = c
+            // Pick the most severe cell: FileGone > AnchorChanged > NeighborhoodMoved
+            let worst = c
                 .evidence
                 .iter()
-                .find_map(|e| match e.cell {
-                    Some(crate::verify::Cell::AnchorChanged) => {
-                        Some("the cited line itself changed")
-                    }
-                    Some(crate::verify::Cell::FileGone) => Some("the cited file is gone"),
-                    Some(crate::verify::Cell::NeighborhoodMoved) => {
-                        Some("the line stands; code moved beside it")
-                    }
-                    _ => None,
-                })
-                .unwrap_or("moved");
+                .filter_map(|e| e.cell)
+                .max_by_key(|cell| match cell {
+                    crate::verify::Cell::FileGone => 3,
+                    crate::verify::Cell::AnchorChanged => 2,
+                    crate::verify::Cell::NeighborhoodMoved => 1,
+                    crate::verify::Cell::Legacy => 0,
+                    crate::verify::Cell::Still => 0,
+                });
+            let why = match worst {
+                Some(crate::verify::Cell::AnchorChanged) => "the cited line itself changed",
+                Some(crate::verify::Cell::FileGone) => "the cited file is gone",
+                Some(crate::verify::Cell::NeighborhoodMoved) => {
+                    "the line stands; code moved beside it"
+                }
+                _ => "moved",
+            };
             writeln!(out, "  {} — {why}", c.label)?;
             write!(
                 out,

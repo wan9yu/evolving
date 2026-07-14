@@ -285,3 +285,105 @@ fn evidence_should_still_accept_a_real_claim_id() {
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+#[test]
+fn evidence_should_refuse_a_content_anchor_whose_text_is_absent() {
+    let dir = fresh_git();
+    std::fs::write(dir.join("f.txt"), "hello\n").unwrap();
+    assert!(run(&dir, &["init"]).status.success());
+    assert!(run(&dir, &["claim", "x", "--by", "agent"]).status.success());
+    let cid = event_id(&dir, "claim");
+
+    let out = run(&dir, &["evidence", &cid, "file:f.txt::NEVER_EXISTED"]);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "an anchor on absent text carries no signal"
+    );
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("not in f.txt"),
+        "the refusal must name the file: {err}"
+    );
+    assert!(
+        err.contains("exists now"),
+        "the refusal must teach the rule: {err}"
+    );
+}
+
+#[test]
+fn evidence_should_refuse_an_empty_pass_line() {
+    let dir = fresh_git();
+    std::fs::write(dir.join("f.txt"), "hello\n").unwrap();
+    assert!(run(&dir, &["init"]).status.success());
+    assert!(run(&dir, &["claim", "x", "--by", "agent"]).status.success());
+    let cid = event_id(&dir, "claim");
+
+    let out = run(&dir, &["evidence", &cid, "file:f.txt::"]);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "an empty pass-line matches every line"
+    );
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("empty"), "the refusal must say why: {err}");
+}
+
+#[test]
+fn evidence_should_accept_a_content_anchor_whose_text_is_present() {
+    let dir = fresh_git();
+    std::fs::write(dir.join("f.txt"), "hello world\n").unwrap();
+    assert!(run(&dir, &["init"]).status.success());
+    assert!(run(&dir, &["claim", "x", "--by", "agent"]).status.success());
+    let cid = event_id(&dir, "claim");
+
+    let out = run(&dir, &["evidence", &cid, "file:f.txt::hello"]);
+    assert!(
+        out.status.success(),
+        "present text must be accepted: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(String::from_utf8_lossy(&out.stdout).contains("resolves"));
+}
+
+#[test]
+fn verify_should_still_read_an_anchor_that_attach_would_now_refuse() {
+    // A 0.2.2 ledger can hold `file:p::TEXT_NOT_THERE` and `file:p::` — 0.2.3 refuses
+    // both at attach, but the guard must never leak into the READ path.
+    let dir = fresh_git();
+    std::fs::write(dir.join("f.txt"), "hello\n").unwrap();
+    assert!(run(&dir, &["init"]).status.success());
+    assert!(run(&dir, &["claim", "legacy", "--by", "agent"])
+        .status
+        .success());
+    let cid = event_id(&dir, "claim");
+
+    let ledger = std::fs::read_dir(dir.join(".evolving/ledger"))
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .find(|e| e.path().extension().is_some_and(|x| x == "jsonl"))
+        .unwrap()
+        .path();
+    let mut text = std::fs::read_to_string(&ledger).unwrap();
+    let last: serde_json::Value = serde_json::from_str(text.lines().last().unwrap()).unwrap();
+    let legacy = serde_json::json!({
+        "v": last["v"], "id": "evd_01LEGACY0000000000000000",
+        "ts": last["ts"], "writer": last["writer"],
+        "seq": last["seq"].as_u64().unwrap() + 1,
+        "actor": { "kind": "agent", "id": "legacy" },
+        "type": "evidence",
+        "body": { "claim": cid, "ref": "file:f.txt::TEXT_NOT_THERE",
+                  "status": "failed", "self_evident": false }
+    });
+    text.push_str(&serde_json::to_string(&legacy).unwrap());
+    text.push('\n');
+    std::fs::write(&ledger, text).unwrap();
+
+    let out = run(&dir, &["verify", "--json"]);
+    assert!(
+        out.status.success(),
+        "verify must not error on a legacy anchor: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(String::from_utf8_lossy(&out.stdout).contains("file:f.txt::TEXT_NOT_THERE"));
+}

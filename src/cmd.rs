@@ -180,7 +180,7 @@ pub fn claim(args: ClaimArgs) -> Result<()> {
     // separate atomic write, so refusing after it would leave a bare claim behind on every
     // attempt — a refused ref must cost the ledger nothing.
     if let Some(eref) = &args.evidence {
-        crate::verify::guard_attach(eref)?;
+        crate::verify::guard_attach(eref, &root)?;
     }
 
     // an inline --evidence attaches an evidence event referencing the just-minted claim.

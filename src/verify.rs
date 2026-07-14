@@ -128,34 +128,62 @@ impl Liveness {
     }
 }
 
-/// The attach-time guard. Refuses shapes ev cannot mean, and teaches the form
-/// it can. Called ONLY from `verify_and_record` — never from `EvRef::parse`,
-/// which must stay total so a 0.2.1 ledger holding `file:<path>:150` still
-/// reads back (as `unreachable`) instead of erroring. Returns the ref it cleared,
-/// so the caller need not parse the string twice; `cmd::claim` wants only the
-/// refusal and drops the value.
-pub fn guard_attach(raw: &str) -> Result<EvRef> {
+/// The attach-time guard. Refuses anchors ev cannot mean, and anchors that
+/// cannot carry a signal. Called ONLY from `verify_and_record` and `cmd::claim`
+/// — never from `EvRef::parse`, which must stay total so a ledger written by an
+/// older version still reads back instead of erroring.
+pub fn guard_attach(raw: &str, repo_root: &Path) -> Result<EvRef> {
     let r = EvRef::parse(raw)?;
     if !matches!(r.kind, RefKind::Test | RefKind::File | RefKind::Artifact) {
         return Ok(r);
     }
-    if r.passline.is_some() {
-        return Ok(r);
-    }
-    // A single-colon `<path>:<N>` tail: the caller almost certainly meant a line
-    // number. ev anchors by content, so `:N` would silently become part of the
-    // path and the anchor would resolve to nothing.
-    if let Some((path, tail)) = r.payload.rsplit_once(':') {
-        if !tail.is_empty() && tail.chars().all(|c| c.is_ascii_digit()) {
-            let scheme = r.kind.scheme();
-            return Err(EvError::Refusal(format!(
-                "{raw} — refused: looks like a line number, not a content anchor.\n    \
-                 ev anchors by content, not by line (a line number stays green after the code moves).\n    \
-                 Use {scheme}:{path}::<text on that line>."
-            )));
+
+    match &r.passline {
+        // A single-colon `<path>:<N>` tail: the caller almost certainly meant a
+        // line number. ev anchors by content, so `:N` would silently become
+        // part of the path and the anchor would resolve to nothing.
+        None => {
+            if let Some((path, tail)) = r.payload.rsplit_once(':') {
+                if !tail.is_empty() && tail.chars().all(|c| c.is_ascii_digit()) {
+                    let scheme = r.kind.scheme();
+                    return Err(EvError::Refusal(format!(
+                        "{raw} — refused: looks like a line number, not a content anchor.\n    \
+                         ev anchors by content, not by line (a line number stays green after the code moves).\n    \
+                         Use {scheme}:{path}::<text on that line>."
+                    )));
+                }
+            }
+            Ok(r)
+        }
+        Some(text) if text.is_empty() => Err(EvError::Refusal(format!(
+            "{raw} — refused: the pass-line after `::` is empty.\n    \
+             An empty pass-line matches every line, so the anchor can never go red."
+        ))),
+        Some(text) => {
+            // The cited text must exist NOW. An anchor on absent text is born red and
+            // stays red forever — it carries no signal and never will.
+            let path = if r.kind == RefKind::Artifact {
+                repo_root.join(".evolving/artifacts").join(&r.payload)
+            } else {
+                repo_root.join(&r.payload)
+            };
+            let present = std::fs::read(&path)
+                .map(|c| {
+                    String::from_utf8_lossy(&c)
+                        .lines()
+                        .any(|l| l.contains(text.as_str()))
+                })
+                .unwrap_or(false);
+            if !present {
+                return Err(EvError::Refusal(format!(
+                    "{raw} — the cited text is not in {} at this commit.\n    \
+                     A content anchor must quote text that exists now; it goes red when that text changes.",
+                    r.payload
+                )));
+            }
+            Ok(r)
         }
     }
-    Ok(r)
 }
 
 /// Check whether a ref's anchor resolves against `repo_root`. Resolution is a
@@ -232,7 +260,7 @@ pub fn verify_and_record(
     self_evident: bool,
     actor: Actor,
 ) -> Result<String> {
-    let r = guard_attach(raw_ref)?;
+    let r = guard_attach(raw_ref, repo_root)?;
     let status = verify_ref(&r, repo_root);
     let mut body = serde_json::json!({
         "claim": claim_id,

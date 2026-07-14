@@ -58,8 +58,8 @@ fn claim_json(c: &ClaimView) -> serde_json::Value {
             if let Some(k) = e.drift {
                 v["drift"] = serde_json::json!(k);
             }
-            if let Some(c) = e.cell {
-                v["cell"] = serde_json::json!(c);
+            if let Some(cell) = e.cell {
+                v["cell"] = serde_json::json!(cell);
             }
             v
         })

@@ -479,22 +479,34 @@ pub fn hold(claim: String, reason: String, i_am_the_human: bool) -> Result<()> {
 /// Records the HEAD that was looked at, so ev can report movement since the LAST LOOK
 /// as well as movement since the filing. This is not a re-base: the evidence `base`
 /// stays pinned forever.
+///
+/// When git cannot resolve HEAD (a repo with no commits yet) the `head` field is OMITTED
+/// rather than filled with a placeholder. A recorded non-sha would be a reference git can
+/// never resolve, so `drift_since` would return None for the claim forever and the anchor
+/// would read as unmoved no matter how far the world moved. An absent `head` instead folds
+/// to `last_ack = None` and drift falls back to the evidence `base`.
 pub fn ack(claim: String, i_am_the_human: bool) -> Result<()> {
     assert_human(i_am_the_human)?;
     let root = find_root();
     let ledger = Ledger::open(&root)?;
     let full = resolve_claim_id(&ledger, &claim)?;
-    let head = crate::git_output(&root, &["rev-parse", "HEAD"]).unwrap_or_else(|| "ROOT".into());
+    let head = crate::git_output(&root, &["rev-parse", "HEAD"]);
+    let mut body = serde_json::json!({ "claim": full });
+    if let Some(h) = &head {
+        body["head"] = serde_json::json!(h);
+    }
     ledger.append_batch(vec![NewEvent {
         etype: "ack".into(),
         actor: Actor::human(),
-        body: serde_json::json!({ "claim": full, "head": head }),
+        body,
     }])?;
-    println!(
-        "{} acknowledged at {}",
-        short(&full),
-        &head[..head.len().min(8)]
-    );
+    match &head {
+        Some(h) => println!("{} acknowledged at {}", short(&full), &h[..h.len().min(8)]),
+        None => println!(
+            "{} acknowledged. No commit to reference yet, so drift is counted from the filing base.",
+            short(&full)
+        ),
+    }
     Ok(())
 }
 

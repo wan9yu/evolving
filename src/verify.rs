@@ -183,7 +183,8 @@ impl Status {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Cell {
-    /// Nothing this anchor can see has moved.
+    /// Drift was measured, and it is zero: nothing this anchor can see has moved.
+    /// An UNMEASURED drift is not this cell — it is no cell at all.
     Still,
     /// The cited line stands; code moved beside it. The content anchor's blind spot.
     NeighborhoodMoved,
@@ -198,11 +199,22 @@ pub enum Cell {
 
 impl Cell {
     /// THE ONE AND ONLY derivation. A second site is a second source of truth.
+    ///
+    /// No cell is emitted when drift could not be measured (`drift == None` under a
+    /// `Resolves`): `still` would assert that nothing moved, and ev did not look. The
+    /// absent cell is the same convention `Recorded` and `Unreachable` already carry —
+    /// no cell means ev asserts nothing. A `commit:` ref, whose drift is None by
+    /// construction, therefore carries no cell either; `Liveness::Immutable` already
+    /// states why nothing can move under it.
     pub fn of(status: Status, drift: Option<u32>) -> Option<Cell> {
         match status {
-            Status::Resolves => Some(match drift {
-                Some(k) if k > 0 => Cell::NeighborhoodMoved,
-                _ => Cell::Still,
+            // `still` means MEASURED, AND ZERO.
+            Status::Resolves => drift.map(|k| {
+                if k > 0 {
+                    Cell::NeighborhoodMoved
+                } else {
+                    Cell::Still
+                }
             }),
             Status::Changed => Some(Cell::AnchorChanged),
             Status::Gone => Some(Cell::FileGone),
@@ -397,6 +409,13 @@ pub fn drift_phrase(k: u32) -> String {
 /// written to. `last_ack` is a second, human-relative reference point, read here at
 /// annotation time. Auto re-basing would zero drift on every commit — a structural
 /// false-green.
+///
+/// The reference order is `last_ack` FIRST, chosen and not overlooked. When evidence is
+/// filed AFTER the last ack, the filing `base` is newer than `last_ack` and the count
+/// still runs from `last_ack` — so it includes commits that predate the anchor's own
+/// existence. That errs safe: it over-flags (says RE-READ), never under-flags, and a
+/// fresh ack clears it. Counting from the newer of the two would risk the opposite
+/// error, and a silent under-flag is the one failure a ratchet cannot survive.
 ///
 /// Every surface that reports drift calls this; a second rule elsewhere would be the
 /// second source of truth the cell exists to prevent.

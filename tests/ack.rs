@@ -126,3 +126,39 @@ fn ack_should_refuse_a_non_claim_id() {
         "ack attaches to a claim, like every disposition"
     );
 }
+
+#[test]
+fn a_disposition_should_snapshot_what_the_pair_said_at_that_moment() {
+    let dir = fresh_git();
+    std::fs::write(dir.join("a.txt"), "hello\n").unwrap();
+    git_commit(&dir, "one");
+    assert!(run(&dir, &["init"]).status.success());
+    assert!(run(&dir, &["claim", "c", "--by", "agent"]).status.success());
+    let id = claim_id(&dir);
+    assert!(run(&dir, &["evidence", &id, "file:a.txt::hello"])
+        .status
+        .success());
+
+    std::fs::write(dir.join("a.txt"), "hello\nworld\n").unwrap();
+    git_commit(&dir, "the world moves");
+
+    assert!(run(
+        &dir,
+        &["hold", &id, "--reason", "thinking", "--i-am-the-human"]
+    )
+    .status
+    .success());
+
+    let ev = ledger_events(&dir)
+        .into_iter()
+        .rfind(|e| e["type"] == "hold")
+        .unwrap();
+    let snap = &ev["body"]["at_verify"];
+    assert!(
+        snap.is_array(),
+        "every disposition records the pair at that instant: {ev}"
+    );
+    assert_eq!(snap[0]["cell"].as_str().unwrap(), "neighborhood-moved");
+    assert_eq!(snap[0]["status"].as_str().unwrap(), "resolves");
+    assert_eq!(snap[0]["drift"].as_u64().unwrap(), 1);
+}

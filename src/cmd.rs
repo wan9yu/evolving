@@ -393,6 +393,45 @@ fn resolve_claim_id(ledger: &Ledger, prefix: &str) -> Result<String> {
     }
 }
 
+/// The pair, at the instant a human disposed of a claim: what each anchor read, and how
+/// far the world had moved under it. Written into every disposition event so a later
+/// analysis can ask whether the signal PRECEDED the decision — the first measurable
+/// proxy for whether the rail earns its cost. ev emits it and never reads it.
+pub fn at_verify_snapshot(root: &Path, ledger: &Ledger, claim_id: &str) -> serde_json::Value {
+    let mut d = match ledger.scan() {
+        Ok(events) => crate::state::fold(&events),
+        Err(_) => return serde_json::json!([]),
+    };
+    crate::verify::annotate_drift(&mut d, root);
+    let found = d
+        .claims
+        .iter()
+        .chain(&d.grey)
+        .chain(&d.closed)
+        .find(|c| c.id == claim_id);
+    match found {
+        None => serde_json::json!([]),
+        Some(c) => serde_json::Value::Array(
+            c.evidence
+                .iter()
+                .map(|e| {
+                    let mut v = serde_json::json!({
+                        "ref": e.eref,
+                        "status": e.status,
+                    });
+                    if let Some(k) = e.drift {
+                        v["drift"] = serde_json::json!(k);
+                    }
+                    if let Some(cell) = e.cell {
+                        v["cell"] = serde_json::json!(cell);
+                    }
+                    v
+                })
+                .collect(),
+        ),
+    }
+}
+
 fn evidence_actor() -> Actor {
     // Evidence is creation-only; agents are permitted. Provenance is recorded.
     if std::env::var("CLAUDECODE").is_ok() {
@@ -437,10 +476,11 @@ pub fn close(args: CloseArgs) -> Result<()> {
         let reason = args
             .reason
             .ok_or_else(|| EvError::Refusal("--dead needs --reason".into()))?;
+        let snap = at_verify_snapshot(&root, &ledger, &full);
         ledger.append_batch(vec![NewEvent {
             etype: "prune".into(),
             actor: Actor::human(),
-            body: serde_json::json!({ "claim": full, "reason": reason }),
+            body: serde_json::json!({ "claim": full, "reason": reason, "at_verify": snap }),
         }])?;
         println!("declared dead: {} — {reason}", short(&full));
         return Ok(());
@@ -452,10 +492,11 @@ pub fn close(args: CloseArgs) -> Result<()> {
             short(&full)
         )));
     }
+    let snap = at_verify_snapshot(&root, &ledger, &full);
     ledger.append_batch(vec![NewEvent {
         etype: "close".into(),
         actor: Actor::human(),
-        body: serde_json::json!({ "claim": full }),
+        body: serde_json::json!({ "claim": full, "at_verify": snap }),
     }])?;
     println!("closed {} with evidence.", short(&full));
     Ok(())
@@ -466,10 +507,11 @@ pub fn hold(claim: String, reason: String, i_am_the_human: bool) -> Result<()> {
     let root = find_root();
     let ledger = Ledger::open(&root)?;
     let full = resolve_claim_id(&ledger, &claim)?;
+    let snap = at_verify_snapshot(&root, &ledger, &full);
     ledger.append_batch(vec![NewEvent {
         etype: "hold".into(),
         actor: Actor::human(),
-        body: serde_json::json!({ "claim": full, "reason": reason }),
+        body: serde_json::json!({ "claim": full, "reason": reason, "at_verify": snap }),
     }])?;
     println!("held (grey): {} — {reason}", short(&full));
     Ok(())
@@ -491,7 +533,8 @@ pub fn ack(claim: String, i_am_the_human: bool) -> Result<()> {
     let ledger = Ledger::open(&root)?;
     let full = resolve_claim_id(&ledger, &claim)?;
     let head = crate::git_output(&root, &["rev-parse", "HEAD"]);
-    let mut body = serde_json::json!({ "claim": full });
+    let snap = at_verify_snapshot(&root, &ledger, &full);
+    let mut body = serde_json::json!({ "claim": full, "at_verify": snap });
     if let Some(h) = &head {
         body["head"] = serde_json::json!(h);
     }
@@ -515,10 +558,11 @@ pub fn demand(claim: String, i_am_the_human: bool) -> Result<()> {
     let root = find_root();
     let ledger = Ledger::open(&root)?;
     let full = resolve_claim_id(&ledger, &claim)?;
+    let snap = at_verify_snapshot(&root, &ledger, &full);
     ledger.append_batch(vec![NewEvent {
         etype: "demand".into(),
         actor: Actor::human(),
-        body: serde_json::json!({ "claim": full }),
+        body: serde_json::json!({ "claim": full, "at_verify": snap }),
     }])?;
     println!(
         "demanded evidence for {}. It leads the next brief.",

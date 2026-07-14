@@ -208,24 +208,27 @@ pub fn apply_bare_answer(
     let a = ans.trim();
     let human = Actor::human();
     if a == "d" {
+        let snap = crate::cmd::at_verify_snapshot(root, ledger, &c.id);
         ledger.append_batch(vec![NewEvent {
             etype: "demand".into(),
             actor: human,
-            body: serde_json::json!({ "claim": c.id }),
+            body: serde_json::json!({ "claim": c.id, "at_verify": snap }),
         }])?;
     } else if let Some(rest) = a.strip_prefix("a ") {
         crate::verify::verify_and_record(ledger, root, &c.id, rest.trim(), false, human)?;
     } else if a == "h" {
+        let snap = crate::cmd::at_verify_snapshot(root, ledger, &c.id);
         ledger.append_batch(vec![NewEvent {
             etype: "hold".into(),
             actor: human,
-            body: serde_json::json!({ "claim": c.id, "reason": "held at pause" }),
+            body: serde_json::json!({ "claim": c.id, "reason": "held at pause", "at_verify": snap }),
         }])?;
     } else if a == "x" {
+        let snap = crate::cmd::at_verify_snapshot(root, ledger, &c.id);
         ledger.append_batch(vec![NewEvent {
             etype: "prune".into(),
             actor: human,
-            body: serde_json::json!({ "claim": c.id, "reason": "declared dead at pause" }),
+            body: serde_json::json!({ "claim": c.id, "reason": "declared dead at pause", "at_verify": snap }),
         }])?;
     }
     // "c" (carry) or anything else: no event written
@@ -243,7 +246,8 @@ fn apply_moved_answer(root: &Path, ledger: &Ledger, claim_id: &str, ans: &str) -
     match ans {
         "k" => {
             let head = crate::git_output(root, &["rev-parse", "HEAD"]);
-            let mut body = serde_json::json!({ "claim": claim_id });
+            let snap = crate::cmd::at_verify_snapshot(root, ledger, claim_id);
+            let mut body = serde_json::json!({ "claim": claim_id, "at_verify": snap });
             if let Some(h) = &head {
                 body["head"] = serde_json::json!(h);
             }
@@ -254,17 +258,19 @@ fn apply_moved_answer(root: &Path, ledger: &Ledger, claim_id: &str, ans: &str) -
             }])?;
         }
         "h" => {
+            let snap = crate::cmd::at_verify_snapshot(root, ledger, claim_id);
             ledger.append_batch(vec![NewEvent {
                 etype: "hold".into(),
                 actor: human,
-                body: serde_json::json!({ "claim": claim_id, "reason": "held at pause after movement" }),
+                body: serde_json::json!({ "claim": claim_id, "reason": "held at pause after movement", "at_verify": snap }),
             }])?;
         }
         "d" => {
+            let snap = crate::cmd::at_verify_snapshot(root, ledger, claim_id);
             ledger.append_batch(vec![NewEvent {
                 etype: "demand".into(),
                 actor: human,
-                body: serde_json::json!({ "claim": claim_id }),
+                body: serde_json::json!({ "claim": claim_id, "at_verify": snap }),
             }])?;
         }
         _ => {} // enter, or anything else: carry. No event written.

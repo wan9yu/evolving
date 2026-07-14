@@ -175,6 +175,45 @@ impl Status {
     }
 }
 
+/// The join of what ev found (`Status`) and how far the world moved under the anchor
+/// (`drift`, counted from the human's last look). ev has always emitted both facts and
+/// never put them side by side — so a whole class of movement, the one a content anchor
+/// is blind to, went unread. A cell is a fact, never a verdict: it says RE-READ, never
+/// "resolved".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Cell {
+    /// Nothing this anchor can see has moved.
+    Still,
+    /// The cited line stands; code moved beside it. The content anchor's blind spot.
+    NeighborhoodMoved,
+    /// The cited line itself changed.
+    AnchorChanged,
+    /// The container is gone.
+    FileGone,
+    /// A pre-0.2.3 conflated status. ev cannot classify it without re-verifying, and
+    /// does not guess. The next `ev verify` resolves it.
+    Legacy,
+}
+
+impl Cell {
+    /// THE ONE AND ONLY derivation. A second site is a second source of truth.
+    pub fn of(status: Status, drift: Option<u32>) -> Option<Cell> {
+        match status {
+            Status::Resolves => Some(match drift {
+                Some(k) if k > 0 => Cell::NeighborhoodMoved,
+                _ => Cell::Still,
+            }),
+            Status::Changed => Some(Cell::AnchorChanged),
+            Status::Gone => Some(Cell::FileGone),
+            Status::Failed => Some(Cell::Legacy),
+            // A self-asserted ref has no world under it; an unreadable one is not a
+            // fact about the code. Neither has a cell.
+            Status::Recorded | Status::Unreachable => None,
+        }
+    }
+}
+
 /// The attach-time guard. Refuses anchors ev cannot mean, and anchors that
 /// cannot carry a signal. Called ONLY from `verify_and_record` and `cmd::claim`
 /// — never from `EvRef::parse`, which must stay total so a ledger written by an
@@ -348,21 +387,47 @@ pub fn drift_phrase(k: u32) -> String {
     format!("drift: cited path changed in {k} commit(s) beyond the anchor")
 }
 
-/// Fill in drift on every evidence view that can carry it (path-bearing ref
-/// with a recorded base). An explicit read-time step so the fold stays pure.
+/// THE ONE AND ONLY reference rule: drift is counted from the HUMAN'S LAST LOOK
+/// (`last_ack`, the head of the most recent `ack`) when there is one, else from the
+/// filing `base`. Without the ack reference, `neighborhood-moved` is a ratchet — it
+/// rises once and no human can ever clear it, and a permanent red carries no
+/// information.
+///
+/// This is NOT a re-base: the evidence `base` stays pinned forever and is never
+/// written to. `last_ack` is a second, human-relative reference point, read here at
+/// annotation time. Auto re-basing would zero drift on every commit — a structural
+/// false-green.
+///
+/// Every surface that reports drift calls this; a second rule elsewhere would be the
+/// second source of truth the cell exists to prevent.
+pub fn drift_since(
+    repo_root: &Path,
+    last_ack: Option<&str>,
+    base: Option<&str>,
+    r: &EvRef,
+) -> Option<u32> {
+    let reference = last_ack.or(base)?;
+    drift(repo_root, reference, r)
+}
+
+/// Fill in drift and the cell on every evidence view that can carry them (path-bearing
+/// ref with a reference point). An explicit read-time step so the fold stays pure.
 /// One git subprocess per annotated item; if claim counts grow, batching by
-/// unique (base, path) pairs is the natural next step.
+/// unique (reference, path) pairs is the natural next step.
 pub fn annotate_drift(d: &mut crate::state::Derived, repo_root: &Path) {
     let fill = |claims: &mut Vec<crate::state::ClaimView>| {
         for c in claims.iter_mut() {
+            let last_ack = c.last_ack.clone();
             for ev in c.evidence.iter_mut() {
-                if let (Some(base), Ok(r)) = (ev.base.as_deref(), EvRef::parse(&ev.eref)) {
-                    ev.drift = drift(repo_root, base, &r);
+                if let Ok(r) = EvRef::parse(&ev.eref) {
+                    ev.drift = drift_since(repo_root, last_ack.as_deref(), ev.base.as_deref(), &r);
                 }
+                ev.cell = Cell::of(ev.status, ev.drift);
             }
         }
     };
     fill(&mut d.claims);
+    fill(&mut d.closed);
     fill(&mut d.grey);
     fill(&mut d.demands_returned);
 }

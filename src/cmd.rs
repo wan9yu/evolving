@@ -296,11 +296,16 @@ pub fn verify_cmd(claim_id: Option<String>, json: bool, full: bool) -> Result<()
                 let status = crate::verify::verify_ref(&r, &root);
                 let liveness = crate::verify::Liveness::of(&r);
                 // drift: the world's movement under the anchor, in commits touching
-                // the cited path — a structural fact, judged by the human.
-                let moved = ev
-                    .base
-                    .as_deref()
-                    .and_then(|base| crate::verify::drift(&root, base, &r));
+                // the cited path — a structural fact, judged by the human. Counted
+                // from the same reference `annotate_drift` uses (the human's last
+                // look, else the filing base), through the same rule: a second rule
+                // here would be a second source of truth.
+                let moved = crate::verify::drift_since(
+                    &root,
+                    c.last_ack.as_deref(),
+                    ev.base.as_deref(),
+                    &r,
+                );
 
                 let mut body = serde_json::json!({
                     "claim": c.id,
@@ -313,6 +318,12 @@ pub fn verify_cmd(claim_id: Option<String>, json: bool, full: bool) -> Result<()
                 }
                 if let Some(k) = moved {
                     body["drift"] = serde_json::json!(k);
+                }
+                // The cell is derived in exactly one place — `Cell::of`. This body is
+                // both the appended `verify` event and the `--json` check: one shape,
+                // one source of truth.
+                if let Some(cell) = crate::verify::Cell::of(status, moved) {
+                    body["cell"] = serde_json::json!(cell);
                 }
                 ledger.append_batch(vec![NewEvent {
                     etype: "verify".into(),

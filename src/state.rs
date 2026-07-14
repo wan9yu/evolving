@@ -26,6 +26,11 @@ pub struct EvidenceView {
     /// World movement under the anchor: commits touching the cited path beyond
     /// the base. Filled by drift annotation at read time; the fold leaves it None.
     pub drift: Option<u32>,
+    /// The join of `status` and `drift` — the pair ev has always emitted separately
+    /// and never put side by side. Derived only by `verify::Cell::of`. Filled by drift
+    /// annotation at read time; the fold leaves it None. A fact, never a verdict: a
+    /// cell says RE-READ, never that a claim was resolved.
+    pub cell: Option<crate::verify::Cell>,
     /// What it would take for this anchor to go red — a fact about the pointer's
     /// shape. Derived from the ref, so the fold stays pure. Carried as the class
     /// itself, so a reader that counts them cannot silently bucket an unknown one.
@@ -160,6 +165,7 @@ pub fn fold(events: &[Envelope]) -> Derived {
                                 .unwrap_or(false),
                             base: s(&e.body, "base"),
                             drift: None,
+                            cell: None,
                             liveness,
                         });
                         acc.held = None; // evidence revives a grey/held claim

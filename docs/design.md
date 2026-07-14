@@ -19,7 +19,7 @@ One crate, each module one job:
 |---|---|
 | `ledger` | envelope, writer identity, the single atomic batch-append, torn-tolerant scan |
 | `state` | the fold: event log → derived state (claim machine, grey, snapshots, views) |
-| `verify` | anchor resolution (commit / file / test / artifact), the four statuses, drift |
+| `verify` | anchor resolution (commit / file / test / artifact), the status, drift, and the `cell` that joins them |
 | `exhaust` | git-window discovery; one claim per session; the label rule |
 | `hooks` | session hook install and handlers; the sweep |
 | `pause` | the ritual: screens, decisions, receipts |
@@ -40,8 +40,12 @@ Git is invoked as a subprocess; there is no git library, no TUI crate, no networ
 - Envelope: `{v, id, ts, writer, seq, actor{kind: human|agent|engine, id?, via?}, type, body}`.
   Ids are type-prefixed ULIDs (`clm_…`, `evd_…`, `vfy_…`); the CLI accepts any unique prefix.
 - Event types read by the fold: `claim` · `evidence` · `verify` · `close` · `hold` · `prune` ·
-  `demand` · `thought` · `indicator` · `retire` · `snapshot` · `pause` · `session`. The id-prefix
-  table also reserves names for planned types; unknown types are ignored on read.
+  `demand` · `ack` · `thought` · `indicator` · `retire` · `snapshot` · `pause` · `session`. The
+  id-prefix table also reserves names for planned types; unknown types are ignored on read.
+- Every disposition event — `close` · `hold` · `demand` · `prune` · `ack` — carries `at_verify`: a
+  snapshot of what each of the claim's anchors read (status, drift, cell) at the instant of the
+  decision. ev writes it and never reads it back; it exists so a later reader can ask whether the
+  signal preceded the decision, not to drive any behaviour of ev's own.
 - **One write primitive:** a batch is serialized to a single buffer and lands in one append write +
   fsync, so a killed process can never leave a dangling intra-batch reference. An exclusive flock on
   `local/writer.toml` guards the per-writer `seq` counter. A provably partial trailing line (torn by
@@ -65,15 +69,24 @@ commit is absent from this clone; `--full` re-checks it anyway. By default, ev v
 for that absence on old exhaust windows; `ev verify --full` is the path that still does.) ·
 `close <claim>` (requires evidence, or the explicit exit
 `--dead --reason <text>`; a bare close is refused) · `hold <claim> --reason` · `demand <claim>` ·
+`ack <claim>` (human-only: the human looked, and the claim still stands — see below) ·
 `pause` (`--boundary` on the snapshot day; `--script` for piped stdin) · `brief` (`--json`; ≤2KB text) ·
 `line` (`--json [--stable]`) · `indicator declare|retire` (ceiling of four) ·
-`hook install|uninstall|session-start|session-end` · `doctor` (ledger integrity, plus two
-never-gating census lines: anchor liveness and ref types in use) ·
+`hook install|uninstall|session-start|session-end` · `doctor` (ledger integrity, plus three
+never-gating census lines: anchor liveness, ref types in use, and the movement census — see below) ·
 `baseline [<sha>]` (record where the ledger began; default HEAD — `ev init` records it, an upgraded
 0.2.1 ledger needs it once) · `exhaust --since <ref> --session <id>` (plumbing; `--since ROOT` starts
 the window at the baseline, so a repo's pre-existing history is never filed as a session's output).
 
-Closure verbs (`close`, `hold`, `demand`, `pause`, `indicator`) refuse under the `CLAUDECODE`
+`ack <claim> --i-am-the-human` records that the human looked at a claim and it still stands. It
+completes the disposition set — `close` / `hold` / `demand` / `prune` had no way to record the most
+common outcome of a review — and it is what keeps `neighborhood-moved` (below) from becoming a flag
+no human can ever clear. It is **not a re-base**: the evidence `base` a claim was filed against stays
+pinned forever; `ack` records a second, human-relative reference point (the HEAD looked at), and once
+a claim has been acked, drift is counted from that look forward — `last_ack` takes priority over the
+filing `base` whenever both exist — see "Evidence, resolution, drift" below.
+
+Closure verbs (`close`, `hold`, `demand`, `ack`, `pause`, `indicator`) refuse under the `CLAUDECODE`
 environment variable unless `--i-am-the-human` is passed — a provenance courtesy, not security.
 Exit codes: 0 done · 1 honest refusal · 2 error. State-reading output ends with
 "as of event `<id>` · ev refreshes when invoked, not in the background."
@@ -98,6 +111,12 @@ Exit codes: 0 done · 1 honest refusal · 2 error. State-reading output ends wit
   **Resolution is a fact about the pointer, never a verdict on the claim** — the status word is
   chosen so a resolve-check cannot be read as "the claim is verified." Resolution runs when evidence
   is filed and on `ev verify`.
+- **Attach-time guard (0.2.3):** `ev evidence` / `ev claim --evidence` refuse three anchors that
+  cannot carry a signal: an id that is not a claim's; a content anchor (`::<text>`) whose text is
+  absent from the target at filing time (an anchor on absent text is born red and stays red
+  forever — it carries no signal and never will); and an empty pass-line (`file:<path>::`), which
+  matches every line and can never go red. The guard runs once, at filing; it does not touch anchors
+  already on the ledger.
 - Ledgers are append-only, so the read path carries what older versions wrote and never rewrites it:
   0.1.x's `verified` normalizes to `resolves`, and `failed` — the pre-0.2.3 value that conflated
   `changed`, `gone` and a never-valid anchor behind one word — reads back as `failed`, forever.
@@ -108,7 +127,24 @@ Exit codes: 0 done · 1 honest refusal · 2 error. State-reading output ends wit
   entries, and the pause's returned-demands screen. A structural fact, measured in world
   movement, not clocks — zero means the cited path is exactly as the anchor saw it; a drifted anchor
   can still resolve while the recommendation it supported has gone stale. The human judges what
-  drift means; the engine only counts it.
+  drift means; the engine only counts it. Once a claim has been `ack`'d, drift is counted from the
+  HEAD that `ack` recorded rather than the filing `base` — from the human's **last look**, not from
+  filing — so a fresh look resets the count without touching the pinned `base`.
+- **`cell`:** the join of `status` and drift-since-the-last-look, derived in exactly one place
+  (`Cell::of`) so no second site can drift from it. Five values: `still` (drift was measured, and it
+  is zero — nothing this anchor can see has moved), `neighborhood-moved` (the cited line stands;
+  code moved beside it — the content anchor's blind spot), `anchor-changed` (the cited line itself
+  changed), `file-gone` (the container is gone), `legacy` (a pre-0.2.3 `failed` status ev cannot
+  classify without re-verifying). **No cell is emitted when drift could not be measured** — a
+  `commit:` ref, a `recorded` (`metric:`/`url:`) anchor, and an `unreachable` one all carry no cell,
+  by the same convention: an absent cell means ev asserts nothing, not that nothing moved. `still`
+  is the only value that means zero movement, and it means that only because drift was actually
+  counted. `ev verify --json` and `ev brief --json` carry `cell` on every check that has one.
+  **ev never reports whether a claim was resolved.** A content anchor sees a changed *line*, not a
+  restored *behaviour*, and most caller-visible defects are fixed by adding code beside the buggy
+  line — the anchor stays green, and the fix shows up only as `neighborhood-moved`: the ground under
+  the claim shifted. `neighborhood-moved` is a prompt to re-read, and nothing more; ev does not
+  infer a fix from it.
 - **`self_evident: true`** marks evidence auto-derived from the same repo it resolves against (a
   session's own commits). Renderers show **⊙** for self-evident and **✓** for independently filed
   anchors — never the same mark. A pointer's existence is a fact; whether the evidence covers
@@ -133,7 +169,10 @@ Exit codes: 0 done · 1 honest refusal · 2 error. State-reading output ends wit
 ## The pause
 
 A line-oriented prompt loop, screens in order: **0** the day's shape → **1** returned demands (the
-payoff moment) → **2** the exhaust batch — ⊙ badge, labels, age (`N boundaries old`), acknowledged
+payoff moment) → **1.5** claims whose code moved since the last look (`cell` ∈
+`neighborhood-moved` / `anchor-changed` / `file-gone`) — one line of *why*, then `k` (still stands,
+i.e. `ack`) / `h`old / `d`emand / enter to skip (`a` is not offered here; it is already attach on
+screen 3) → **2** the exhaust batch — ⊙ badge, labels, age (`N boundaries old`), acknowledged
 with honest wording (*acknowledging records that work happened; it does not verify the assertions*) →
 **3** bare claims one at a time — demand (`d`) / attach (`a <ref>`) / hold (`h`) / dead (`x`) /
 carry (`c`) → **4** the grey list → **5** the receipt: duration and a one-key "labels legible? y/n".
@@ -150,6 +189,12 @@ is the live fold. `--json --stable` normalizes volatile fields and is byte-stabl
 
 `ev doctor` checks the ledger: dangling references (an event pointing at an unknown claim),
 duplicate closes, and per-writer clock drift. Clean exits 0; problems print and exit 2.
+
+It also prints three census lines that never gate and never change the exit code: anchor liveness
+(what it would take for each recorded anchor to go red), ref types in use, and the movement
+census — a count of every claim's most severe `cell` (`still` / `neighborhood-moved` /
+`anchor-changed` / `file-gone` / `legacy`). Where claims sit on code that moved, doctor says
+**re-read** — never "resolved"; it has no way to know whether the movement was the fix.
 
 ## Design laws
 

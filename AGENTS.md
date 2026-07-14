@@ -33,6 +33,15 @@ verified) · `url:<text>` (recorded, not verified). The `::` payload is **text t
 number** — `file:src/x.rs:56` is refused, `file:src/x.rs::fn parse(` is the anchor that goes red when
 that line changes.
 
+A content anchor (the `::<text>` form) must quote text that exists in the target **right now** — ev
+refuses to file one otherwise, since an anchor on absent text is born red and can never carry a
+signal. A bare `file:<path>` (no `::`) is refused too, if the trailing segment after a `:` is a line
+number — that shape almost always means a line was meant, and ev anchors by content, not by line.
+The statuses an agent will see, on `ev evidence`, `ev verify`, or a claim's evidence read back, are
+`resolves` · `changed` · `gone` · `unreachable` · `recorded`. `changed` means **the cited line
+changed — re-read what is there now**, never "fixed": ev has no way to tell whether the code that
+replaced it addresses what the claim described.
+
 On machines where the session hooks are wired (`ev hook install`, once per machine), your session's
 commits are captured automatically as self-evident claims — so you do not have to file a claim for
 every commit. File one when you want to assert something a bare commit does not say (fixed,

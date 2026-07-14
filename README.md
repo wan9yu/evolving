@@ -47,8 +47,9 @@ ev hook install                           # wire the session hooks: auto-capture
 ev claim "fixed the parser" \             # an agent files a claim with a pointer
     --by agent --evidence commit:<sha>
 ev claim "the boundary is safe"           # a bare claim — no pointer yet
-ev verify                                 # re-check anchors; report drift
-ev pause                                  # the human's daily ritual: demand, attach, hold, let go
+ev verify                                 # re-check anchors; report status joined with drift
+ev pause                                  # the human's daily ritual: demand, attach, hold, ack, let go
+ev ack <claim> --i-am-the-human           # the human looked; the claim still stands
 ev line                                   # the work line: what closed with evidence
 ev doctor                                 # check the ledger's integrity
 ```
@@ -84,9 +85,17 @@ fixed point.) Drift is measured in world movement, not clocks — an anchor can 
 the claim it supported has gone stale underneath. The engine counts; what the count means is the
 human's judgment.
 
-That judgment happens at the pause: demand evidence, attach it, hold in grey, or let a claim die.
-Closing is its own deliberate act — `ev close <id>`, on a claim that has earned it. What
-accumulates is the line — two raw counts, never a score.
+`status` and drift, read side by side, are a **cell**: `still` (measured, and zero) ·
+`neighborhood-moved` (the cited line stands, but code moved beside it) · `anchor-changed` ·
+`file-gone` · `legacy` (a pre-0.2.3 status ev cannot classify without re-checking). No cell is shown
+when drift could not be measured — an absent cell means ev asserts nothing. `neighborhood-moved` is
+the anchor's blind spot made visible: most caller-visible defects are fixed by adding code *beside*
+the cited line, which leaves a content anchor green. `ev` cannot tell anyone a claim was fixed —
+only that the ground under it moved, which is a prompt to re-read, never a verdict.
+
+That judgment happens at the pause: demand evidence, attach it, hold in grey, ack that it still
+stands, or let a claim die. Closing is its own deliberate act — `ev close <id>`, on a claim that has
+earned it. What accumulates is the line — two raw counts, never a score.
 
 ## What it refuses to do
 

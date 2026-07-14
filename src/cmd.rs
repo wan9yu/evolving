@@ -464,6 +464,29 @@ pub fn hold(claim: String, reason: String, i_am_the_human: bool) -> Result<()> {
     Ok(())
 }
 
+/// The disposition the set was missing: the human looked, and the claim still stands.
+/// Records the HEAD that was looked at, so ev can report movement since the LAST LOOK
+/// as well as movement since the filing. This is not a re-base: the evidence `base`
+/// stays pinned forever.
+pub fn ack(claim: String, i_am_the_human: bool) -> Result<()> {
+    assert_human(i_am_the_human)?;
+    let root = find_root();
+    let ledger = Ledger::open(&root)?;
+    let full = resolve_claim_id(&ledger, &claim)?;
+    let head = crate::git_output(&root, &["rev-parse", "HEAD"]).unwrap_or_else(|| "ROOT".into());
+    ledger.append_batch(vec![NewEvent {
+        etype: "ack".into(),
+        actor: Actor::human(),
+        body: serde_json::json!({ "claim": full, "head": head }),
+    }])?;
+    println!(
+        "{} acknowledged at {}",
+        short(&full),
+        &head[..head.len().min(8)]
+    );
+    Ok(())
+}
+
 pub fn demand(claim: String, i_am_the_human: bool) -> Result<()> {
     assert_human(i_am_the_human)?;
     let root = find_root();

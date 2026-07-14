@@ -44,6 +44,11 @@ pub struct ClaimView {
     /// Declared claim kind (e.g. "defect", "priority") — a filing fact, not a verdict.
     pub kind: Option<String>,
     pub reason: Option<String>,
+    /// The `head` of the most recent `ack` on this claim — the HEAD a human last
+    /// looked at. `None` until a human acks. Distinct from the evidence `base`,
+    /// which never moves: this is the human-relative reference point Task 5 reads
+    /// to report drift since the last look, not just drift since filing.
+    pub last_ack: Option<String>,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -94,6 +99,7 @@ struct ClaimAcc {
     demanded_at: Option<u64>,
     last_activity_seq: u64,
     opened_at_boundary: u32,
+    last_ack: Option<String>,
 }
 
 fn s(v: &serde_json::Value, k: &str) -> Option<String> {
@@ -128,6 +134,7 @@ pub fn fold(events: &[Envelope]) -> Derived {
                     demanded_at: None,
                     last_activity_seq: e.seq,
                     opened_at_boundary: boundary_count,
+                    last_ack: None,
                 });
             }
             "evidence" => {
@@ -208,6 +215,14 @@ pub fn fold(events: &[Envelope]) -> Derived {
                     }
                 }
             }
+            "ack" => {
+                if let Some(cid) = s(&e.body, "claim") {
+                    if let Some(acc) = claims.get_mut(&cid) {
+                        acc.last_ack = s(&e.body, "head");
+                        acc.last_activity_seq = e.seq;
+                    }
+                }
+            }
             "thought" => {
                 thoughts.push(ThoughtView {
                     id: e.id.clone(),
@@ -283,6 +298,7 @@ pub fn fold(events: &[Envelope]) -> Derived {
             source_ref: a.source_ref.clone(),
             kind: a.kind.clone(),
             reason: a.held.clone(),
+            last_ack: a.last_ack.clone(),
         };
         match state {
             ClaimState::Closed | ClaimState::Dead => out.closed.push(view.clone()),

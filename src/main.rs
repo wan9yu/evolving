@@ -75,6 +75,12 @@ enum Command {
         #[arg(long = "i-am-the-human")]
         i_am_the_human: bool,
     },
+    /// Record that the human looked at a claim and it still stands.
+    Ack {
+        claim: String,
+        #[arg(long = "i-am-the-human")]
+        i_am_the_human: bool,
+    },
     /// Plumbing: file exhaust for a session's git window.
     Exhaust {
         #[arg(long)]
@@ -178,6 +184,10 @@ fn main() {
             claim,
             i_am_the_human,
         }) => evolving::cmd::demand(claim, i_am_the_human),
+        Some(Command::Ack {
+            claim,
+            i_am_the_human,
+        }) => evolving::cmd::ack(claim, i_am_the_human),
         Some(Command::Pause {
             boundary,
             script,

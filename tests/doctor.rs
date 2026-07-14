@@ -345,3 +345,69 @@ fn doctor_stays_quiet_about_the_baseline_on_a_freshly_initialized_ledger() {
     assert_eq!(out.status.code(), Some(0));
     assert!(!String::from_utf8_lossy(&out.stdout).contains("no baseline marker"));
 }
+
+/// The next question after liveness: how far the world moved while the ledger
+/// was not looking. Facts only — counts, and a sentence that says re-read,
+/// never "resolved" (a fix that adds code beside the anchored line leaves a
+/// content anchor green; ev structurally cannot know the claim was resolved).
+#[test]
+fn doctor_should_report_how_far_the_world_moved() {
+    let dir = fresh_git_doctor();
+    std::fs::write(dir.join("a.txt"), "hello\n").unwrap();
+    git_commit_doctor(&dir, "one");
+    assert!(run(&dir, &["init"]).status.success());
+
+    assert!(run(&dir, &["claim", "moved", "--by", "agent"])
+        .status
+        .success());
+    let moved = claim_id_doctor(&dir, "moved");
+    assert!(run(&dir, &["evidence", &moved, "file:a.txt::hello"])
+        .status
+        .success());
+
+    std::fs::write(dir.join("a.txt"), "hello\nworld\n").unwrap();
+    git_commit_doctor(&dir, "code moves beside the anchor");
+
+    let out = run(&dir, &["doctor"]);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "the census never changes the exit code"
+    );
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        s.contains("neighborhood-moved 1"),
+        "expected the movement census: {s}"
+    );
+    assert!(
+        s.contains("Re-read"),
+        "the census must say re-read, never 'resolved': {s}"
+    );
+    assert!(
+        !s.to_lowercase().contains("resolved"),
+        "ev cannot know a claim was resolved and must never say so: {s}"
+    );
+}
+
+/// The dangling-ref check must cover `ack` too: its body carries the identical
+/// `{"claim": "<id>"}` shape as evidence/close/hold/demand/verify/prune, and the
+/// same dangling-reference risk the check exists to catch.
+#[test]
+fn doctor_flags_a_dangling_ack_ref() {
+    let dir = fresh();
+    let wid = std::fs::read_to_string(dir.join(".evolving/local/writer.toml")).unwrap();
+    let wid = wid.split('"').nth(1).unwrap().to_string();
+    let path = dir.join(".evolving/ledger").join(format!("{wid}.jsonl"));
+    let line = serde_json::json!({
+        "v":2,"id":"ack_x","ts":"2020-01-01T00:00:00Z","writer":wid,"seq":99,
+        "actor":{"kind":"human"},"type":"ack","body":{"claim":"clm_missing"}
+    });
+    std::fs::write(&path, format!("{line}\n")).unwrap();
+    let out = run(&dir, &["doctor"]);
+    assert_ne!(
+        out.status.code(),
+        Some(0),
+        "dangling ack ref should be non-zero"
+    );
+    assert!(String::from_utf8_lossy(&out.stdout).contains("dangling"));
+}

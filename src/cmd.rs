@@ -622,11 +622,11 @@ pub fn doctor() -> Result<()> {
         .map(|e| e.id.as_str())
         .collect();
 
-    // Dangling refs: evidence/close/hold/demand/verify/prune pointing at an unknown claim.
+    // Dangling refs: evidence/close/hold/demand/verify/prune/ack pointing at an unknown claim.
     for e in &events {
         if matches!(
             e.etype.as_str(),
-            "evidence" | "close" | "hold" | "demand" | "verify" | "prune"
+            "evidence" | "close" | "hold" | "demand" | "verify" | "prune" | "ack"
         ) {
             if let Some(cid) = e.body.get("claim").and_then(|s| s.as_str()) {
                 if !claim_ids.contains(cid) {
@@ -675,9 +675,14 @@ pub fn doctor() -> Result<()> {
         }
     }
 
-    // Facts, not verdicts: the two lines below never gate. They report what the
-    // ledger's shape already implies but no command has been saying out loud.
-    print_liveness_census(&events);
+    // Facts, not verdicts: the census lines below never gate. They report what
+    // the ledger's shape already implies but no command has been saying out loud.
+    // The cells the movement census counts do not exist until annotated here —
+    // the same step `ev pause` takes before it reads them.
+    let mut d = crate::state::fold(&events);
+    crate::verify::annotate_drift(&mut d, &root);
+    print_liveness_census(&d);
+    print_movement_census(&d);
     if !crate::state::has_baseline(&events) {
         // The two paths that need the baseline are the session-end sweep and
         // `ev exhaust --since ROOT`; `ev exhaust --since <sha>` carries its own
@@ -704,9 +709,8 @@ pub fn doctor() -> Result<()> {
 /// Scope is every claim the fold knows: `claims` (open), `grey` (held) and
 /// `closed` (closed or dead). A census over the open bucket alone would undercount
 /// in silence — the exact failure this command exists to surface.
-fn print_liveness_census(events: &[crate::ledger::Envelope]) {
+fn print_liveness_census(d: &crate::state::Derived) {
     use crate::verify::{EvRef, Liveness, RefKind};
-    let d = crate::state::fold(events);
     let mut content = 0usize;
     let mut existence = 0usize;
     let mut immutable = 0usize;
@@ -781,6 +785,64 @@ fn print_liveness_census(events: &[crate::ledger::Envelope]) {
         println!(
             "  ⚠ {asserted} anchor(s) are metric:/url: — {}.",
             Liveness::Asserted.why()
+        );
+    }
+}
+
+/// How far the world moved while the ledger was not looking. Facts only: counts, and
+/// one sentence that says RE-READ. ev cannot know whether a claim was resolved — a fix
+/// that adds code beside the anchored line leaves the anchor green — and never says so.
+/// Never changes the exit code.
+///
+/// Scope matches the liveness census exactly: `claims` (open), `grey` (held) and
+/// `closed` (closed or dead) — the same full set, so this census cannot undercount
+/// where the other does not.
+fn print_movement_census(d: &crate::state::Derived) {
+    use crate::verify::Cell;
+    let mut still = 0usize;
+    let mut moved = 0usize;
+    let mut changed = 0usize;
+    let mut gone = 0usize;
+    let mut legacy = 0usize;
+    let mut total = 0usize;
+
+    for c in d.claims.iter().chain(&d.grey).chain(&d.closed) {
+        let worst = c
+            .evidence
+            .iter()
+            .filter_map(|e| e.cell)
+            .max_by_key(|cell| match cell {
+                Cell::FileGone => 4,
+                Cell::AnchorChanged => 3,
+                Cell::NeighborhoodMoved => 2,
+                Cell::Legacy => 1,
+                Cell::Still => 0,
+            });
+        match worst {
+            None => continue,
+            Some(Cell::FileGone) => gone += 1,
+            Some(Cell::AnchorChanged) => changed += 1,
+            Some(Cell::NeighborhoodMoved) => moved += 1,
+            Some(Cell::Legacy) => legacy += 1,
+            Some(Cell::Still) => still += 1,
+        }
+        total += 1;
+    }
+    if total == 0 {
+        return;
+    }
+    println!(
+        "{total} claims · still {still} · neighborhood-moved {moved} · anchor-changed {changed} · file-gone {gone} · legacy {legacy}"
+    );
+    if moved > 0 {
+        println!(
+            "  ⚠ {moved} claims sit on code that moved beside the anchored line — the anchor cannot see it. Re-read."
+        );
+    }
+    if changed + gone > 0 {
+        println!(
+            "  ⚠ {} claims rest on an anchor whose cited code is gone. Re-read.",
+            changed + gone
         );
     }
 }

@@ -231,3 +231,269 @@ fn drift_reaches_every_reading_surface() {
     assert!(check["base"].is_string());
     assert_eq!(check["drift"].as_u64(), Some(1), "verify --json drift: {v}");
 }
+
+/// A pathspec is not a string key. git NORMALIZES it (`./a` is `a`, `a//b` is `a/b`,
+/// `a/./b`, `a/../a/b`) and EXPANDS it (a directory pathspec matches every path beneath
+/// it). The touch-count table does neither: it is keyed on the literal bytes
+/// `git log --name-only` printed. So the memo may answer from the table ONLY where the
+/// table provably equals the count `git rev-list --count -- <pathspec>` takes — and must
+/// take the real count everywhere else. A table miss read as zero is an undercounted
+/// drift, which turns `neighborhood-moved` into `still`: the false green.
+///
+/// Ground truth here is `git rev-list --count` itself, run per spelling — not a number
+/// typed into the test.
+#[test]
+fn the_memo_answers_every_spelling_of_a_path_as_git_counts_it() {
+    use evolving::verify::{drift, drift_since, EvRef, Seen};
+
+    let dir = std::env::temp_dir().join(format!("ev-spell-{}", ulid::Ulid::new()));
+    std::fs::create_dir_all(dir.join("d")).unwrap();
+    git(&dir, &["init", "-q"]);
+    let head = |d: &std::path::Path| {
+        let o = Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(d)
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&o.stdout).trim().to_string()
+    };
+    let commit = |d: &std::path::Path, files: &[(&str, &str)]| {
+        for (p, text) in files {
+            std::fs::write(d.join(p), text).unwrap();
+        }
+        git(d, &["add", "-A"]);
+        git(d, &["-c", "commit.gpgsign=false", "commit", "-qm", "c"]);
+    };
+    // ground truth: the count the per-anchor fork the memo replaces would take
+    let rev_list = |d: &std::path::Path, reference: &str, spec: &str| -> u32 {
+        let o = Command::new("git")
+            .args([
+                "rev-list",
+                "--count",
+                &format!("{reference}..HEAD"),
+                "--",
+                spec,
+            ])
+            .current_dir(d)
+            .output()
+            .unwrap();
+        assert!(o.status.success(), "git could not count {spec}");
+        String::from_utf8_lossy(&o.stdout).trim().parse().unwrap()
+    };
+
+    commit(
+        &dir,
+        &[("p", "p1\n"), ("d/q", "q1\n"), ("quiet.txt", "still\n")],
+    );
+    let base = head(&dir);
+    commit(&dir, &[("p", "p2\n"), ("d/q", "q2\n")]);
+    commit(&dir, &[("p", "p3\n"), ("d/q", "q3\n")]);
+    commit(&dir, &[("p", "p4\n")]);
+
+    // every spelling that resolves on disk, passes the attach guard, and counts under
+    // `rev-list` — and read `drift=0 · still` before the key was normalized.
+    let spellings = [
+        "p",
+        "./p",
+        ".//p",
+        "d/q",
+        "d//q",
+        "d/./q",
+        "d/../d/q",
+        "./d/q",
+        // a DIRECTORY pathspec: `rev-list` expands the subtree, the table has no
+        // subtree. The number on the machine surface is a fact either way.
+        "d", // a canonical path git genuinely never touched in the range: zero, and zero is the
+        // truth — it must not be "fixed" into something else.
+        "quiet.txt",
+    ];
+
+    let seen = Seen::new();
+    for spec in spellings {
+        let r = EvRef::parse(&format!("file:{spec}")).unwrap();
+        let truth = rev_list(&dir, &base, spec);
+        let memo = drift_since(&dir, Some(&base), None, &r, &seen);
+        let per_anchor = drift(&dir, &base, &r);
+        assert_eq!(
+            memo,
+            Some(truth),
+            "memo says {memo:?} for `{spec}`, git rev-list --count says {truth}"
+        );
+        assert_eq!(
+            memo, per_anchor,
+            "memo and the per-anchor count disagree on `{spec}`"
+        );
+    }
+    // the untouched path is zero because git touched it zero times, not because it missed
+    // a table.
+    let quiet = EvRef::parse("file:quiet.txt").unwrap();
+    assert_eq!(drift_since(&dir, Some(&base), None, &quiet, &seen), Some(0));
+
+    // a path that is no in-repo relative file path at all: ev takes the real count, or
+    // asserts nothing. It may never read a table miss as zero.
+    for spec in ["../escapes", "/absolute/p"] {
+        let r = EvRef::parse(&format!("file:{spec}")).unwrap();
+        assert_eq!(
+            drift_since(&dir, Some(&base), None, &r, &seen),
+            drift(&dir, &base, &r),
+            "the memo must not invent a count for `{spec}`"
+        );
+    }
+}
+
+/// The cases the batch already answers correctly, held to `git rev-list --count` itself so
+/// the path-key normalization cannot quietly cost one of them: a merge in range, an evil
+/// merge, a file touched on one side of a merge only, a rename (`rev-list` does no rename
+/// detection, so the old path must read as a delete), a path with a space, a path carrying a
+/// `"` (git quotes it and the table refuses the whole reference), a commit that changes only
+/// a file mode, an add-then-delete, the prefix trap (`a.txt` must not be answered by
+/// `a.txt.bak`), and a merge that appears after the reference the count runs from.
+#[test]
+fn the_memo_keeps_the_counts_it_already_took_right() {
+    use evolving::verify::{drift, drift_since, EvRef, Seen};
+
+    let dir = std::env::temp_dir().join(format!("ev-keep-{}", ulid::Ulid::new()));
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    git(&dir, &["init", "-q"]);
+    let head = |d: &std::path::Path| {
+        let o = Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(d)
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&o.stdout).trim().to_string()
+    };
+    let commit = |d: &std::path::Path, files: &[(&str, &str)]| {
+        for (p, text) in files {
+            std::fs::write(d.join(p), text).unwrap();
+        }
+        git(d, &["add", "-A"]);
+        git(d, &["-c", "commit.gpgsign=false", "commit", "-qm", "c"]);
+    };
+    let rev_list = |d: &std::path::Path, reference: &str, spec: &str| -> Option<u32> {
+        let o = Command::new("git")
+            .args([
+                "rev-list",
+                "--count",
+                &format!("{reference}..HEAD"),
+                "--",
+                spec,
+            ])
+            .current_dir(d)
+            .output()
+            .unwrap();
+        if !o.status.success() {
+            return None;
+        }
+        String::from_utf8_lossy(&o.stdout).trim().parse().ok()
+    };
+
+    let paths = [
+        "a.txt",
+        "a.txt.bak",
+        "with space.txt",
+        "with\"quote.txt",
+        "moded.txt",
+        "gone.txt",
+        "old.txt",
+        "new.txt",
+        "sub/one-side.txt",
+        "sub",
+    ];
+    let mut refs: Vec<String> = Vec::new();
+    let sweep = |refs: &[String]| {
+        let seen = Seen::new();
+        for reference in refs {
+            for p in paths {
+                let r = EvRef::parse(&format!("file:{p}")).unwrap();
+                let memo = drift_since(&dir, Some(reference), None, &r, &seen);
+                assert_eq!(
+                    memo,
+                    rev_list(&dir, reference, p),
+                    "memo disagrees with git rev-list --count on `{p}` from {reference}"
+                );
+                assert_eq!(memo, drift(&dir, reference, &r), "memo vs per-anchor: {p}");
+            }
+        }
+    };
+
+    commit(
+        &dir,
+        &[
+            ("a.txt", "a1\n"),
+            ("a.txt.bak", "bak1\n"),
+            ("with space.txt", "s1\n"),
+            ("moded.txt", "m1\n"),
+            ("old.txt", "o1\n"),
+            ("sub/one-side.txt", "1\n"),
+        ],
+    );
+    refs.push(head(&dir));
+
+    // the prefix trap: a.txt.bak moves, a.txt does not
+    commit(&dir, &[("a.txt.bak", "bak2\n")]);
+    refs.push(head(&dir));
+
+    // a mode-change-only commit still touches the path
+    git(&dir, &["add", "--chmod=+x", "moded.txt"]);
+    git(
+        &dir,
+        &["-c", "commit.gpgsign=false", "commit", "-qm", "mode"],
+    );
+    refs.push(head(&dir));
+
+    // add, then delete
+    commit(&dir, &[("gone.txt", "g1\n")]);
+    std::fs::remove_file(dir.join("gone.txt")).unwrap();
+    commit(&dir, &[("a.txt", "a2\n")]);
+    refs.push(head(&dir));
+
+    // a rename: no rename detection under a pathspec, so old.txt reads as a delete
+    git(&dir, &["mv", "old.txt", "new.txt"]);
+    git(&dir, &["-c", "commit.gpgsign=false", "commit", "-qm", "mv"]);
+    refs.push(head(&dir));
+    sweep(&refs);
+
+    // a merge, with an EVIL merge change (a.txt is edited in the merge commit itself) and a
+    // path touched on one side only. Everything before this reference is also a range that
+    // now CONTAINS a merge — the reference the count runs from does not change that.
+    let before_branch = head(&dir);
+    git(&dir, &["checkout", "-q", "-b", "side"]);
+    commit(&dir, &[("sub/one-side.txt", "side\n")]);
+    git(&dir, &["checkout", "-q", "-"]);
+    commit(&dir, &[("with space.txt", "s2\n")]);
+    git(
+        &dir,
+        &[
+            "-c",
+            "commit.gpgsign=false",
+            "merge",
+            "-q",
+            "--no-edit",
+            "--no-ff",
+            "side",
+        ],
+    );
+    std::fs::write(dir.join("a.txt"), "a-evil\n").unwrap();
+    git(&dir, &["add", "-A"]);
+    git(
+        &dir,
+        &[
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-q",
+            "--amend",
+            "--no-edit",
+        ],
+    );
+    refs.push(before_branch);
+    refs.push(head(&dir));
+    sweep(&refs);
+
+    // a path git must QUOTE: the table's key would not be the path the anchor cites, so the
+    // whole reference goes back to the per-anchor count — and the counts must not move.
+    commit(&dir, &[("with\"quote.txt", "q1\n")]);
+    refs.push(head(&dir));
+    sweep(&refs);
+}

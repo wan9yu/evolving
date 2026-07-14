@@ -3,7 +3,7 @@ use crate::state::ClaimView;
 use crate::{EvError, Result};
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -667,8 +667,15 @@ pub struct Seen {
 
 /// How far the world moved under EVERY path, counted once from one reference point.
 enum Moved {
-    /// The reference resolves and the range carries no merge: the table is the answer.
-    Counts(HashMap<String, u32>),
+    /// The reference resolves and the range carries no merge: the table answers every path
+    /// it can prove it answers as `rev-list` would — a canonical in-repo file path. `dirs`
+    /// carries every directory the touched paths lie under, because a directory pathspec
+    /// matches the whole subtree and the table has no subtree: a path in `dirs` is handed
+    /// back to the per-anchor count.
+    Counts {
+        counts: HashMap<String, u32>,
+        dirs: HashSet<String>,
+    },
     /// git could not count from this reference at all (the sha resolves in no clone here).
     /// The same fact the per-entry count reports by failing, and the reason `drift_since`
     /// falls back to the pinned `base`.
@@ -711,6 +718,11 @@ impl Seen {
 
     /// The count `drift` would take, answered from the reference's table when ev can prove
     /// the table agrees with it, and by `drift` itself when it cannot.
+    ///
+    /// A table miss reads as zero ONLY for a path ev has proved the table is keyed on: a
+    /// canonical in-repo file path git simply did not touch. Anywhere else the miss means
+    /// "not in this table", never "nothing moved" — and the count is taken for real, or not
+    /// asserted at all.
     fn drift(&self, repo_root: &Path, reference: &str, r: &EvRef) -> Option<u32> {
         let path = anchor_rel(r)?;
         let mut memo = self.moved.borrow_mut();
@@ -718,11 +730,48 @@ impl Seen {
             .entry(reference.to_string())
             .or_insert_with(|| count_moves(repo_root, reference));
         match table {
-            Moved::Counts(m) => Some(m.get(&path).copied().unwrap_or(0)),
+            Moved::Counts { counts, dirs } => match table_key(&path) {
+                Some(key) if !dirs.contains(&key) && !repo_root.join(&key).is_dir() => {
+                    Some(counts.get(&key).copied().unwrap_or(0))
+                }
+                _ => drift(repo_root, reference, r),
+            },
             Moved::Unresolved => None,
             Moved::PerAnchor => drift(repo_root, reference, r),
         }
     }
+}
+
+/// The key `git log --name-only` would have printed for this anchor's path, or None when the
+/// table cannot be keyed on it at all and the count must be taken the slow way.
+///
+/// A pathspec is NOT a string key. git normalizes it — `./a` is `a`, `a//b` and `a/./b` and
+/// `a/../a/b` are all `a/b` — and prints only the normalized form. So the anchor's spelling
+/// is normalized here, lexically (no disk, no clock: the same string maps to the same key in
+/// every clone), before it is looked up.
+///
+/// None where the normal form is not a plain in-repo relative file path — an empty path, an
+/// absolute path, a `..` that escapes the repo root, a trailing `/` git reads as a directory
+/// — because a table git never keyed cannot say the path did not move.
+fn table_key(path: &str) -> Option<String> {
+    if path.is_empty() || path.ends_with('/') || Path::new(path).is_absolute() {
+        return None;
+    }
+    let mut segs: Vec<&str> = Vec::new();
+    for seg in path.split('/') {
+        match seg {
+            "" | "." => {}
+            ".." => {
+                // nothing left to climb: the path leaves the tree the table was built over
+                segs.pop()?;
+            }
+            s => segs.push(s),
+        }
+    }
+    if segs.is_empty() {
+        return None;
+    }
+    Some(segs.join("/"))
 }
 
 impl Default for Seen {
@@ -744,6 +793,10 @@ impl Default for Seen {
 ///   false-green — the one failure ev may not have.
 /// - a QUOTED path (`core.quotepath=false` still quotes a path carrying `"` or a newline):
 ///   the table's key would not be the path the anchor cites.
+/// - a DIRECTORY pathspec: `rev-list -- <dir>` counts every commit touching the subtree, and
+///   the table is keyed on files. Every directory a touched path lies under is recorded here
+///   so the lookup can recognize one and hand it back — a directory read out of the file
+///   table would read zero, and a zero ev did not count is the false-green.
 ///
 /// `--no-renames` is not a preference: `rev-list -- <path>` does no rename detection, so a
 /// rename must read as a delete plus an add, exactly as it does there.
@@ -768,6 +821,7 @@ fn count_moves(repo_root: &Path, reference: &str) -> Moved {
         _ => return Moved::Unresolved,
     };
     let mut counts: HashMap<String, u32> = HashMap::new();
+    let mut dirs: HashSet<String> = HashSet::new();
     for line in stdout.lines() {
         match line.strip_prefix('\u{1}') {
             Some(parents) => {
@@ -777,10 +831,17 @@ fn count_moves(repo_root: &Path, reference: &str) -> Moved {
             }
             None if line.is_empty() => {}
             None if line.starts_with('"') => return Moved::PerAnchor,
-            None => *counts.entry(line.to_string()).or_insert(0) += 1,
+            None => {
+                *counts.entry(line.to_string()).or_insert(0) += 1;
+                let mut rest = line;
+                while let Some((parent, _)) = rest.rsplit_once('/') {
+                    dirs.insert(parent.to_string());
+                    rest = parent;
+                }
+            }
         }
     }
-    Moved::Counts(counts)
+    Moved::Counts { counts, dirs }
 }
 
 /// The pair: what ev found at the anchor, how far the world moved under it, and the join of

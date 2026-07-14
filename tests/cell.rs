@@ -60,6 +60,17 @@ fn claim_id(dir: &std::path::Path) -> String {
         .to_string()
 }
 
+/// The evidence event's pinned filing base, exactly as the ledger holds it.
+fn evidence_base(dir: &std::path::Path) -> String {
+    ledger_events(dir)
+        .into_iter()
+        .find(|e| e["type"] == "evidence")
+        .expect("the filing must have appended an evidence event")["body"]["base"]
+        .as_str()
+        .expect("the filing must pin a base")
+        .to_string()
+}
+
 fn cells(dir: &std::path::Path) -> Vec<(String, String)> {
     let out = run(dir, &["verify", "--json"]);
     assert!(
@@ -151,9 +162,18 @@ fn ack_should_clear_neighborhood_moved_until_the_world_moves_again() {
     git_commit(&dir, "the world moves");
     assert_eq!(cells(&dir)[0].1, "neighborhood-moved", "the flag must rise");
 
+    let base_before = evidence_base(&dir);
     assert!(run(&dir, &["ack", &id, "--i-am-the-human"])
         .status
         .success());
+    // THE ANTI-RE-BASE RULE. The ack adds a second, human-relative reference point; it
+    // never moves the pinned evidence base. Auto re-basing would zero drift on every
+    // commit — a structural false-green.
+    assert_eq!(
+        evidence_base(&dir),
+        base_before,
+        "the ack must leave the evidence base byte-identical"
+    );
     assert_eq!(
         cells(&dir)[0].1,
         "still",
@@ -167,4 +187,28 @@ fn ack_should_clear_neighborhood_moved_until_the_world_moves_again() {
         "neighborhood-moved",
         "and rises again on new movement"
     );
+}
+
+/// Every arm of THE ONE AND ONLY derivation, read at the source. `verify_cmd` re-verifies
+/// live and so can never produce `Status::Failed` — `Legacy`, `Recorded` and `Unreachable`
+/// are unreachable through `verify --json` and are covered only here.
+#[test]
+fn the_derivation_is_total() {
+    use evolving::verify::{Cell, Status};
+    assert_eq!(Cell::of(Status::Failed, None), Some(Cell::Legacy));
+    assert_eq!(Cell::of(Status::Recorded, Some(3)), None);
+    assert_eq!(Cell::of(Status::Unreachable, None), None);
+    assert_eq!(Cell::of(Status::Gone, Some(1)), Some(Cell::FileGone));
+    assert_eq!(
+        Cell::of(Status::Changed, Some(0)),
+        Some(Cell::AnchorChanged)
+    );
+    // Measured and zero is `still`; UNMEASURED is no cell at all — ev does not
+    // report "nothing moved" from a drift it could not take.
+    assert_eq!(Cell::of(Status::Resolves, Some(0)), Some(Cell::Still));
+    assert_eq!(
+        Cell::of(Status::Resolves, Some(2)),
+        Some(Cell::NeighborhoodMoved)
+    );
+    assert_eq!(Cell::of(Status::Resolves, None), None);
 }

@@ -129,6 +129,113 @@ fn pause_hold_on_a_bare_claim_moves_it_to_grey() {
     );
 }
 
+fn run_with_stdin(dir: &std::path::Path, args: &[&str], input: &str) -> std::process::Output {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_ev"))
+        .args(args)
+        .current_dir(dir)
+        .env_remove("CLAUDECODE")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
+    child.wait_with_output().unwrap()
+}
+
+fn fresh_git_pause() -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("ev-pause-g-{}", ulid::Ulid::new()));
+    std::fs::create_dir_all(&dir).unwrap();
+    Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    dir
+}
+
+fn git_commit_pause(dir: &std::path::Path, msg: &str) {
+    let git = |a: &[&str]| {
+        Command::new("git")
+            .args(a)
+            .current_dir(dir)
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@t")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@t")
+            .output()
+            .unwrap()
+    };
+    git(&["add", "-A"]);
+    git(&["-c", "commit.gpgsign=false", "commit", "-m", msg]);
+}
+
+fn ledger_events_pause(dir: &std::path::Path) -> Vec<serde_json::Value> {
+    let p = std::fs::read_dir(dir.join(".evolving/ledger"))
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .find(|e| e.path().extension().is_some_and(|x| x == "jsonl"))
+        .unwrap()
+        .path();
+    std::fs::read_to_string(p)
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect()
+}
+
+fn claim_id_pause(dir: &std::path::Path, label: &str) -> String {
+    ledger_events_pause(dir)
+        .into_iter()
+        .find(|e| e["type"] == "claim" && e["body"]["label"] == label)
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+#[test]
+fn pause_should_surface_moved_claims_and_let_the_human_ack_them() {
+    let dir = fresh_git_pause();
+    std::fs::write(dir.join("a.txt"), "hello\n").unwrap();
+    git_commit_pause(&dir, "one");
+    assert!(run(&dir, &["init"]).status.success());
+    assert!(run(&dir, &["claim", "watched", "--by", "agent"])
+        .status
+        .success());
+    let id = claim_id_pause(&dir, "watched");
+    assert!(run(&dir, &["evidence", &id, "file:a.txt::hello"])
+        .status
+        .success());
+
+    std::fs::write(dir.join("a.txt"), "hello\nworld\n").unwrap();
+    git_commit_pause(&dir, "code moves beside the anchor");
+
+    // one keystroke: k = still stands
+    let out = run_with_stdin(&dir, &["pause", "--script", "--i-am-the-human"], "k\n");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        s.contains("code moved"),
+        "the moved set must be surfaced: {s}"
+    );
+    assert!(s.contains("watched"), "the claim must be named: {s}");
+
+    let acked = ledger_events_pause(&dir)
+        .into_iter()
+        .any(|e| e["type"] == "ack");
+    assert!(acked, "the k keystroke must append an ack event");
+}
+
 #[test]
 fn pause_dead_on_a_bare_claim_removes_it_from_open() {
     let dir = fresh();

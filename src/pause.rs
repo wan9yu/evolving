@@ -55,6 +55,54 @@ pub fn run_pause(root: &Path, opts: PauseOpts) -> Result<()> {
         }
     }
 
+    // Screen 1.5 — code moved under these claims since the last look.
+    // ev cannot know whether the movement matters — only that it happened. RE-READ.
+    let moved: Vec<_> = d
+        .claims
+        .iter()
+        .filter(|c| {
+            c.evidence.iter().any(|e| {
+                matches!(
+                    e.cell,
+                    Some(crate::verify::Cell::NeighborhoodMoved)
+                        | Some(crate::verify::Cell::AnchorChanged)
+                        | Some(crate::verify::Cell::FileGone)
+                )
+            })
+        })
+        .cloned()
+        .collect();
+    if !moved.is_empty() {
+        writeln!(
+            out,
+            "\n↗ code moved under these claims since the last look:"
+        )?;
+        for c in &moved {
+            let why = c
+                .evidence
+                .iter()
+                .find_map(|e| match e.cell {
+                    Some(crate::verify::Cell::AnchorChanged) => {
+                        Some("the cited line itself changed")
+                    }
+                    Some(crate::verify::Cell::FileGone) => Some("the cited file is gone"),
+                    Some(crate::verify::Cell::NeighborhoodMoved) => {
+                        Some("the line stands; code moved beside it")
+                    }
+                    _ => None,
+                })
+                .unwrap_or("moved");
+            writeln!(out, "  {} — {why}", c.label)?;
+            write!(
+                out,
+                "    [k] still stands · [h]old · [d]emand · enter to skip → "
+            )?;
+            out.flush()?;
+            let ans = lines.next().transpose()?.unwrap_or_default();
+            apply_moved_answer(root, &ledger, &c.id, ans.trim())?;
+        }
+    }
+
     // Screen 2 — the exhaust batch (self-evident work), honest acknowledge wording
     let batch: Vec<_> = d.claims.iter().filter(|c| c.self_evident).collect();
     if !batch.is_empty() {
@@ -175,6 +223,46 @@ pub fn apply_bare_answer(
         }])?;
     }
     // "c" (carry) or anything else: no event written
+    Ok(())
+}
+
+/// The human's verdict on a claim whose code moved. ev records what the human decided;
+/// it never decides. `k` is the disposition the set was missing: looked, still stands.
+///
+/// Mirrors `cmd::ack` exactly: `head` is present only when git resolves HEAD. A
+/// sentinel there (e.g. "ROOT") would make git fail to resolve it forever, poisoning
+/// drift and permanently disarming the ratchet — the Critical Task 5 fixed.
+fn apply_moved_answer(root: &Path, ledger: &Ledger, claim_id: &str, ans: &str) -> Result<()> {
+    let human = Actor::human();
+    match ans {
+        "k" => {
+            let head = crate::git_output(root, &["rev-parse", "HEAD"]);
+            let mut body = serde_json::json!({ "claim": claim_id });
+            if let Some(h) = &head {
+                body["head"] = serde_json::json!(h);
+            }
+            ledger.append_batch(vec![NewEvent {
+                etype: "ack".into(),
+                actor: human,
+                body,
+            }])?;
+        }
+        "h" => {
+            ledger.append_batch(vec![NewEvent {
+                etype: "hold".into(),
+                actor: human,
+                body: serde_json::json!({ "claim": claim_id, "reason": "held at pause after movement" }),
+            }])?;
+        }
+        "d" => {
+            ledger.append_batch(vec![NewEvent {
+                etype: "demand".into(),
+                actor: human,
+                body: serde_json::json!({ "claim": claim_id }),
+            }])?;
+        }
+        _ => {} // enter, or anything else: carry. No event written.
+    }
     Ok(())
 }
 

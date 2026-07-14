@@ -42,13 +42,21 @@ fn a_real_commit_resolves_and_a_bogus_sha_reads_gone() {
     git(&["commit", "-qm", "first"]);
     let head = String::from_utf8(git(&["rev-parse", "HEAD"]).stdout).unwrap();
     let head = head.trim();
-    use evolving::verify::{verify_ref, EvRef, Status};
+    use evolving::verify::{verify_ref, Commits, EvRef, Status};
     assert_eq!(
-        verify_ref(&EvRef::parse(&format!("commit:{head}")).unwrap(), &dir),
+        verify_ref(
+            &EvRef::parse(&format!("commit:{head}")).unwrap(),
+            &dir,
+            &Commits::none()
+        ),
         Status::Resolves
     );
     assert_eq!(
-        verify_ref(&EvRef::parse("commit:deadbeefdeadbeef").unwrap(), &dir),
+        verify_ref(
+            &EvRef::parse("commit:deadbeefdeadbeef").unwrap(),
+            &dir,
+            &Commits::none()
+        ),
         // The object is absent from this clone — the commit's container is gone.
         Status::Gone
     );
@@ -60,7 +68,7 @@ fn a_real_commit_resolves_and_a_bogus_sha_reads_gone() {
 /// a second source of truth about what git said.
 #[test]
 fn the_batch_path_reads_the_same_status_as_the_single_ref_path() {
-    use evolving::verify::{verify_commits, verify_ref, EvRef, Status};
+    use evolving::verify::{verify_ref, Commits, EvRef, Status};
     let dir = std::env::temp_dir().join(format!("ev-vcb-{}", ulid::Ulid::new()));
     std::fs::create_dir_all(&dir).unwrap();
     let git = |args: &[&str]| {
@@ -93,21 +101,23 @@ fn the_batch_path_reads_the_same_status_as_the_single_ref_path() {
     // a duplicate: the batch dedupes and must still answer for it
     shas.push(real[0].clone());
 
-    let batched = verify_commits(&shas, &dir);
+    // The ONE dispatch, read twice: once through the resolved set, once through an empty
+    // one (which falls back to the single-ref check). The two must not part company.
+    let resolved = Commits::resolved(&shas, &dir);
+    let status = |sha: &str, seen: &Commits| {
+        verify_ref(&EvRef::parse(&format!("commit:{sha}")).unwrap(), &dir, seen)
+    };
     for sha in &shas {
-        let single = verify_ref(&EvRef::parse(&format!("commit:{sha}")).unwrap(), &dir);
         assert_eq!(
-            batched.get(sha).copied(),
-            Some(single),
+            status(sha, &resolved),
+            status(sha, &Commits::none()),
             "batch and single disagree on {sha}"
         );
     }
-    assert_eq!(batched.get(&real[0]).copied(), Some(Status::Resolves));
+    assert_eq!(status(&real[0], &resolved), Status::Resolves);
     assert_eq!(
-        batched
-            .get("deadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
-            .copied(),
-        Some(Status::Gone),
+        status("deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", &resolved),
+        Status::Gone,
         "a sha that resolves nowhere is gone, not resolves"
     );
 }

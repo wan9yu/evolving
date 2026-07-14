@@ -285,8 +285,13 @@ pub fn verify_cmd(claim_id: Option<String>, json: bool, full: bool) -> Result<()
         }
         None => d.claims.iter().collect(),
     };
+    // The same memo the rest of the read path carries: `ev verify` is the one verb a human
+    // types to re-read anchors, and it read them through a hand-written copy of the reading
+    // that forked `git rev-parse` once per sha on the very ledger the batch was built for.
+    // One reading, one dispatch, one batch.
+    let seen = crate::verify::Seen::over(targets.iter().copied(), &root);
     let mut checks: Vec<serde_json::Value> = Vec::new();
-    for c in targets {
+    for c in &targets {
         for ev in &c.evidence {
             // Self-evident evidence is not a verification claim — ev says so itself
             // at the pause: "acknowledging records that work happened; it does not
@@ -295,9 +300,15 @@ pub fn verify_cmd(claim_id: Option<String>, json: bool, full: bool) -> Result<()
             if ev.self_evident && !full {
                 continue;
             }
-            let r = match crate::verify::EvRef::parse(&ev.eref) {
-                Ok(r) => r,
-                Err(_) => {
+            let reading = match crate::verify::Reading::take(
+                &ev.eref,
+                &root,
+                c.last_ack.as_deref(),
+                ev.base.as_deref(),
+                &seen,
+            ) {
+                Some(reading) => reading,
+                None => {
                     // ev cannot read the pointer. Dropping the line here — which is what this
                     // verb did — is the no-false-green failure in the one verb whose whole job
                     // is to report what it read: the human sees clean output and never learns
@@ -323,34 +334,18 @@ pub fn verify_cmd(claim_id: Option<String>, json: bool, full: bool) -> Result<()
                     continue;
                 }
             };
-            let status = crate::verify::verify_ref(&r, &root);
-            let liveness = crate::verify::Liveness::of(&r);
-            // drift: the world's movement under the anchor, in commits touching
-            // the cited path — a structural fact, judged by the human. Counted
-            // from the same reference `annotate` uses (the human's last
-            // look, else the filing base), through the same rule: a second rule
-            // here would be a second source of truth.
-            let moved =
-                crate::verify::drift_since(&root, c.last_ack.as_deref(), ev.base.as_deref(), &r);
 
             let mut body = serde_json::json!({
                 "claim": c.id,
                 "ref": ev.eref,
-                "status": status,
-                "liveness": liveness.as_str(),
+                "liveness": reading.liveness().as_str(),
             });
             if let Some(base) = &ev.base {
                 body["base"] = serde_json::json!(base);
             }
-            if let Some(k) = moved {
-                body["drift"] = serde_json::json!(k);
-            }
-            // The cell is derived in exactly one place — `Cell::of`. This body is
-            // both the appended `verify` event and the `--json` check: one shape,
-            // one source of truth.
-            if let Some(cell) = crate::verify::Cell::of(status, moved) {
-                body["cell"] = serde_json::json!(cell);
-            }
+            // status + drift + cell: the pair, serialized once. This body is both the
+            // appended `verify` event and the `--json` check: one shape, one source of truth.
+            reading.pair.merge_into(&mut body);
             ledger.append_batch(vec![NewEvent {
                 etype: "verify".into(),
                 actor: Actor::engine(),
@@ -360,15 +355,20 @@ pub fn verify_cmd(claim_id: Option<String>, json: bool, full: bool) -> Result<()
             if json {
                 checks.push(body);
             } else {
-                match moved {
+                match reading.pair.drift {
                     Some(k) if k > 0 => println!(
                         "{} · {} → {} · {}",
                         short(&c.id),
                         ev.eref,
-                        status.as_str(),
+                        reading.pair.status.as_str(),
                         crate::verify::drift_phrase(k)
                     ),
-                    _ => println!("{} · {} → {}", short(&c.id), ev.eref, status.as_str()),
+                    _ => println!(
+                        "{} · {} → {}",
+                        short(&c.id),
+                        ev.eref,
+                        reading.pair.status.as_str()
+                    ),
                 }
             }
         }

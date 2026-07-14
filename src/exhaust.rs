@@ -128,6 +128,7 @@ pub fn file_window(
         let status = crate::verify::verify_ref(
             &crate::verify::EvRef::parse(&format!("commit:{sha}"))?,
             repo_root,
+            &crate::verify::Commits::none(),
         );
         batch.push(NewEvent {
             etype: "evidence".into(),

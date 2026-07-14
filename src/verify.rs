@@ -1,6 +1,8 @@
 use crate::ledger::{Actor, Ledger, NewEvent};
+use crate::state::ClaimView;
 use crate::{EvError, Result};
 use serde::{Deserialize, Serialize};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::Path;
@@ -317,16 +319,45 @@ pub fn guard_attach(raw: &str, repo_root: &Path) -> Result<EvRef> {
     }
 }
 
-/// Check whether a ref's anchor resolves against `repo_root`. Resolution is a
-/// fact about the pointer (exists, matches) — never a verdict on the claim.
-/// Commit → `git rev-parse --verify`; Metric/Url → `Recorded` (self-asserted);
-/// Test/File/Artifact → exists → pass-line check.
+/// The commit statuses ev has already resolved for this read. An EMPTY set is legal and
+/// is not a second rule: a sha the set does not carry reads through `verify_commit`, the
+/// very single-ref check the batch defers to.
+///
+/// The memo exists so that ONE dispatch — `verify_ref` — serves every caller. Before it,
+/// the batch lived at one call site (`fill`) and `ev verify` kept a hand-written copy of
+/// the reading without it, agreeing with the mechanism by inspection only.
+pub struct Commits(HashMap<String, Status>);
+
+impl Commits {
+    /// Nothing resolved in advance: every sha reads through `verify_commit`. The honest
+    /// answer for a WRITE path, which files one ref and has no set to batch.
+    pub fn none() -> Commits {
+        Commits(HashMap::new())
+    }
+
+    /// Resolve every sha in ONE `git cat-file --batch-check`.
+    pub fn resolved(shas: &[String], repo_root: &Path) -> Commits {
+        Commits(verify_commits(shas, repo_root))
+    }
+
+    fn status(&self, sha: &str, repo_root: &Path) -> Status {
+        self.0
+            .get(sha)
+            .copied()
+            .unwrap_or_else(|| verify_commit(sha, repo_root))
+    }
+}
+
+/// THE ONE dispatch. Check whether a ref's anchor resolves against `repo_root`. Resolution
+/// is a fact about the pointer (exists, matches) — never a verdict on the claim.
+/// Commit → the resolved set, else `git rev-parse --verify`; Metric/Url → `Recorded`
+/// (self-asserted); Test/File/Artifact → exists → pass-line check.
 ///
 /// The finding is a class, not a word: a `Gone` container and a `Changed` line
 /// are different facts and read differently. Never touches the network.
-pub fn verify_ref(r: &EvRef, repo_root: &Path) -> Status {
+pub fn verify_ref(r: &EvRef, repo_root: &Path, seen: &Commits) -> Status {
     match r.kind {
-        RefKind::Commit => verify_commit(&r.payload, repo_root),
+        RefKind::Commit => seen.status(&r.payload, repo_root),
         RefKind::Metric | RefKind::Url => Status::Recorded,
         RefKind::Test | RefKind::File | RefKind::Artifact => verify_v2(r, repo_root),
     }
@@ -381,7 +412,8 @@ fn verify_commit(sha: &str, repo_root: &Path) -> Status {
     }
 }
 
-/// Resolve every `commit:` sha in ONE git subprocess, rather than one fork per sha.
+/// The memo-filler behind `Commits::resolved`: resolve every `commit:` sha in ONE git
+/// subprocess, rather than one fork per sha.
 ///
 /// `verify_commit` forks `git rev-parse` per ref, and fork/exec — not git's work — is the
 /// whole cost: ~10 ms each, so an audit ledger carrying 500 commit refs (`exhaust` files
@@ -399,7 +431,7 @@ fn verify_commit(sha: &str, repo_root: &Path) -> Status {
 /// A sha ev cannot put on one line of stdin (empty, or carrying whitespace) is not batched;
 /// it falls back to `verify_commit`, which reads it exactly as it always did. The map is
 /// keyed by sha and answers for every sha asked, so no caller can be handed a hole.
-pub fn verify_commits(shas: &[String], repo_root: &Path) -> HashMap<String, Status> {
+fn verify_commits(shas: &[String], repo_root: &Path) -> HashMap<String, Status> {
     let mut out: HashMap<String, Status> = HashMap::new();
     let mut batch: Vec<&str> = Vec::new();
     for sha in shas {
@@ -504,7 +536,9 @@ pub fn record_checked(
     self_evident: bool,
     actor: Actor,
 ) -> Result<Status> {
-    let status = verify_ref(r, repo_root);
+    // A write path files ONE ref: there is no set to batch, so the memo is empty and the
+    // sha reads through `verify_commit`. The dispatch is still the one dispatch.
+    let status = verify_ref(r, repo_root, &Commits::none());
     let mut body = serde_json::json!({
         "claim": claim_id,
         "ref": raw_ref,
@@ -522,17 +556,24 @@ pub fn record_checked(
     Ok(status)
 }
 
+/// WHERE an anchor lives, relative to the repo root. `None` for a ref that carries no path
+/// at all (`commit:`/`metric:`/`url:`): there is no file under it, so nothing can move.
+/// The `artifact:` join is spelled ONCE, here.
+fn anchor_rel(r: &EvRef) -> Option<String> {
+    match r.kind {
+        RefKind::Test | RefKind::File => Some(r.payload.clone()),
+        RefKind::Artifact => Some(format!(".evolving/artifacts/{}", r.payload)),
+        RefKind::Commit | RefKind::Metric | RefKind::Url => None,
+    }
+}
+
 /// Drift: how far the world has moved under a path-bearing anchor — the number
 /// of commits between the recorded filing base and HEAD that touch the cited
 /// path. A structural fact (no clocks, no dates); zero means the cited path is
 /// exactly as the anchor saw it. None when the ref carries no path, the base
 /// is unknown, or git cannot answer here.
 pub fn drift(repo_root: &Path, base: &str, r: &EvRef) -> Option<u32> {
-    let path = match r.kind {
-        RefKind::Test | RefKind::File => r.payload.clone(),
-        RefKind::Artifact => format!(".evolving/artifacts/{}", r.payload),
-        RefKind::Commit | RefKind::Metric | RefKind::Url => return None,
-    };
+    let path = anchor_rel(r)?;
     let range = format!("{base}..HEAD");
     crate::git_output(repo_root, &["rev-list", "--count", &range, "--", &path])
         .and_then(|n| n.parse::<u32>().ok())
@@ -579,13 +620,222 @@ pub fn drift_since(
     last_ack: Option<&str>,
     base: Option<&str>,
     r: &EvRef,
+    seen: &Seen,
 ) -> Option<u32> {
     if let Some(ack) = last_ack {
-        if let Some(k) = drift(repo_root, ack, r) {
+        if let Some(k) = seen.drift(repo_root, ack, r) {
             return Some(k);
         }
     }
-    drift(repo_root, base?, r)
+    seen.drift(repo_root, base?, r)
+}
+
+/// What ev has already resolved for THIS read: the commit statuses, and one movement table
+/// per reference point drift is counted from.
+///
+/// Empty is legal everywhere — a miss reads through the single-ref check — so no caller can
+/// be handed a hole, and no second checker exists to diverge from the first.
+pub struct Seen {
+    commits: Commits,
+    /// Built on FIRST USE, not up front: a reference nobody counts against costs nothing,
+    /// and no reference is walked twice. That is what makes the memo strictly cheaper than
+    /// the per-entry fork it replaces — never more forks, whatever the ledger's shape.
+    moved: RefCell<HashMap<String, Moved>>,
+}
+
+/// How far the world moved under EVERY path, counted once from one reference point.
+enum Moved {
+    /// The reference resolves and the range carries no merge: the table is the answer.
+    Counts(HashMap<String, u32>),
+    /// git could not count from this reference at all (the sha resolves in no clone here).
+    /// The same fact the per-entry count reports by failing, and the reason `drift_since`
+    /// falls back to the pinned `base`.
+    Unresolved,
+    /// The range carries a merge, or a path git had to quote. `git log --name-only` prints
+    /// no file list for a merge and `git rev-list --count -- <path>` prunes history the log
+    /// does not, so the two do not agree here. ev counts this reference the slow way, one
+    /// fork per anchor, rather than report a number it did not take the same way. The batch
+    /// is a fast path, never a second rule.
+    PerAnchor,
+}
+
+impl Seen {
+    /// Nothing resolved in advance. Movement tables still fill on demand — that is the one
+    /// counting path, not a second one.
+    pub fn new() -> Seen {
+        Seen {
+            commits: Commits::none(),
+            moved: RefCell::new(HashMap::new()),
+        }
+    }
+
+    /// Resolve, in ONE subprocess, every `commit:` sha these claims cite.
+    pub fn over<'a>(claims: impl IntoIterator<Item = &'a ClaimView>, repo_root: &Path) -> Seen {
+        let mut shas: Vec<String> = Vec::new();
+        for c in claims {
+            for ev in &c.evidence {
+                if let Ok(r) = EvRef::parse(&ev.eref) {
+                    if r.kind == RefKind::Commit {
+                        shas.push(r.payload);
+                    }
+                }
+            }
+        }
+        Seen {
+            commits: Commits::resolved(&shas, repo_root),
+            moved: RefCell::new(HashMap::new()),
+        }
+    }
+
+    /// The count `drift` would take, answered from the reference's table when ev can prove
+    /// the table agrees with it, and by `drift` itself when it cannot.
+    fn drift(&self, repo_root: &Path, reference: &str, r: &EvRef) -> Option<u32> {
+        let path = anchor_rel(r)?;
+        let mut memo = self.moved.borrow_mut();
+        let table = memo
+            .entry(reference.to_string())
+            .or_insert_with(|| count_moves(repo_root, reference));
+        match table {
+            Moved::Counts(m) => Some(m.get(&path).copied().unwrap_or(0)),
+            Moved::Unresolved => None,
+            Moved::PerAnchor => drift(repo_root, reference, r),
+        }
+    }
+}
+
+impl Default for Seen {
+    fn default() -> Seen {
+        Seen::new()
+    }
+}
+
+/// Walk `<reference>..HEAD` ONCE and count, per path, how many commits touch it — the same
+/// number `git rev-list --count <reference>..HEAD -- <path>` returns per anchor, taken for
+/// every path in one fork instead of one fork per anchor. On a ledger with 200 content
+/// anchors that is 1 subprocess where there were 200.
+///
+/// The two agree only where ev can prove they agree, and ev refuses the table where it
+/// cannot:
+/// - a MERGE in the range. `git log` prints no file list for a merge, while `rev-list`
+///   with a pathspec both counts an evil merge and prunes the side of a merge it is
+///   TREESAME to. Either way the numbers part company, and an undercount here is a
+///   false-green — the one failure ev may not have.
+/// - a QUOTED path (`core.quotepath=false` still quotes a path carrying `"` or a newline):
+///   the table's key would not be the path the anchor cites.
+///
+/// `--no-renames` is not a preference: `rev-list -- <path>` does no rename detection, so a
+/// rename must read as a delete plus an add, exactly as it does there.
+fn count_moves(repo_root: &Path, reference: &str) -> Moved {
+    let out = Command::new("git")
+        .args([
+            "-c",
+            "core.quotepath=false",
+            "log",
+            "--no-renames",
+            "--name-only",
+            // \x01 marks a header line and can appear in no path; %p is empty for a root
+            // commit and carries two or more shas for a merge.
+            "--format=%x01%p",
+            &format!("{reference}..HEAD"),
+        ])
+        .current_dir(repo_root)
+        .output();
+    let stdout = match out {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
+        // git ran and refused, or could not run: either way ev cannot count from here.
+        _ => return Moved::Unresolved,
+    };
+    let mut counts: HashMap<String, u32> = HashMap::new();
+    for line in stdout.lines() {
+        match line.strip_prefix('\u{1}') {
+            Some(parents) => {
+                if parents.split_whitespace().count() > 1 {
+                    return Moved::PerAnchor;
+                }
+            }
+            None if line.is_empty() => {}
+            None if line.starts_with('"') => return Moved::PerAnchor,
+            None => *counts.entry(line.to_string()).or_insert(0) += 1,
+        }
+    }
+    Moved::Counts(counts)
+}
+
+/// The pair: what ev found at the anchor, how far the world moved under it, and the join of
+/// the two. ONE shape, serialized once — the surfaces that carry it differ in the fields
+/// AROUND it, never in the pair itself.
+#[derive(Serialize, Debug, Clone, Copy)]
+pub struct Pair {
+    pub status: Status,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub drift: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cell: Option<Cell>,
+}
+
+impl Pair {
+    /// Carry a pair a view already holds. Derives nothing: `Cell::of` did that.
+    pub fn carried(status: Status, drift: Option<u32>, cell: Option<Cell>) -> Pair {
+        Pair {
+            status,
+            drift,
+            cell,
+        }
+    }
+
+    /// Merge the pair into an envelope. serde omits exactly the keys an absent drift or an
+    /// absent cell omit by hand — an unmeasured drift and an unclassified cell are not keys
+    /// with a default, they are keys ev does not write.
+    pub fn merge_into(&self, body: &mut serde_json::Value) {
+        if let (Some(obj), Ok(serde_json::Value::Object(pair))) =
+            (body.as_object_mut(), serde_json::to_value(self))
+        {
+            for (k, v) in pair {
+                obj.insert(k, v);
+            }
+        }
+    }
+}
+
+/// ONE look at ONE anchor: what it says now, how far the world moved, and the join. Taken
+/// at one instant, so the cell is about the world that exists — a status from one instant
+/// beside a drift from another is a cell about no world that ever existed.
+#[derive(Debug, Clone)]
+pub struct Reading {
+    /// The pointer this reading is of. Not part of the pair; the surfaces that want the
+    /// liveness class read it from here rather than re-parsing the raw ref.
+    pub eref: EvRef,
+    pub pair: Pair,
+}
+
+impl Reading {
+    /// `None` = ev could not READ the pointer: no current grammar accepts it. THE ONE place
+    /// the unreadable ref is decided, rather than an `if let Ok(..)` at each site that looks.
+    pub fn take(
+        raw: &str,
+        repo_root: &Path,
+        last_ack: Option<&str>,
+        base: Option<&str>,
+        seen: &Seen,
+    ) -> Option<Reading> {
+        let eref = EvRef::parse(raw).ok()?;
+        let status = verify_ref(&eref, repo_root, &seen.commits);
+        let drift = drift_since(repo_root, last_ack, base, &eref, seen);
+        Some(Reading {
+            eref,
+            // `Cell::of` is the one derivation; this is the one site that calls it on a
+            // freshly taken reading.
+            pair: Pair {
+                status,
+                drift,
+                cell: Cell::of(status, drift),
+            },
+        })
+    }
+
+    pub fn liveness(&self) -> Liveness {
+        Liveness::of(&self.eref)
+    }
 }
 
 /// Read the anchor and the world under it AT ONE INSTANT, and join them into the cell.
@@ -619,15 +869,41 @@ pub fn drift_since(
 /// read path a `self_evident` **file:** anchor would silently lose its status and its cell —
 /// a blind spot, which is a worse bug than the cost this batch exists to pay down.
 pub fn annotate(d: &mut crate::state::Derived, repo_root: &Path) {
-    let mut shas: Vec<String> = Vec::new();
-    for claims in [&d.claims, &d.closed, &d.grey, &d.demands_returned] {
-        commit_shas(claims, &mut shas);
+    let seen = Seen::over(d.claims.iter().chain(&d.closed).chain(&d.grey), repo_root);
+    fill(&mut d.claims, repo_root, &seen);
+    fill(&mut d.closed, repo_root, &seen);
+    fill(&mut d.grey, repo_root, &seen);
+    fill_demands(d, repo_root, &seen);
+}
+
+/// `demands_returned` is a SECOND COPY of a claim the fold also put in `claims` or in `grey`
+/// — an answered demand is by construction neither closed nor dead. Reading its anchors again
+/// would ask the same question of the same tree twice and throw one answer away; the reading
+/// is copied across instead. A copy that is somehow in neither bucket is read, not guessed at.
+fn fill_demands(d: &mut crate::state::Derived, repo_root: &Path, seen: &Seen) {
+    if d.demands_returned.is_empty() {
+        return;
     }
-    let commits = verify_commits(&shas, repo_root);
-    fill(&mut d.claims, repo_root, &commits);
-    fill(&mut d.closed, repo_root, &commits);
-    fill(&mut d.grey, repo_root, &commits);
-    fill(&mut d.demands_returned, repo_root, &commits);
+    let read: HashMap<&str, &Vec<crate::state::EvidenceView>> = d
+        .claims
+        .iter()
+        .chain(&d.grey)
+        .map(|c| (c.id.as_str(), &c.evidence))
+        .collect();
+    let mut unread: Vec<usize> = Vec::new();
+    for (i, c) in d.demands_returned.iter_mut().enumerate() {
+        match read.get(c.id.as_str()) {
+            Some(evidence) => c.evidence = (*evidence).clone(),
+            None => unread.push(i),
+        }
+    }
+    for i in unread {
+        fill(
+            std::slice::from_mut(&mut d.demands_returned[i]),
+            repo_root,
+            seen,
+        );
+    }
 }
 
 /// Annotate JUST these claims — the same reading `annotate` gives, over a smaller set.
@@ -635,51 +911,35 @@ pub fn annotate(d: &mut crate::state::Derived, repo_root: &Path) {
 /// A disposition (`close`/`hold`/`demand`/`ack`/`prune`, and every pause disposition)
 /// renders ONE claim and used to annotate the whole ledger to do it: on an audit ledger
 /// that is hundreds of git calls to answer a question about one claim. The reading itself
-/// is unchanged — same `verify_ref`, same `drift_since`, same `Cell::of`.
-pub fn annotate_claims(claims: &mut [crate::state::ClaimView], repo_root: &Path) {
-    let mut shas: Vec<String> = Vec::new();
-    commit_shas(claims, &mut shas);
-    let commits = verify_commits(&shas, repo_root);
-    fill(claims, repo_root, &commits);
+/// is unchanged — same `Reading::take`, so same `verify_ref`, same `drift_since`, same
+/// `Cell::of`.
+pub fn annotate_claims(claims: &mut [ClaimView], repo_root: &Path) {
+    let seen = Seen::over(claims.iter(), repo_root);
+    fill(claims, repo_root, &seen);
 }
 
-/// The `commit:` shas these claims cite — the set the batch is about to resolve.
-fn commit_shas(claims: &[crate::state::ClaimView], out: &mut Vec<String>) {
-    for c in claims {
-        for ev in &c.evidence {
-            if let Ok(r) = EvRef::parse(&ev.eref) {
-                if r.kind == RefKind::Commit {
-                    out.push(r.payload);
-                }
-            }
-        }
-    }
-}
-
-fn fill(
-    claims: &mut [crate::state::ClaimView],
-    repo_root: &Path,
-    commits: &HashMap<String, Status>,
-) {
+/// The read path, and the only one: every anchor on these claims, through `Reading::take`.
+fn fill(claims: &mut [ClaimView], repo_root: &Path, seen: &Seen) {
     for c in claims.iter_mut() {
         let last_ack = c.last_ack.clone();
         for ev in c.evidence.iter_mut() {
-            if let Ok(r) = EvRef::parse(&ev.eref) {
-                ev.status = match r.kind {
-                    // Already answered by the one batched subprocess. The fallback is not a
-                    // second rule: `verify_commits` answers for every sha it is given, and a
-                    // sha it declined to batch reads through the very function it defers to.
-                    RefKind::Commit => commits
-                        .get(&r.payload)
-                        .copied()
-                        .unwrap_or_else(|| verify_commit(&r.payload, repo_root)),
-                    _ => verify_ref(&r, repo_root),
-                };
-                ev.drift = drift_since(repo_root, last_ack.as_deref(), ev.base.as_deref(), &r);
+            match Reading::take(
+                &ev.eref,
+                repo_root,
+                last_ack.as_deref(),
+                ev.base.as_deref(),
+                seen,
+            ) {
+                Some(reading) => {
+                    ev.status = reading.pair.status;
+                    ev.drift = reading.pair.drift;
+                    ev.cell = reading.pair.cell;
+                }
+                // A ref no current grammar accepts is left exactly as the ledger recorded
+                // it — ev cannot re-read a pointer it cannot parse, and does not guess. The
+                // cell is still the join of what the ledger holds.
+                None => ev.cell = Cell::of(ev.status, ev.drift),
             }
-            // A ref no current grammar accepts is left exactly as the ledger recorded
-            // it — ev cannot re-read a pointer it cannot parse, and does not guess.
-            ev.cell = Cell::of(ev.status, ev.drift);
         }
     }
 }

@@ -134,7 +134,7 @@ fn a_deleted_file_reads_file_gone_at_the_pause_without_a_manual_verify() {
 /// pinned `base` is not a re-base — `base` is the original pin and the larger count.
 #[test]
 fn an_ack_sha_that_resolves_nowhere_falls_back_to_the_pinned_base() {
-    use evolving::verify::{drift_since, EvRef};
+    use evolving::verify::{drift_since, EvRef, Seen};
 
     let dir = fresh_git("ghost-ack");
     std::fs::write(dir.join("f.txt"), "the invariant\n").unwrap();
@@ -157,12 +157,12 @@ fn an_ack_sha_that_resolves_nowhere_falls_back_to_the_pinned_base() {
     // a sha of the right shape that no clone carries — the squash-merged branch
     let ghost = "0123456789abcdef0123456789abcdef01234567";
     assert_eq!(
-        drift_since(&dir, Some(ghost), Some(&base), &r),
+        drift_since(&dir, Some(ghost), Some(&base), &r, &Seen::new()),
         Some(1),
         "an unresolvable ack must fall back to the pinned base, not disarm the ratchet"
     );
     // with no base to fall back to, ev asserts nothing — that is correct.
-    assert_eq!(drift_since(&dir, Some(ghost), None, &r), None);
+    assert_eq!(drift_since(&dir, Some(ghost), None, &r, &Seen::new()), None);
 }
 
 /// FINDING 3 — the movement census must not drop the claims it could not measure. A

@@ -249,6 +249,27 @@ impl Cell {
         }
     }
 
+    /// Whether this cell asks the human to go and look again. Expressed through the ONE
+    /// ordering, not as a hand-written list of variants: a list is a second ordering by
+    /// another name, and a cell added below the line would silently fall out of the pause's
+    /// moved set with nothing to catch it.
+    pub fn asks_reread(&self) -> bool {
+        self.severity() >= Cell::NeighborhoodMoved.severity()
+    }
+
+    /// One phrasing for a cell everywhere it is shown. Exhaustive: a cell ev has not
+    /// classified is not printed under some other cell's word — ev asserts nothing it did
+    /// not check, and a catch-all arm is exactly that assertion.
+    pub fn why(&self) -> &'static str {
+        match self {
+            Cell::Still => "nothing this anchor can see has moved",
+            Cell::NeighborhoodMoved => "the line stands; code moved beside it",
+            Cell::AnchorChanged => "the cited line itself changed",
+            Cell::FileGone => "the cited file is gone",
+            Cell::Legacy => "no current ref grammar accepts this pointer",
+        }
+    }
+
     /// Whether an `ack` — "the human looked, and the claim still stands" — can clear this
     /// cell. Only `neighborhood-moved` is a function of drift, so only it moves when the
     /// human's reference point moves. A changed or gone anchor is a broken pointer: no

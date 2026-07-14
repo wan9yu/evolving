@@ -57,48 +57,32 @@ pub fn run_pause(root: &Path, opts: PauseOpts) -> Result<()> {
 
     // Screen 1.5 — code moved under these claims since the last look.
     // ev cannot know whether the movement matters — only that it happened. RE-READ.
-    let moved: Vec<_> = d
+    // The screen is admitted on the claim's WORST cell, ranked by the ONE ordering: a claim
+    // has a cell that asks to be re-read exactly when its most severe one does. Carrying the
+    // cell out of the filter is what leaves no claim on this screen whose cell ev never
+    // classified — there is no phrase for such a claim, and ev prints none.
+    let moved: Vec<(&crate::state::ClaimView, crate::verify::Cell)> = d
         .claims
         .iter()
-        .filter(|c| {
-            c.evidence.iter().any(|e| {
-                matches!(
-                    e.cell,
-                    Some(crate::verify::Cell::NeighborhoodMoved)
-                        | Some(crate::verify::Cell::AnchorChanged)
-                        | Some(crate::verify::Cell::FileGone)
-                )
-            })
+        .filter_map(|c| {
+            let worst = c.worst_cell()?;
+            worst.asks_reread().then_some((c, worst))
         })
-        .cloned()
         .collect();
     if !moved.is_empty() {
         writeln!(
             out,
             "\n↗ code moved under these claims since the last look:"
         )?;
-        for c in &moved {
-            // The most severe cell, ranked by the ONE ordering (`Cell::severity`).
-            let worst = c
-                .evidence
-                .iter()
-                .filter_map(|e| e.cell)
-                .max_by_key(|cell| cell.severity());
-            let why = match worst {
-                Some(crate::verify::Cell::AnchorChanged) => "the cited line itself changed",
-                Some(crate::verify::Cell::FileGone) => "the cited file is gone",
-                Some(crate::verify::Cell::NeighborhoodMoved) => {
-                    "the line stands; code moved beside it"
-                }
-                _ => "moved",
-            };
-            writeln!(out, "  {} — {why}", c.label)?;
+        for (c, worst) in &moved {
+            // One phrasing for a cell wherever it is shown.
+            writeln!(out, "  {} — {}", c.label, worst.why())?;
             // `k` (still stands → ack) is offered ONLY where an ack can clear the cell.
             // A changed or gone anchor is a broken pointer: `Cell::of` does not read drift
             // for it, so no ack moves it, and offering the key would invite the human to
             // clear a red that structurally cannot be cleared. The claim stays visible and
             // keeps h/d/skip; the honest move is to re-file the anchor.
-            let ackable = worst.is_some_and(|cell| cell.clearable_by_ack());
+            let ackable = worst.clearable_by_ack();
             if ackable {
                 write!(
                     out,

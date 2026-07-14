@@ -892,12 +892,8 @@ fn print_movement_census(d: &crate::state::Derived) {
         if c.evidence.is_empty() {
             continue;
         }
-        let worst = c
-            .evidence
-            .iter()
-            .filter_map(|e| e.cell)
-            .max_by_key(|cell| cell.severity());
-        match worst {
+        // The same reduction the pause makes, through the same ONE ordering.
+        match c.worst_cell() {
             None => unmeasured += 1,
             Some(Cell::FileGone) => gone += 1,
             Some(Cell::AnchorChanged) => changed += 1,

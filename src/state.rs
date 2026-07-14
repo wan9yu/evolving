@@ -88,6 +88,21 @@ pub struct ClaimView {
     pub last_ack: Option<String>,
 }
 
+impl ClaimView {
+    /// The most severe cell among this claim's anchors, ranked by THE ONE ordering
+    /// (`Cell::severity`). `None` when ev could place none of them on the movement map —
+    /// an absent cell is ev asserting nothing, never a `still` by default.
+    ///
+    /// The pause and doctor's census both reduce a claim to this one cell. Two reductions
+    /// could rank the same claim two ways; one cannot.
+    pub fn worst_cell(&self) -> Option<crate::verify::Cell> {
+        self.evidence
+            .iter()
+            .filter_map(|e| e.cell)
+            .max_by_key(|cell| cell.severity())
+    }
+}
+
 #[derive(Serialize, Clone, Debug)]
 pub struct ThoughtView {
     pub id: String,

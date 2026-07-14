@@ -295,58 +295,80 @@ pub fn verify_cmd(claim_id: Option<String>, json: bool, full: bool) -> Result<()
             if ev.self_evident && !full {
                 continue;
             }
-            if let Ok(r) = crate::verify::EvRef::parse(&ev.eref) {
-                let status = crate::verify::verify_ref(&r, &root);
-                let liveness = crate::verify::Liveness::of(&r);
-                // drift: the world's movement under the anchor, in commits touching
-                // the cited path — a structural fact, judged by the human. Counted
-                // from the same reference `annotate` uses (the human's last
-                // look, else the filing base), through the same rule: a second rule
-                // here would be a second source of truth.
-                let moved = crate::verify::drift_since(
-                    &root,
-                    c.last_ack.as_deref(),
-                    ev.base.as_deref(),
-                    &r,
-                );
-
-                let mut body = serde_json::json!({
-                    "claim": c.id,
-                    "ref": ev.eref,
-                    "status": status,
-                    "liveness": liveness.as_str(),
-                });
-                if let Some(base) = &ev.base {
-                    body["base"] = serde_json::json!(base);
-                }
-                if let Some(k) = moved {
-                    body["drift"] = serde_json::json!(k);
-                }
-                // The cell is derived in exactly one place — `Cell::of`. This body is
-                // both the appended `verify` event and the `--json` check: one shape,
-                // one source of truth.
-                if let Some(cell) = crate::verify::Cell::of(status, moved) {
-                    body["cell"] = serde_json::json!(cell);
-                }
-                ledger.append_batch(vec![NewEvent {
-                    etype: "verify".into(),
-                    actor: Actor::engine(),
-                    body: body.clone(),
-                }])?;
-
-                if json {
-                    checks.push(body);
-                } else {
-                    match moved {
-                        Some(k) if k > 0 => println!(
+            let r = match crate::verify::EvRef::parse(&ev.eref) {
+                Ok(r) => r,
+                Err(_) => {
+                    // ev cannot read the pointer. Dropping the line here — which is what this
+                    // verb did — is the no-false-green failure in the one verb whose whole job
+                    // is to report what it read: the human sees clean output and never learns
+                    // the pointer is unreadable. ev names the fact and guesses no status; there
+                    // is no status, so no `verify` event is appended either. The way out is to
+                    // re-file the anchor with `ev evidence`.
+                    let liveness = crate::verify::Liveness::Unparseable;
+                    if json {
+                        checks.push(serde_json::json!({
+                            "claim": c.id,
+                            "ref": ev.eref,
+                            "liveness": liveness.as_str(),
+                        }));
+                    } else {
+                        println!(
                             "{} · {} → {} · {}",
                             short(&c.id),
                             ev.eref,
-                            status.as_str(),
-                            crate::verify::drift_phrase(k)
-                        ),
-                        _ => println!("{} · {} → {}", short(&c.id), ev.eref, status.as_str()),
+                            liveness.as_str(),
+                            liveness.why()
+                        );
                     }
+                    continue;
+                }
+            };
+            let status = crate::verify::verify_ref(&r, &root);
+            let liveness = crate::verify::Liveness::of(&r);
+            // drift: the world's movement under the anchor, in commits touching
+            // the cited path — a structural fact, judged by the human. Counted
+            // from the same reference `annotate` uses (the human's last
+            // look, else the filing base), through the same rule: a second rule
+            // here would be a second source of truth.
+            let moved =
+                crate::verify::drift_since(&root, c.last_ack.as_deref(), ev.base.as_deref(), &r);
+
+            let mut body = serde_json::json!({
+                "claim": c.id,
+                "ref": ev.eref,
+                "status": status,
+                "liveness": liveness.as_str(),
+            });
+            if let Some(base) = &ev.base {
+                body["base"] = serde_json::json!(base);
+            }
+            if let Some(k) = moved {
+                body["drift"] = serde_json::json!(k);
+            }
+            // The cell is derived in exactly one place — `Cell::of`. This body is
+            // both the appended `verify` event and the `--json` check: one shape,
+            // one source of truth.
+            if let Some(cell) = crate::verify::Cell::of(status, moved) {
+                body["cell"] = serde_json::json!(cell);
+            }
+            ledger.append_batch(vec![NewEvent {
+                etype: "verify".into(),
+                actor: Actor::engine(),
+                body: body.clone(),
+            }])?;
+
+            if json {
+                checks.push(body);
+            } else {
+                match moved {
+                    Some(k) if k > 0 => println!(
+                        "{} · {} → {} · {}",
+                        short(&c.id),
+                        ev.eref,
+                        status.as_str(),
+                        crate::verify::drift_phrase(k)
+                    ),
+                    _ => println!("{} · {} → {}", short(&c.id), ev.eref, status.as_str()),
                 }
             }
         }
@@ -400,38 +422,45 @@ fn resolve_claim_id(ledger: &Ledger, prefix: &str) -> Result<String> {
 /// far the world had moved under it. Written into every disposition event so a later
 /// analysis can ask whether the signal PRECEDED the decision — the first measurable
 /// proxy for whether the rail earns its cost. ev emits it and never reads it.
+///
+/// Only the ONE claim being disposed of is annotated: the snapshot is about that claim, and
+/// annotating the whole ledger to render it made every disposition pay for every other claim's
+/// anchors. The reading is the same one `annotate` gives — it reads `Cell::of`'s output and
+/// re-derives nothing — and it is still taken BEFORE the disposition event is appended.
 pub fn at_verify_snapshot(root: &Path, ledger: &Ledger, claim_id: &str) -> serde_json::Value {
     let mut d = match ledger.scan() {
         Ok(events) => crate::state::fold(&events),
         Err(_) => return serde_json::json!([]),
     };
-    crate::verify::annotate(&mut d, root);
     let found = d
         .claims
-        .iter()
-        .chain(&d.grey)
-        .chain(&d.closed)
+        .iter_mut()
+        .chain(&mut d.grey)
+        .chain(&mut d.closed)
         .find(|c| c.id == claim_id);
     match found {
         None => serde_json::json!([]),
-        Some(c) => serde_json::Value::Array(
-            c.evidence
-                .iter()
-                .map(|e| {
-                    let mut v = serde_json::json!({
-                        "ref": e.eref,
-                        "status": e.status,
-                    });
-                    if let Some(k) = e.drift {
-                        v["drift"] = serde_json::json!(k);
-                    }
-                    if let Some(cell) = e.cell {
-                        v["cell"] = serde_json::json!(cell);
-                    }
-                    v
-                })
-                .collect(),
-        ),
+        Some(c) => {
+            crate::verify::annotate_claims(std::slice::from_mut(c), root);
+            serde_json::Value::Array(
+                c.evidence
+                    .iter()
+                    .map(|e| {
+                        let mut v = serde_json::json!({
+                            "ref": e.eref,
+                            "status": e.status,
+                        });
+                        if let Some(k) = e.drift {
+                            v["drift"] = serde_json::json!(k);
+                        }
+                        if let Some(cell) = e.cell {
+                            v["cell"] = serde_json::json!(cell);
+                        }
+                        v
+                    })
+                    .collect(),
+            )
+        }
     }
 }
 
@@ -611,7 +640,13 @@ pub fn brief(json: bool) -> Result<()> {
     let root = find_root();
     let ledger = Ledger::open(&root)?;
     let mut d = crate::state::fold(&ledger.scan()?);
-    crate::verify::annotate(&mut d, &root);
+    // The pair costs a live re-read of every anchor. `--json` carries it (`status`, `drift`,
+    // `cell` on every check); the text brief prints only the mark and the state word, and
+    // `state` is a ledger fact the annotation does not touch — so annotating for text mode
+    // would buy the reader nothing and charge the whole ledger's git calls for it.
+    if json {
+        crate::verify::annotate(&mut d, &root);
+    }
     print!("{}", crate::render::brief(&d, json));
     Ok(())
 }

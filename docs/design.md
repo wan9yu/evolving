@@ -56,6 +56,15 @@ Git is invoked as a subprocess; there is no git library, no TUI crate, no networ
   that has survived two boundary pauses — countable, revivable by evidence). A demanded claim that
   later gains evidence surfaces as a **returned demand**. Snapshots are immutable events; the fold
   surfaces their recorded deltas as history.
+- **A claim's state is a fact about the LEDGER, not about the world.** It is folded from the last
+  status any `ev evidence` or `ev verify` recorded, and it is deliberately not re-derived live: it
+  moves when a human runs `ev verify`, and not before. So a file can be anchored and then deleted,
+  and the TEXT `ev brief` will still print `✓ the parser is fixed [anchored]` — while `ev brief
+  --json` at that same instant reports `"status": "gone"`, `"cell": "file-gone"`, because the JSON
+  surfaces annotate (they re-read every anchor there and then). The state word says what the ledger
+  was told; the status and the cell say what ev just saw. Deriving state live would add a second
+  state-machine site beside `derive_state`, let the two disagree, and leave `ev verify` with nothing
+  to do. **`ev verify` and `ev brief --json` are what report the world.**
 
 ## Verbs
 
@@ -149,8 +158,14 @@ Exit codes: 0 done · 1 honest refusal · 2 error. State-reading output ends wit
   ever existed. The read path re-reads and appends nothing; `ev verify` remains the verb that records. Five values: `still` (drift was measured, and it
   is zero — nothing this anchor can see has moved), `neighborhood-moved` (the cited line stands;
   code moved beside it — the content anchor's blind spot), `anchor-changed` (the cited line itself
-  changed), `file-gone` (the container is gone), `legacy` (a pre-0.2.3 `failed` status ev cannot
-  classify without re-verifying). **No cell is emitted when drift could not be measured** — a
+  changed), `file-gone` (the container is gone), `legacy` (an UNPARSEABLE pointer from an older
+  ledger — ev cannot read it and does not guess). Because the read path re-reads every pointer it
+  CAN parse, `legacy` now means exactly one thing, and **`ev verify` does not clear it**: verify
+  re-reads anchors, and this is the pointer it cannot read. The way out is to re-file the anchor
+  with `ev evidence` under a grammar ev accepts; the old entry stays, because the ledger is
+  append-only. `ev verify` prints an `unparseable` line for it rather than dropping it — a silent
+  drop in the verb whose job is to report what it read is the false-green ev exists to refuse.
+  **No cell is emitted when drift could not be measured** — a
   `commit:` ref, a `recorded` (`metric:`/`url:`) anchor, and an `unreachable` one all carry no cell,
   by the same convention: an absent cell means ev asserts nothing, not that nothing moved. `still`
   is the only value that means zero movement, and it means that only because drift was actually

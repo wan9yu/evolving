@@ -1,8 +1,10 @@
 use crate::ledger::{Actor, Ledger, NewEvent};
 use crate::{EvError, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::io::Write;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RefKind {
@@ -192,8 +194,14 @@ pub enum Cell {
     AnchorChanged,
     /// The container is gone.
     FileGone,
-    /// A pre-0.2.3 conflated status. ev cannot classify it without re-verifying, and
-    /// does not guess. The next `ev verify` resolves it.
+    /// An UNPARSEABLE pointer from an older ledger — the only way `Status::Failed` survives
+    /// a read now that the read path re-reads every parseable ref live. ev cannot classify a
+    /// pointer it cannot read, and does not guess.
+    ///
+    /// `ev verify` does NOT clear it: verify re-reads anchors, and this pointer is the one
+    /// thing it cannot read. The way out is to re-file the anchor with `ev evidence` under a
+    /// ref grammar ev accepts; the old entry stays in the ledger, because the ledger is
+    /// append-only and a written payload is frozen.
     Legacy,
 }
 
@@ -373,6 +381,83 @@ fn verify_commit(sha: &str, repo_root: &Path) -> Status {
     }
 }
 
+/// Resolve every `commit:` sha in ONE git subprocess, rather than one fork per sha.
+///
+/// `verify_commit` forks `git rev-parse` per ref, and fork/exec — not git's work — is the
+/// whole cost: ~10 ms each, so an audit ledger carrying 500 commit refs (`exhaust` files
+/// one evidence event per sha in a session window) paid ~5 s on every read. `git cat-file
+/// --batch-check` answers the whole set from one process: the revs go in on stdin, one
+/// answer comes back per line, in the order they were asked.
+///
+/// The three-way outcome is `verify_commit`'s, unchanged, per sha:
+/// - the object is present and peels to a commit → `Resolves`;
+/// - git ran and said otherwise (`missing`, `ambiguous`, an object that is not a commit,
+///   or no answer at all — the same fact a non-zero `rev-parse --verify` reports) → `Gone`;
+/// - git could not be run AT ALL → `Unreachable`, a fact about ev's reach and not about the
+///   object, and never collapsed into `Gone`.
+///
+/// A sha ev cannot put on one line of stdin (empty, or carrying whitespace) is not batched;
+/// it falls back to `verify_commit`, which reads it exactly as it always did. The map is
+/// keyed by sha and answers for every sha asked, so no caller can be handed a hole.
+pub fn verify_commits(shas: &[String], repo_root: &Path) -> HashMap<String, Status> {
+    let mut out: HashMap<String, Status> = HashMap::new();
+    let mut batch: Vec<&str> = Vec::new();
+    for sha in shas {
+        if out.contains_key(sha.as_str()) || batch.contains(&sha.as_str()) {
+            continue;
+        }
+        if sha.is_empty() || sha.chars().any(char::is_whitespace) {
+            out.insert(sha.clone(), verify_commit(sha, repo_root));
+        } else {
+            batch.push(sha.as_str());
+        }
+    }
+    if batch.is_empty() {
+        return out;
+    }
+
+    let stdin_text: String = batch.iter().map(|s| format!("{s}^{{commit}}\n")).collect();
+    let spawned = Command::new("git")
+        .args(["cat-file", "--batch-check"])
+        .current_dir(repo_root)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn();
+    let answered = spawned.and_then(|mut child| {
+        // The pipe is dropped with the borrow, which closes stdin — cat-file reads to EOF
+        // and only then exits, so writing and waiting in this order cannot deadlock on a
+        // set this size.
+        if let Some(mut si) = child.stdin.take() {
+            si.write_all(stdin_text.as_bytes())?;
+        }
+        child.wait_with_output()
+    });
+    let stdout = match answered {
+        Ok(o) => String::from_utf8_lossy(&o.stdout).into_owned(),
+        // ev could not run git — not a fact about any of the objects.
+        Err(_) => {
+            for sha in batch {
+                out.insert(sha.to_string(), Status::Unreachable);
+            }
+            return out;
+        }
+    };
+    let lines: Vec<&str> = stdout.lines().collect();
+    for (i, sha) in batch.iter().enumerate() {
+        // `<oid> commit <size>` is the only answer that means the object is here and is a
+        // commit. Everything else — `missing`, `ambiguous`, a peeled non-commit, a line git
+        // never printed — is the object being absent from this clone, which is what
+        // `rev-parse --verify` reports by failing.
+        let status = match lines.get(i) {
+            Some(l) if l.split_whitespace().nth(1) == Some("commit") => Status::Resolves,
+            _ => Status::Gone,
+        };
+        out.insert(sha.to_string(), status);
+    }
+    out
+}
+
 /// Attach evidence to a claim and record whether its anchor resolves, in one
 /// atomic batch. The guard runs first: no path reaches `record_checked` un-guarded.
 pub fn verify_and_record(
@@ -402,8 +487,14 @@ pub fn verify_and_record(
 /// Taking the guarded `EvRef` rather than re-guarding is what keeps `ev claim --evidence`
 /// to ONE guard: that path must guard before the claim is written (a refused ref must cost
 /// the ledger nothing) and would otherwise re-read and re-parse the cited file a second
-/// time. The guard is not weakened — it is unreachable to construct an `EvRef` for this
-/// function without `guard_attach` or `verify_and_record` above.
+/// time.
+///
+/// The guard's COVERAGE is what holds, not the type: `EvRef::parse` is public and its fields
+/// are public, so an `EvRef` can be built without ever passing `guard_attach` (`exhaust` does
+/// exactly that, for the `commit:` refs the guard does not apply to anyway). Every attach path
+/// in ev is guarded — that is a convention this crate keeps, checked by reading the callers,
+/// not an invariant the type system enforces. A new caller must guard, or say why the guard
+/// does not apply to it.
 pub fn record_checked(
     ledger: &Ledger,
     repo_root: &Path,
@@ -518,25 +609,77 @@ pub fn drift_since(
 /// status said `resolves` while its cell said `file-gone` would be the second source of
 /// truth the cell exists to prevent.
 ///
-/// One git subprocess per annotated item; if claim counts grow, batching by unique
-/// (reference, path) pairs is the natural next step.
+/// Every `commit:` ref in the set is resolved in ONE `git cat-file --batch-check`
+/// (`verify_commits`) before the fill, so the read path forks once instead of once per sha.
+/// The batch is a fast path, not a second check: it answers exactly what `verify_commit`
+/// answers, and a sha it did not batch falls back to `verify_commit` here.
+///
+/// `self_evident` evidence is NOT skipped the way `verify_cmd` skips it. That skip belongs
+/// to a WRITE path, where re-checking an immutable commit is forever-green noise. On the
+/// read path a `self_evident` **file:** anchor would silently lose its status and its cell —
+/// a blind spot, which is a worse bug than the cost this batch exists to pay down.
 pub fn annotate(d: &mut crate::state::Derived, repo_root: &Path) {
-    let fill = |claims: &mut Vec<crate::state::ClaimView>| {
-        for c in claims.iter_mut() {
-            let last_ack = c.last_ack.clone();
-            for ev in c.evidence.iter_mut() {
-                if let Ok(r) = EvRef::parse(&ev.eref) {
-                    ev.status = verify_ref(&r, repo_root);
-                    ev.drift = drift_since(repo_root, last_ack.as_deref(), ev.base.as_deref(), &r);
+    let mut shas: Vec<String> = Vec::new();
+    for claims in [&d.claims, &d.closed, &d.grey, &d.demands_returned] {
+        commit_shas(claims, &mut shas);
+    }
+    let commits = verify_commits(&shas, repo_root);
+    fill(&mut d.claims, repo_root, &commits);
+    fill(&mut d.closed, repo_root, &commits);
+    fill(&mut d.grey, repo_root, &commits);
+    fill(&mut d.demands_returned, repo_root, &commits);
+}
+
+/// Annotate JUST these claims — the same reading `annotate` gives, over a smaller set.
+///
+/// A disposition (`close`/`hold`/`demand`/`ack`/`prune`, and every pause disposition)
+/// renders ONE claim and used to annotate the whole ledger to do it: on an audit ledger
+/// that is hundreds of git calls to answer a question about one claim. The reading itself
+/// is unchanged — same `verify_ref`, same `drift_since`, same `Cell::of`.
+pub fn annotate_claims(claims: &mut [crate::state::ClaimView], repo_root: &Path) {
+    let mut shas: Vec<String> = Vec::new();
+    commit_shas(claims, &mut shas);
+    let commits = verify_commits(&shas, repo_root);
+    fill(claims, repo_root, &commits);
+}
+
+/// The `commit:` shas these claims cite — the set the batch is about to resolve.
+fn commit_shas(claims: &[crate::state::ClaimView], out: &mut Vec<String>) {
+    for c in claims {
+        for ev in &c.evidence {
+            if let Ok(r) = EvRef::parse(&ev.eref) {
+                if r.kind == RefKind::Commit {
+                    out.push(r.payload);
                 }
-                // A ref no current grammar accepts is left exactly as the ledger recorded
-                // it — ev cannot re-read a pointer it cannot parse, and does not guess.
-                ev.cell = Cell::of(ev.status, ev.drift);
             }
         }
-    };
-    fill(&mut d.claims);
-    fill(&mut d.closed);
-    fill(&mut d.grey);
-    fill(&mut d.demands_returned);
+    }
+}
+
+fn fill(
+    claims: &mut [crate::state::ClaimView],
+    repo_root: &Path,
+    commits: &HashMap<String, Status>,
+) {
+    for c in claims.iter_mut() {
+        let last_ack = c.last_ack.clone();
+        for ev in c.evidence.iter_mut() {
+            if let Ok(r) = EvRef::parse(&ev.eref) {
+                ev.status = match r.kind {
+                    // Already answered by the one batched subprocess. The fallback is not a
+                    // second rule: `verify_commits` answers for every sha it is given, and a
+                    // sha it declined to batch reads through the very function it defers to.
+                    RefKind::Commit => commits
+                        .get(&r.payload)
+                        .copied()
+                        .unwrap_or_else(|| verify_commit(&r.payload, repo_root)),
+                    _ => verify_ref(&r, repo_root),
+                };
+                ev.drift = drift_since(repo_root, last_ack.as_deref(), ev.base.as_deref(), &r);
+            }
+            // A ref no current grammar accepts is left exactly as the ledger recorded
+            // it — ev cannot re-read a pointer it cannot parse, and does not guess.
+            ev.cell = Cell::of(ev.status, ev.drift);
+        }
+    }
 }

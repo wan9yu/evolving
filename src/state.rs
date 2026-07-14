@@ -2,6 +2,22 @@ use crate::ledger::Envelope;
 use serde::Serialize;
 use std::collections::HashMap;
 
+/// A claim's state is a fact about the LEDGER, not about the world.
+///
+/// It is folded from the recorded events — the last status any `ev evidence` or `ev verify`
+/// wrote — and it is deliberately NOT re-derived live. `ev verify` is the verb that goes and
+/// looks; state moves when a human runs it, and not before.
+///
+/// The consequence is real and is not a bug: an anchor's file can be deleted a minute after
+/// it was filed, and until someone re-verifies, the text `ev brief` still prints
+/// `[anchored]` — while `ev brief --json` at that same instant reports `"status": "gone"`,
+/// `"cell": "file-gone"`, because the JSON surfaces annotate (they re-read the anchor there
+/// and then). The state word describes what the ledger was told; the status and the cell
+/// describe what ev just saw.
+///
+/// Deriving state live would put a second state-machine site next to this one, make the two
+/// disagree the moment either changed, and leave `ev verify` with nothing to do. `ev verify`
+/// and `ev brief --json` are what report the world.
 #[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum ClaimState {
@@ -379,6 +395,10 @@ pub(crate) fn no_baseline_refusal() -> crate::EvError {
     )
 }
 
+/// THE ONE state derivation, over the RECORDED evidence — the ledger's own account of
+/// itself. It reads `e.status` as the fold left it and never re-reads an anchor: see
+/// `ClaimState` for why state is a fact about the ledger and `ev verify` is the verb that
+/// moves it.
 fn derive_state(a: &ClaimAcc, boundaries_open: u32) -> ClaimState {
     if a.dead {
         return ClaimState::Dead;

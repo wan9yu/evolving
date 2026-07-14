@@ -19,6 +19,13 @@ pub struct EvidenceView {
     pub eref: String,
     /// What ev found at the anchor. Carried as the class itself, so a reader that
     /// buckets it cannot silently fold a value it does not know into one it does.
+    ///
+    /// The fold puts the RECORDED status here — what the last `ev evidence` or `ev verify`
+    /// wrote. `verify::annotate` overwrites it with a LIVE reading, so on every surface
+    /// that annotates (`brief --json`, `pause`, `doctor`, the `at_verify` snapshot) this
+    /// is the same reading the `cell` beside it was derived from. The two are halves of
+    /// one look: a status that said `resolves` beside a cell that said `file-gone` would
+    /// be a second source of truth.
     pub status: crate::verify::Status,
     pub self_evident: bool,
     /// The repo state (HEAD sha) the anchor was filed against — drift's zero point.

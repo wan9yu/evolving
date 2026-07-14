@@ -212,17 +212,9 @@ fn a_deleted_file_should_read_gone_not_unreachable() {
     );
 }
 
-#[test]
-fn a_legacy_failed_status_should_read_back_as_failed() {
-    // Append-only: a value written by an older ev is never rewritten.
-    let dir = fresh_git();
-    std::fs::write(dir.join("a.txt"), "hello\n").unwrap();
-    git_commit(&dir, "one");
-    assert!(run(&dir, &["init"]).status.success());
-    assert!(run(&dir, &["claim", "c", "--by", "agent"]).status.success());
-    let id = claim_id(&dir);
-
-    let p = ledger_path(&dir);
+/// Append an evidence event by hand, as an older ev would have written it.
+fn append_legacy_evidence(dir: &std::path::Path, claim: &str, eref: &str, status: &str) {
+    let p = ledger_path(dir);
     let mut text = std::fs::read_to_string(&p).unwrap();
     let last: serde_json::Value = serde_json::from_str(text.lines().last().unwrap()).unwrap();
     let legacy = serde_json::json!({
@@ -231,16 +223,67 @@ fn a_legacy_failed_status_should_read_back_as_failed() {
         "seq": last["seq"].as_u64().unwrap() + 1,
         "actor": { "kind": "agent", "id": "legacy" },
         "type": "evidence",
-        "body": { "claim": id, "ref": "file:a.txt::hello", "status": "failed", "self_evident": false }
+        "body": { "claim": claim, "ref": eref, "status": status, "self_evident": false }
     });
     text.push_str(&serde_json::to_string(&legacy).unwrap());
     text.push('\n');
     std::fs::write(&p, text).unwrap();
+}
+
+/// The written event is frozen forever — but a READ is a measurement, not an echo. The
+/// read path re-reads the anchor, so a legacy `failed` on a pointer ev can still follow is
+/// superseded by what ev finds THERE AND THEN. That is not a reinterpretation of the event:
+/// ev opened the file. The event itself is never rewritten, and the ledger still holds it.
+#[test]
+fn a_legacy_failed_status_is_superseded_by_a_live_reading_never_rewritten() {
+    let dir = fresh_git();
+    std::fs::write(dir.join("a.txt"), "hello\n").unwrap();
+    git_commit(&dir, "one");
+    assert!(run(&dir, &["init"]).status.success());
+    assert!(run(&dir, &["claim", "c", "--by", "agent"]).status.success());
+    let id = claim_id(&dir);
+    append_legacy_evidence(&dir, &id, "file:a.txt::hello", "failed");
 
     let out = run(&dir, &["brief", "--json"]);
     assert!(out.status.success());
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(
+        v["open"][0]["evidence"][0]["status"].as_str(),
+        Some("resolves"),
+        "the anchor was re-read: the cited text is in the file, and ev says what it found: {v}"
+    );
+
+    // APPEND-ONLY. The read superseded nothing in the ledger: the event still says `failed`.
+    let raw = std::fs::read_to_string(ledger_path(&dir)).unwrap();
     assert!(
-        String::from_utf8_lossy(&out.stdout).contains("\"failed\""),
-        "a legacy status must survive the read path unrewritten"
+        raw.contains("\"status\":\"failed\""),
+        "a value written by an older ev must never be rewritten"
+    );
+}
+
+/// Where ev CANNOT re-read the pointer, it does not guess: a ref no current grammar accepts
+/// keeps the status the ledger recorded, and its cell is `legacy`.
+#[test]
+fn a_legacy_failed_status_on_an_unreadable_pointer_stays_failed() {
+    let dir = fresh_git();
+    assert!(run(&dir, &["init"]).status.success());
+    assert!(run(&dir, &["claim", "c", "--by", "agent"]).status.success());
+    let id = claim_id(&dir);
+    // no scheme — no current grammar accepts it, so there is nothing for ev to re-read
+    append_legacy_evidence(&dir, &id, "some/old/pointer", "failed");
+
+    let out = run(&dir, &["brief", "--json"]);
+    assert!(out.status.success());
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let e = &v["open"][0]["evidence"][0];
+    assert_eq!(
+        e["status"].as_str(),
+        Some("failed"),
+        "an unreadable pointer keeps the recorded status — ev does not guess: {v}"
+    );
+    assert_eq!(
+        e["cell"].as_str(),
+        Some("legacy"),
+        "and its cell says so out loud: {v}"
     );
 }

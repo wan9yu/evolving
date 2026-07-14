@@ -38,7 +38,11 @@ refuses to file one otherwise, since an anchor on absent text is born red and ca
 signal. A bare `file:<path>` (no `::`) is refused too, if the trailing segment after a `:` is a line
 number — that shape almost always means a line was meant, and ev anchors by content, not by line.
 The statuses an agent will see, on `ev evidence`, `ev verify`, or a claim's evidence read back, are
-`resolves` · `changed` · `gone` · `unreachable` · `recorded`. `changed` means **the cited line
+`resolves` · `changed` · `gone` · `unreachable` · `recorded`, plus `failed` — the pre-0.2.3 value
+that conflated `changed`, `gone` and a never-valid anchor behind one word. This version never writes
+`failed`, but a ledger written before 0.2.3 still carries it, and an agent still reads it back on any
+anchor ev cannot re-read (a ref no current grammar accepts). Where the pointer still parses, ev
+re-reads it and reports one of the five. `changed` means **the cited line
 changed — re-read what is there now**, never "fixed": ev has no way to tell whether the code that
 replaced it addresses what the claim described.
 

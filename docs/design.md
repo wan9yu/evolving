@@ -119,8 +119,13 @@ Exit codes: 0 done · 1 honest refusal · 2 error. State-reading output ends wit
   already on the ledger.
 - Ledgers are append-only, so the read path carries what older versions wrote and never rewrites it:
   0.1.x's `verified` normalizes to `resolves`, and `failed` — the pre-0.2.3 value that conflated
-  `changed`, `gone` and a never-valid anchor behind one word — reads back as `failed`, forever.
-  0.2.3 never produces it. An unrecognised status also reads as `failed`: ev does not guess.
+  `changed`, `gone` and a never-valid anchor behind one word — stays in the ledger as `failed`,
+  forever. 0.2.3 never produces it. An unrecognised status also reads as `failed`: ev does not guess.
+  A read, however, is a **measurement, not an echo**: where the pointer still parses, the read path
+  re-reads the anchor and reports what it finds there and then, so a legacy `failed` is superseded by
+  a fresh reading rather than repeated. Where ev cannot re-read the pointer at all (a ref no current
+  grammar accepts), `failed` stands and its cell is `legacy` — ev does not guess. The event is never
+  rewritten in either case.
 - **Drift:** every filed anchor records its `base` — the repo state (HEAD sha) it was filed against.
   For path-bearing anchors, the number of commits between base and HEAD touching the cited path is
   reported wherever evidence is read: `ev verify` (text and `--json`), the brief's `--json` evidence
@@ -129,9 +134,19 @@ Exit codes: 0 done · 1 honest refusal · 2 error. State-reading output ends wit
   can still resolve while the recommendation it supported has gone stale. The human judges what
   drift means; the engine only counts it. Once a claim has been `ack`'d, drift is counted from the
   HEAD that `ack` recorded rather than the filing `base` — from the human's **last look**, not from
-  filing — so a fresh look resets the count without touching the pinned `base`.
+  filing — so a fresh look resets the count without touching the pinned `base`. The ack is preferred
+  only where the count **can be taken against it**: the ledger travels between clones, and an ack
+  taken on a branch that was later squash-merged and deleted names a sha that resolves nowhere. There
+  the count falls back to the pinned `base` — the original pin, and the more conservative (larger)
+  count. Falling back is not a re-base, and it is not dropping the ack. If neither reference resolves,
+  ev reports no drift at all rather than reporting zero.
 - **`cell`:** the join of `status` and drift-since-the-last-look, derived in exactly one place
-  (`Cell::of`) so no second site can drift from it. Five values: `still` (drift was measured, and it
+  (`Cell::of`) so no second site can drift from it. **Both halves are read at the same instant.**
+  Every surface that shows a cell (`ev verify`, `ev brief --json`, the pause, `ev doctor`, the
+  `at_verify` snapshot) re-reads the anchor there and then, rather than joining a status the ledger
+  recorded at filing time with a drift counted now: `ev verify` is a manual verb, so the recorded
+  status can be months old, and the join of an old status with a fresh count describes no world that
+  ever existed. The read path re-reads and appends nothing; `ev verify` remains the verb that records. Five values: `still` (drift was measured, and it
   is zero — nothing this anchor can see has moved), `neighborhood-moved` (the cited line stands;
   code moved beside it — the content anchor's blind spot), `anchor-changed` (the cited line itself
   changed), `file-gone` (the container is gone), `legacy` (a pre-0.2.3 `failed` status ev cannot
@@ -170,9 +185,11 @@ Exit codes: 0 done · 1 honest refusal · 2 error. State-reading output ends wit
 
 A line-oriented prompt loop, screens in order: **0** the day's shape → **1** returned demands (the
 payoff moment) → **1.5** claims whose code moved since the last look (`cell` ∈
-`neighborhood-moved` / `anchor-changed` / `file-gone`) — one line of *why*, then `k` (still stands,
-i.e. `ack`) / `h`old / `d`emand / enter to skip (`a` is not offered here; it is already attach on
-screen 3) → **2** the exhaust batch — ⊙ badge, labels, age (`N boundaries old`), acknowledged
+`neighborhood-moved` / `anchor-changed` / `file-gone`) — one line of *why*, then `h`old / `d`emand /
+enter to skip, and `k` (still stands, i.e. `ack`) **only on `neighborhood-moved`**: an ack clears a
+cell by moving the human's reference point, and `Cell::of` does not read drift for a changed or gone
+anchor, so no ack can ever clear one. A broken anchor is named as broken and must be re-filed with
+`ev evidence` — ev does not offer a key that cannot work → **2** the exhaust batch — ⊙ badge, labels, age (`N boundaries old`), acknowledged
 with honest wording (*acknowledging records that work happened; it does not verify the assertions*) →
 **3** bare claims one at a time — demand (`d`) / attach (`a <ref>`) / hold (`h`) / dead (`x`) /
 carry (`c`) → **4** the grey list → **5** the receipt: duration and a one-key "labels legible? y/n".
@@ -192,8 +209,12 @@ duplicate closes, and per-writer clock drift. Clean exits 0; problems print and 
 
 It also prints three census lines that never gate and never change the exit code: anchor liveness
 (what it would take for each recorded anchor to go red), ref types in use, and the movement
-census — a count of every claim's most severe `cell` (`still` / `neighborhood-moved` /
-`anchor-changed` / `file-gone` / `legacy`). Where claims sit on code that moved, doctor says
+census — a count of **every claim that carries evidence**, open, held or closed, by its most severe
+`cell` (`still` / `neighborhood-moved` / `anchor-changed` / `file-gone` / `legacy`), plus
+`unmeasured` for a claim ev could place on no cell at all (its anchors are `commit:`/`metric:`/`url:`,
+or git could not count against them). The unmeasured claims stay in the denominator and are named:
+a census that dropped them would print a smaller total and call the remainder "claims" — the silent
+undercount doctor exists to expose. Where claims sit on code that moved, doctor says
 **re-read** — never "resolved"; it has no way to know whether the movement was the fix.
 
 ## Design laws

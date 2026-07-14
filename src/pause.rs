@@ -13,7 +13,7 @@ pub struct PauseOpts {
 pub fn run_pause(root: &Path, opts: PauseOpts) -> Result<()> {
     let ledger = Ledger::open(root)?;
     let mut d = crate::state::fold(&ledger.scan()?);
-    crate::verify::annotate_drift(&mut d, root);
+    crate::verify::annotate(&mut d, root);
     let started = Instant::now();
     let stdin = std::io::stdin();
     let mut lines = stdin.lock().lines();
@@ -78,18 +78,12 @@ pub fn run_pause(root: &Path, opts: PauseOpts) -> Result<()> {
             "\n↗ code moved under these claims since the last look:"
         )?;
         for c in &moved {
-            // Pick the most severe cell: FileGone > AnchorChanged > NeighborhoodMoved
+            // The most severe cell, ranked by the ONE ordering (`Cell::severity`).
             let worst = c
                 .evidence
                 .iter()
                 .filter_map(|e| e.cell)
-                .max_by_key(|cell| match cell {
-                    crate::verify::Cell::FileGone => 3,
-                    crate::verify::Cell::AnchorChanged => 2,
-                    crate::verify::Cell::NeighborhoodMoved => 1,
-                    crate::verify::Cell::Legacy => 0,
-                    crate::verify::Cell::Still => 0,
-                });
+                .max_by_key(|cell| cell.severity());
             let why = match worst {
                 Some(crate::verify::Cell::AnchorChanged) => "the cited line itself changed",
                 Some(crate::verify::Cell::FileGone) => "the cited file is gone",
@@ -99,13 +93,28 @@ pub fn run_pause(root: &Path, opts: PauseOpts) -> Result<()> {
                 _ => "moved",
             };
             writeln!(out, "  {} — {why}", c.label)?;
-            write!(
-                out,
-                "    [k] still stands · [h]old · [d]emand · enter to skip → "
-            )?;
+            // `k` (still stands → ack) is offered ONLY where an ack can clear the cell.
+            // A changed or gone anchor is a broken pointer: `Cell::of` does not read drift
+            // for it, so no ack moves it, and offering the key would invite the human to
+            // clear a red that structurally cannot be cleared. The claim stays visible and
+            // keeps h/d/skip; the honest move is to re-file the anchor.
+            let ackable = worst.is_some_and(|cell| cell.clearable_by_ack());
+            if ackable {
+                write!(
+                    out,
+                    "    [k] still stands · [h]old · [d]emand · enter to skip → "
+                )?;
+            } else {
+                writeln!(
+                    out,
+                    "    the anchor itself is broken — no acknowledgement clears it. Re-file it: ev evidence {} <ref>",
+                    crate::cmd::short(&c.id)
+                )?;
+                write!(out, "    [h]old · [d]emand · enter to skip → ")?;
+            }
             out.flush()?;
             let ans = lines.next().transpose()?.unwrap_or_default();
-            apply_moved_answer(root, &ledger, &c.id, ans.trim())?;
+            apply_moved_answer(root, &ledger, &c.id, ans.trim(), ackable)?;
         }
     }
 
@@ -241,9 +250,25 @@ pub fn apply_bare_answer(
 /// Mirrors `cmd::ack` exactly: `head` is present only when git resolves HEAD. A
 /// sentinel there (e.g. "ROOT") would make git fail to resolve it forever, poisoning
 /// drift and permanently disarming the ratchet — the Critical Task 5 fixed.
-fn apply_moved_answer(root: &Path, ledger: &Ledger, claim_id: &str, ans: &str) -> Result<()> {
+///
+/// `ackable` says whether an ack can clear this claim's cell. When it cannot, `k` writes
+/// NOTHING: an ack recorded against a gone anchor would be an event whose only effect is
+/// to make the human believe the red was handled.
+fn apply_moved_answer(
+    root: &Path,
+    ledger: &Ledger,
+    claim_id: &str,
+    ans: &str,
+    ackable: bool,
+) -> Result<()> {
     let human = Actor::human();
     match ans {
+        "k" if !ackable => {
+            // The answer lands on the same line as the prompt, which is left un-newlined.
+            println!(
+                "\n    the anchor is broken; an acknowledgement cannot make the cited code exist. Nothing recorded."
+            );
+        }
         "k" => {
             let head = crate::git_output(root, &["rev-parse", "HEAD"]);
             let snap = crate::cmd::at_verify_snapshot(root, ledger, claim_id);

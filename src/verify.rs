@@ -224,6 +224,29 @@ impl Cell {
             Status::Recorded | Status::Unreachable => None,
         }
     }
+
+    /// How loudly a cell asks to be re-read. THE ONE ordering: a claim's several anchors
+    /// are reduced to their most severe cell at the pause and in doctor's census, and two
+    /// orderings would rank the same claim two ways — the second source of truth `Cell::of`
+    /// exists to prevent.
+    pub fn severity(&self) -> u8 {
+        match self {
+            Cell::FileGone => 4,
+            Cell::AnchorChanged => 3,
+            Cell::NeighborhoodMoved => 2,
+            Cell::Legacy => 1,
+            Cell::Still => 0,
+        }
+    }
+
+    /// Whether an `ack` — "the human looked, and the claim still stands" — can clear this
+    /// cell. Only `neighborhood-moved` is a function of drift, so only it moves when the
+    /// human's reference point moves. A changed or gone anchor is a broken pointer: no
+    /// number of acks makes the cited text come back, and offering the human a key that
+    /// cannot work is a red they are invited to clear and structurally cannot.
+    pub fn clearable_by_ack(&self) -> bool {
+        matches!(self, Cell::NeighborhoodMoved)
+    }
 }
 
 /// The attach-time guard. Refuses anchors ev cannot mean, and anchors that
@@ -273,8 +296,10 @@ pub fn guard_attach(raw: &str, repo_root: &Path) -> Result<EvRef> {
                 })
                 .unwrap_or(false);
             if !present {
+                // The guard read the WORKING TREE (`std::fs::read` above), not a commit —
+                // it must name what it read, or the refusal asserts a check ev never made.
                 return Err(EvError::Refusal(format!(
-                    "{raw} — the cited text is not in {} at this commit.\n    \
+                    "{raw} — the cited text is not in {} as it stands in the working tree.\n    \
                      A content anchor must quote text that exists now; it goes red when that text changes.",
                     r.payload
                 )));
@@ -349,8 +374,7 @@ fn verify_commit(sha: &str, repo_root: &Path) -> Status {
 }
 
 /// Attach evidence to a claim and record whether its anchor resolves, in one
-/// atomic batch. The filing also records `base` — the repo state (HEAD sha)
-/// the anchor was filed against — so drift can be computed later.
+/// atomic batch. The guard runs first: no path reaches `record_checked` un-guarded.
 pub fn verify_and_record(
     ledger: &Ledger,
     repo_root: &Path,
@@ -360,7 +384,36 @@ pub fn verify_and_record(
     actor: Actor,
 ) -> Result<Status> {
     let r = guard_attach(raw_ref, repo_root)?;
-    let status = verify_ref(&r, repo_root);
+    record_checked(
+        ledger,
+        repo_root,
+        claim_id,
+        raw_ref,
+        &r,
+        self_evident,
+        actor,
+    )
+}
+
+/// Record an ALREADY-GUARDED ref and whether its anchor resolves, in one atomic batch.
+/// The filing also records `base` — the repo state (HEAD sha) the anchor was filed
+/// against — so drift can be computed later.
+///
+/// Taking the guarded `EvRef` rather than re-guarding is what keeps `ev claim --evidence`
+/// to ONE guard: that path must guard before the claim is written (a refused ref must cost
+/// the ledger nothing) and would otherwise re-read and re-parse the cited file a second
+/// time. The guard is not weakened — it is unreachable to construct an `EvRef` for this
+/// function without `guard_attach` or `verify_and_record` above.
+pub fn record_checked(
+    ledger: &Ledger,
+    repo_root: &Path,
+    claim_id: &str,
+    raw_ref: &str,
+    r: &EvRef,
+    self_evident: bool,
+    actor: Actor,
+) -> Result<Status> {
+    let status = verify_ref(r, repo_root);
     let mut body = serde_json::json!({
         "claim": claim_id,
         "ref": raw_ref,
@@ -419,28 +472,65 @@ pub fn drift_phrase(k: u32) -> String {
 ///
 /// Every surface that reports drift calls this; a second rule elsewhere would be the
 /// second source of truth the cell exists to prevent.
+/// The ack is preferred when the count CAN BE TAKEN AGAINST IT — not merely when it is
+/// present. The ledger is committed and travels between clones: a human acks a claim on a
+/// feature branch, the branch is squash-merged and deleted, and the acked sha now resolves
+/// in no clone at all. Short-circuiting on its mere presence would return None there, the
+/// claim would carry no cell, and it would drop out of the pause's moved set and doctor's
+/// census — the movement ratchet silently and permanently disarmed.
+///
+/// Falling back to the pinned `base` is NOT a re-base: `base` is the original pin, it is
+/// never written to, and it is strictly the more conservative reference (the older point,
+/// so the larger count). The ack is not dropped — it is tried first and kept for every
+/// later count that can resolve it. When neither reference resolves, ev asserts nothing.
 pub fn drift_since(
     repo_root: &Path,
     last_ack: Option<&str>,
     base: Option<&str>,
     r: &EvRef,
 ) -> Option<u32> {
-    let reference = last_ack.or(base)?;
-    drift(repo_root, reference, r)
+    if let Some(ack) = last_ack {
+        if let Some(k) = drift(repo_root, ack, r) {
+            return Some(k);
+        }
+    }
+    drift(repo_root, base?, r)
 }
 
-/// Fill in drift and the cell on every evidence view that can carry them (path-bearing
-/// ref with a reference point). An explicit read-time step so the fold stays pure.
-/// One git subprocess per annotated item; if claim counts grow, batching by
-/// unique (reference, path) pairs is the natural next step.
-pub fn annotate_drift(d: &mut crate::state::Derived, repo_root: &Path) {
+/// Read the anchor and the world under it AT ONE INSTANT, and join them into the cell.
+///
+/// Both halves are measured here. The status the ledger recorded is what the last
+/// `ev evidence` or `ev verify` found — and `ev verify` is a manual verb no one is obliged
+/// to run, so that status can be arbitrarily old. Joining it with a freshly counted drift
+/// produced a cell about no world that ever existed: a file deleted after filing read back
+/// `resolves` + drift 1 = `neighborhood-moved`, and the pause said "the line stands; code
+/// moved beside it" about a line ev had never read and that no longer existed. ev may not
+/// assert what it did not check.
+///
+/// This is a READ path: the live status is joined into the view and NO event is appended.
+/// Writing a status event from a read would be a side-effect the caller never asked for,
+/// and `ev verify` is the verb that records. Reading is cheap and safe: `verify_ref` is
+/// filesystem + `git rev-parse` only — it never runs a test and never touches the network
+/// (`metric:`/`url:` read `Recorded` with no I/O at all).
+///
+/// `EvidenceView.status` therefore carries the LIVE reading after annotation, not the
+/// recorded one: `status` and `cell` are the two halves of one reading, and a view whose
+/// status said `resolves` while its cell said `file-gone` would be the second source of
+/// truth the cell exists to prevent.
+///
+/// One git subprocess per annotated item; if claim counts grow, batching by unique
+/// (reference, path) pairs is the natural next step.
+pub fn annotate(d: &mut crate::state::Derived, repo_root: &Path) {
     let fill = |claims: &mut Vec<crate::state::ClaimView>| {
         for c in claims.iter_mut() {
             let last_ack = c.last_ack.clone();
             for ev in c.evidence.iter_mut() {
                 if let Ok(r) = EvRef::parse(&ev.eref) {
+                    ev.status = verify_ref(&r, repo_root);
                     ev.drift = drift_since(repo_root, last_ack.as_deref(), ev.base.as_deref(), &r);
                 }
+                // A ref no current grammar accepts is left exactly as the ledger recorded
+                // it — ev cannot re-read a pointer it cannot parse, and does not guess.
                 ev.cell = Cell::of(ev.status, ev.drift);
             }
         }

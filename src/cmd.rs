@@ -175,21 +175,24 @@ pub fn claim(args: ClaimArgs) -> Result<()> {
         body,
     }];
 
-    // The attach guard runs BEFORE the claim is written. `verify_and_record` can refuse
-    // an inline --evidence ref (a line number, an unknown scheme); the claim's batch is a
+    // The attach guard runs BEFORE the claim is written, and ONCE. The guard can refuse an
+    // inline --evidence ref (a line number, an unknown scheme); the claim's batch is a
     // separate atomic write, so refusing after it would leave a bare claim behind on every
-    // attempt — a refused ref must cost the ledger nothing.
-    if let Some(eref) = &args.evidence {
-        crate::verify::guard_attach(eref, &root)?;
-    }
+    // attempt — a refused ref must cost the ledger nothing. The guarded ref is carried to
+    // `record_checked` below rather than re-guarded, which would re-read and re-parse the
+    // cited file a second time for one filing.
+    let guarded = match &args.evidence {
+        Some(eref) => Some(crate::verify::guard_attach(eref, &root)?),
+        None => None,
+    };
 
     // an inline --evidence attaches an evidence event referencing the just-minted claim.
     // Because the batch is one atomic write, the claim is minted first, then referenced.
     let minted = ledger.append_batch(batch)?;
-    if let Some(eref) = &args.evidence {
+    if let (Some(eref), Some(r)) = (&args.evidence, &guarded) {
         let claim_id = &minted[0].id;
         let verdict =
-            crate::verify::verify_and_record(&ledger, &root, claim_id, eref, false, actor)?;
+            crate::verify::record_checked(&ledger, &root, claim_id, eref, r, false, actor)?;
         println!(
             "claim {} · evidence {} → {}",
             short(claim_id),
@@ -297,7 +300,7 @@ pub fn verify_cmd(claim_id: Option<String>, json: bool, full: bool) -> Result<()
                 let liveness = crate::verify::Liveness::of(&r);
                 // drift: the world's movement under the anchor, in commits touching
                 // the cited path — a structural fact, judged by the human. Counted
-                // from the same reference `annotate_drift` uses (the human's last
+                // from the same reference `annotate` uses (the human's last
                 // look, else the filing base), through the same rule: a second rule
                 // here would be a second source of truth.
                 let moved = crate::verify::drift_since(
@@ -402,7 +405,7 @@ pub fn at_verify_snapshot(root: &Path, ledger: &Ledger, claim_id: &str) -> serde
         Ok(events) => crate::state::fold(&events),
         Err(_) => return serde_json::json!([]),
     };
-    crate::verify::annotate_drift(&mut d, root);
+    crate::verify::annotate(&mut d, root);
     let found = d
         .claims
         .iter()
@@ -608,7 +611,7 @@ pub fn brief(json: bool) -> Result<()> {
     let root = find_root();
     let ledger = Ledger::open(&root)?;
     let mut d = crate::state::fold(&ledger.scan()?);
-    crate::verify::annotate_drift(&mut d, &root);
+    crate::verify::annotate(&mut d, &root);
     print!("{}", crate::render::brief(&d, json));
     Ok(())
 }
@@ -724,7 +727,7 @@ pub fn doctor() -> Result<()> {
     // The cells the movement census counts do not exist until annotated here —
     // the same step `ev pause` takes before it reads them.
     let mut d = crate::state::fold(&events);
-    crate::verify::annotate_drift(&mut d, &root);
+    crate::verify::annotate(&mut d, &root);
     print_liveness_census(&d);
     print_movement_census(&d);
     if !crate::state::has_baseline(&events) {
@@ -838,9 +841,12 @@ fn print_liveness_census(d: &crate::state::Derived) {
 /// that adds code beside the anchored line leaves the anchor green — and never says so.
 /// Never changes the exit code.
 ///
-/// Scope matches the liveness census exactly: `claims` (open), `grey` (held) and
-/// `closed` (closed or dead) — the same full set, so this census cannot undercount
-/// where the other does not.
+/// Scope matches the liveness census exactly: every claim carrying evidence, across
+/// `claims` (open), `grey` (held) and `closed` (closed or dead) — the same full set, so
+/// this census cannot undercount where the other does not. A claim ev could place on no
+/// cell at all is counted as `unmeasured` and stays in the denominator: dropping it would
+/// shrink the census's own total in silence and call the remainder "claims" — the exact
+/// undercount this command exists to expose.
 fn print_movement_census(d: &crate::state::Derived) {
     use crate::verify::Cell;
     let mut still = 0usize;
@@ -848,22 +854,22 @@ fn print_movement_census(d: &crate::state::Derived) {
     let mut changed = 0usize;
     let mut gone = 0usize;
     let mut legacy = 0usize;
+    // no cell at all: a `commit:`/`metric:`/`url:` anchor (no path to move under), an
+    // anchor with no reference point to count from, or a path git could not answer for.
+    let mut unmeasured = 0usize;
     let mut total = 0usize;
 
     for c in d.claims.iter().chain(&d.grey).chain(&d.closed) {
+        if c.evidence.is_empty() {
+            continue;
+        }
         let worst = c
             .evidence
             .iter()
             .filter_map(|e| e.cell)
-            .max_by_key(|cell| match cell {
-                Cell::FileGone => 4,
-                Cell::AnchorChanged => 3,
-                Cell::NeighborhoodMoved => 2,
-                Cell::Legacy => 1,
-                Cell::Still => 0,
-            });
+            .max_by_key(|cell| cell.severity());
         match worst {
-            None => continue,
+            None => unmeasured += 1,
             Some(Cell::FileGone) => gone += 1,
             Some(Cell::AnchorChanged) => changed += 1,
             Some(Cell::NeighborhoodMoved) => moved += 1,
@@ -876,8 +882,13 @@ fn print_movement_census(d: &crate::state::Derived) {
         return;
     }
     println!(
-        "{total} claims · still {still} · neighborhood-moved {moved} · anchor-changed {changed} · file-gone {gone} · legacy {legacy}"
+        "{total} claims · still {still} · neighborhood-moved {moved} · anchor-changed {changed} · file-gone {gone} · legacy {legacy} · unmeasured {unmeasured}"
     );
+    if unmeasured > 0 {
+        println!(
+            "  ⚠ {unmeasured} claim(s) carry no anchor ev can place on the movement map — ev reports nothing about them."
+        );
+    }
     if moved > 0 {
         println!(
             "  ⚠ {moved} claims sit on code that moved beside the anchored line — the anchor cannot see it. Re-read."

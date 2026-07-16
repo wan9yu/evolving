@@ -180,3 +180,42 @@ pub fn resolve_slot<'a>(
         _ => SlotDisplay::Dangling(reference),
     }
 }
+
+/// What the human's navigation observed on one claim this pause — a fact the disposition records
+/// (Task 6), never a judgment. `none()` is the reading a disposition outside a pause carries: the
+/// claim proper was seen, no language was switched, no empty slot was hit.
+#[derive(Clone, Copy)]
+pub struct ReadingNav {
+    pub viewed_depth: Depth,
+    pub lang: Option<Lang>,
+    pub hit_empty: bool,
+}
+
+impl ReadingNav {
+    pub fn none() -> ReadingNav {
+        ReadingNav {
+            viewed_depth: Depth::Maintainer,
+            lang: None,
+            hit_empty: false,
+        }
+    }
+}
+
+/// The cognitive-debt count for a claim: how many commits have touched its anchored path since the
+/// human last understood it — its most recent `ack`, or its filing `base` if never acked. READS
+/// the `drift` the pair already computed on each `EvidenceView` (drift is counted from `last_ack`
+/// first, else `base` — the pair's own rule); it NEVER reads `cell`/`neighborhood-moved`, NEVER
+/// modifies the pair, and NEVER re-decides earn (R3). `None` when nothing moved: a non-moved claim
+/// carries no debt and there is nothing to state.
+pub fn cognitive_debt(c: &crate::state::ClaimView) -> Option<u32> {
+    c.evidence
+        .iter()
+        .filter_map(|e| e.drift)
+        .max()
+        .filter(|&n| n > 0)
+}
+
+/// One phrasing for the debt fact everywhere it is shown. A count, never a verdict.
+pub fn debt_phrase(n: u32) -> String {
+    format!("last understood {n} commit(s) ago — re-read")
+}

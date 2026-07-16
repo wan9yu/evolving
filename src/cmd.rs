@@ -353,7 +353,7 @@ pub fn reading(
             println!("{d}/{l} slot filled on {}.", short(&full));
             Ok(())
         }
-        (None, None, None) => list_reading(&ledger, &full),
+        (None, None, None) => list_reading(&ledger, &root, &full),
         _ => Err(EvError::Refusal(
             "a slot assignment needs --depth, --lang and a ref together; \
              or --concept <ref>; or no arguments to list the grid."
@@ -364,9 +364,13 @@ pub fn reading(
 
 /// List a claim's grid: every storable (depth, lang), with each filled slot's POINTER and every
 /// empty one stated "(empty)". Present/absent only — ev never grades a filled slot (R2).
-fn list_reading(ledger: &Ledger, claim_id: &str) -> Result<()> {
+fn list_reading(ledger: &Ledger, root: &Path, claim_id: &str) -> Result<()> {
     use crate::reading::ReadingView;
-    let d = crate::state::fold(&ledger.scan()?);
+    let mut d = crate::state::fold(&ledger.scan()?);
+    // Annotate to fill the drift the cognitive-debt line reads — the same read-only annotate
+    // `brief --json` and `doctor` take. It writes no event; this listing consumes only `drift`,
+    // never `cell` (R3).
+    crate::verify::annotate(&mut d, root);
     let c = d
         .claims
         .iter()
@@ -375,6 +379,9 @@ fn list_reading(ledger: &Ledger, claim_id: &str) -> Result<()> {
         .find(|c| c.id == claim_id)
         .ok_or_else(|| EvError::Refusal(format!("{} is not a known claim", short(claim_id))))?;
     println!("reading — {}", c.label);
+    if let Some(n) = crate::reading::cognitive_debt(c) {
+        println!("  ⟲ {}", crate::reading::debt_phrase(n));
+    }
     println!("  maintainer — (the claim proper)");
     for (depth, lang) in ReadingView::STORABLE {
         match c.reading.get(depth, lang) {

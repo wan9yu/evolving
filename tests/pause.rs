@@ -306,3 +306,174 @@ fn pause_displays_most_severe_movement_when_claim_has_multiple_evidence_entries(
         "should display AnchorChanged message, not NeighborhoodMoved: {s}"
     );
 }
+
+#[test]
+fn pause_drills_a_moved_claim_over_depth_and_language() {
+    let dir = fresh_git_pause();
+    std::fs::write(dir.join("a.txt"), "hello\n").unwrap();
+    git_commit_pause(&dir, "one");
+    assert!(run(&dir, &["init"]).status.success());
+    assert!(run(&dir, &["claim", "watched", "--by", "agent"])
+        .status
+        .success());
+    let id = claim_id_pause(&dir, "watched");
+    assert!(run(&dir, &["evidence", &id, "file:a.txt::hello"])
+        .status
+        .success());
+    // ground/en filled; plain/{zh,en} left empty on purpose.
+    assert!(run(
+        &dir,
+        &[
+            "reading",
+            &id,
+            "--depth",
+            "ground",
+            "--lang",
+            "en",
+            "url:docs/g.md"
+        ]
+    )
+    .status
+    .success());
+
+    std::fs::write(dir.join("a.txt"), "hello\nworld\n").unwrap();
+    git_commit_pause(&dir, "code moves beside the anchor");
+
+    // > plain(empty) · ~ en(empty) · > ground(filled) · enter skip · n receipt
+    let out = run_with_stdin(
+        &dir,
+        &["pause", "--script", "--i-am-the-human"],
+        ">\n~\n>\n\nn\n",
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        s.contains("empty") && s.contains("not filled"),
+        "an empty slot is stated as a fact while drilling: {s}"
+    );
+    assert!(
+        s.contains("docs/g.md"),
+        "drilling to ground shows the filled slot: {s}"
+    );
+}
+
+#[test]
+fn pause_drills_a_non_moved_bare_claim_the_run16_zero_movement_case() {
+    // Run-16's unreadable claims were NON-moved (movement = 0) and mostly bare. The drill must
+    // reach them on the bare screen, or it is invisible in exactly the run it was born from.
+    let dir = fresh();
+    assert!(run(&dir, &["claim", "unreadable to a non-author"])
+        .status
+        .success());
+    let id = claim_id_pause(&dir, "unreadable to a non-author");
+    assert!(run(
+        &dir,
+        &[
+            "reading",
+            &id,
+            "--depth",
+            "ground",
+            "--lang",
+            "en",
+            "url:docs/g.md"
+        ]
+    )
+    .status
+    .success());
+
+    // > plain(empty) · ~ en(empty) · > ground(filled) · c carry · n receipt
+    let out = pause_with_input(&dir, b">\n~\n>\nc\nn\n");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        s.contains("empty") && s.contains("not filled"),
+        "an empty slot is stated on a non-moved bare claim: {s}"
+    );
+    assert!(
+        s.contains("docs/g.md"),
+        "drilling reaches the filled slot with zero movement: {s}"
+    );
+}
+
+#[test]
+fn the_drill_and_ev_reading_show_cognitive_debt_since_the_last_ack() {
+    // The debt is counted from the LAST ACK, not the filing base — proven by making the two differ.
+    let dir = fresh_git_pause();
+    std::fs::write(dir.join("a.txt"), "hello\n").unwrap();
+    git_commit_pause(&dir, "one"); // the filing base
+    assert!(run(&dir, &["init"]).status.success());
+    assert!(run(&dir, &["claim", "watched", "--by", "agent"])
+        .status
+        .success());
+    let id = claim_id_pause(&dir, "watched");
+    assert!(run(&dir, &["evidence", &id, "file:a.txt::hello"])
+        .status
+        .success()); // base = "one"
+
+    std::fs::write(dir.join("a.txt"), "hello\nm\n").unwrap();
+    git_commit_pause(&dir, "mid — moves before the ack"); // 1 commit on a.txt after base
+    assert!(run(&dir, &["ack", &id, "--i-am-the-human"])
+        .status
+        .success()); // last_ack = "mid"
+
+    std::fs::write(dir.join("a.txt"), "hello\nm\nx\n").unwrap();
+    git_commit_pause(&dir, "move 1");
+    std::fs::write(dir.join("a.txt"), "hello\nm\nx\ny\n").unwrap();
+    git_commit_pause(&dir, "move 2");
+
+    // ground truth: commits touching a.txt since the ack = 2 (from the base it would be 3).
+    let ack_head = ledger_events_pause(&dir)
+        .into_iter()
+        .rfind(|e| e["type"] == "ack")
+        .unwrap()["body"]["head"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let n: u32 = {
+        let o = Command::new("git")
+            .args([
+                "rev-list",
+                "--count",
+                &format!("{ack_head}..HEAD"),
+                "--",
+                "a.txt",
+            ])
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&o.stdout).trim().parse().unwrap()
+    };
+    assert_eq!(n, 2, "sanity: two commits touched a.txt since the ack");
+
+    // ev reading states the debt, counted from last_ack (2), never from base (3)
+    let s = String::from_utf8_lossy(&run(&dir, &["reading", &id]).stdout).to_string();
+    assert!(
+        s.contains(&format!("last understood {n} commit")),
+        "ev reading states the debt as a fact: {s}"
+    );
+    assert!(
+        !s.contains("understood 3 commit"),
+        "the debt is counted from last_ack, not the filing base: {s}"
+    );
+
+    // the pause drill states it too (the claim is on the moved screen); enter=skip, n=receipt
+    let out = run_with_stdin(&dir, &["pause", "--script", "--i-am-the-human"], "\nn\n");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let ps = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        ps.contains(&format!("last understood {n} commit")),
+        "the drill states the debt: {ps}"
+    );
+}

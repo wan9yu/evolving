@@ -83,22 +83,18 @@ pub fn run_pause(root: &Path, opts: PauseOpts) -> Result<()> {
             // clear a red that structurally cannot be cleared. The claim stays visible and
             // keeps h/d/skip; the honest move is to re-file the anchor.
             let ackable = worst.clearable_by_ack();
-            if ackable {
-                write!(
-                    out,
-                    "    [k] still stands · [h]old · [d]emand · enter to skip → "
-                )?;
+            let keys = if ackable {
+                "[k] still stands · [h]old · [d]emand · enter to skip"
             } else {
                 writeln!(
                     out,
                     "    the anchor itself is broken — no acknowledgement clears it. Re-file it: ev evidence {} <ref>",
                     crate::cmd::short(&c.id)
                 )?;
-                write!(out, "    [h]old · [d]emand · enter to skip → ")?;
-            }
-            out.flush()?;
-            let ans = lines.next().transpose()?.unwrap_or_default();
-            apply_moved_answer(root, &ledger, &c.id, ans.trim(), ackable)?;
+                "[h]old · [d]emand · enter to skip"
+            };
+            let (key, _nav) = drill_claim(&mut out, &mut lines, c, &d.thoughts, keys)?;
+            apply_moved_answer(root, &ledger, &c.id, &key, ackable)?;
         }
     }
 
@@ -131,18 +127,9 @@ pub fn run_pause(root: &Path, opts: PauseOpts) -> Result<()> {
             Some(k) => writeln!(out, "\nbare claim [{k}]: {}", c.label)?,
             None => writeln!(out, "\nbare claim: {}", c.label)?,
         }
-        writeln!(
-            out,
-            "  recommended: demand evidence (d) · attach (a <ref>) · hold (h) · dead (x) · carry (c)"
-        )?;
-        out.flush()?;
-        let ans = lines
-            .next()
-            .transpose()
-            .ok()
-            .flatten()
-            .unwrap_or_else(|| "c".into());
-        apply_bare_answer(&ledger, root, c, &ans)?;
+        let keys = "demand evidence (d) · attach (a <ref>) · hold (h) · dead (x) · carry (c)";
+        let (key, _nav) = drill_claim(&mut out, &mut lines, c, &d.thoughts, keys)?;
+        apply_bare_answer(&ledger, root, c, &key)?;
     }
 
     // Screen 4 — grey forks (presentation only; carry unless told)
@@ -235,6 +222,84 @@ pub fn apply_bare_answer(
     }
     // "c" (carry) or anything else: no event written
     Ok(())
+}
+
+/// The per-claim drill, shared by the two pause screens where the human sits on ONE claim and
+/// decides (moved and bare). The debt fact (if any) leads; the claim proper is shown at
+/// `maintainer`; `>` drills to `plain` then `ground`, `~` switches `zh ⇄ en`, and an empty slot is
+/// stated as a fact. The two nav keys never dispose; the FIRST non-nav key is returned as the
+/// disposition, with what the navigation observed (`ReadingNav`) for the instrumentation. A human
+/// who never presses `>` sees the lead (plus the debt line when the claim moved) — ev does not
+/// become a reader.
+fn drill_claim(
+    out: &mut impl Write,
+    lines: &mut impl Iterator<Item = std::io::Result<String>>,
+    c: &crate::state::ClaimView,
+    thoughts: &[crate::state::ThoughtView],
+    keys: &str,
+) -> Result<(String, crate::reading::ReadingNav)> {
+    use crate::reading::{Depth, Lang, SlotDisplay};
+    // Cognitive-debt fact (R3 relaxed): READS the drift the pair already computed on this claim's
+    // evidence (drift since the last ack, else the filing base) and states it as a count. It never
+    // reads `cell`, never modifies the pair, never re-decides earn. A non-moved claim has no debt.
+    if let Some(n) = crate::reading::cognitive_debt(c) {
+        writeln!(out, "    ⟲ {}", crate::reading::debt_phrase(n))?;
+    }
+    let mut cur_depth = Depth::Maintainer;
+    let mut cur_lang = Lang::Zh;
+    let mut deepest = Depth::Maintainer;
+    let mut hit_empty = false;
+    loop {
+        match cur_depth {
+            Depth::Maintainer => writeln!(out, "    [maintainer] {}", c.label)?,
+            _ => match c.reading.get(cur_depth, cur_lang) {
+                Some(reference) => {
+                    let shown = match crate::reading::resolve_slot(reference, thoughts) {
+                        SlotDisplay::Note(t) => t.to_string(),
+                        SlotDisplay::Link(l) => l,
+                        SlotDisplay::Dangling(p) => format!("(pointer resolves to nothing: {p})"),
+                    };
+                    writeln!(
+                        out,
+                        "    [{}/{}] {shown}",
+                        cur_depth.as_str(),
+                        cur_lang.as_str()
+                    )?;
+                }
+                None => {
+                    hit_empty = true;
+                    writeln!(
+                        out,
+                        "    ({}/{} empty — not filled)",
+                        cur_depth.as_str(),
+                        cur_lang.as_str()
+                    )?;
+                }
+            },
+        }
+        write!(out, "    [>] deeper · [~] language · {keys} → ")?;
+        out.flush()?;
+        let ans = lines.next().transpose()?.unwrap_or_default();
+        match ans.trim() {
+            ">" => {
+                cur_depth = cur_depth.deeper().unwrap_or(cur_depth);
+                if cur_depth.ordinal() > deepest.ordinal() {
+                    deepest = cur_depth;
+                }
+            }
+            "~" => cur_lang = cur_lang.other(),
+            other => {
+                return Ok((
+                    other.to_string(),
+                    crate::reading::ReadingNav {
+                        viewed_depth: deepest,
+                        lang: Some(cur_lang),
+                        hit_empty,
+                    },
+                ));
+            }
+        }
+    }
 }
 
 /// The human's verdict on a claim whose code moved. ev records what the human decided;

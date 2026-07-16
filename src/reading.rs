@@ -1,9 +1,9 @@
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 /// The comprehension depth of a reading slot. Ordered: a maintainer statement is the claim
 /// body itself, `plain` is a non-author's read, `ground` assumes zero background. A fact about
 /// which register a pointer is for — never a judgment on the pointer.
-#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Serialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 #[serde(rename_all = "lowercase")]
 pub enum Depth {
     Maintainer,
@@ -36,19 +36,10 @@ impl Depth {
             Depth::Ground => None,
         }
     }
-    /// A rank for "deepest viewed this pause" — a fact recorded by the instrumentation, not a
-    /// score. `maintainer` 0, `plain` 1, `ground` 2.
-    pub fn ordinal(self) -> u8 {
-        match self {
-            Depth::Maintainer => 0,
-            Depth::Plain => 1,
-            Depth::Ground => 2,
-        }
-    }
 }
 
 /// The language axis. `{zh, en}` for 0.2.4; the set can extend later.
-#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Serialize, Clone, Copy, PartialEq, Eq, Debug)]
 #[serde(rename_all = "lowercase")]
 pub enum Lang {
     Zh,
@@ -181,6 +172,17 @@ pub fn resolve_slot<'a>(
     }
 }
 
+/// The one flatten of a resolved pointer to its displayed string — a note's label, a link's
+/// path, or the fact that the pointer resolves to nothing. Both the `ev reading` listing and the
+/// pause drill show a filled slot through this, so the two cannot phrase a slot two ways.
+pub fn render_slot(reference: &str, thoughts: &[crate::state::ThoughtView]) -> String {
+    match resolve_slot(reference, thoughts) {
+        SlotDisplay::Note(t) => t.to_string(),
+        SlotDisplay::Link(l) => l,
+        SlotDisplay::Dangling(p) => format!("(pointer resolves to nothing: {p})"),
+    }
+}
+
 /// What the human's navigation observed on one claim this pause — a fact the disposition records
 /// (Task 6), never a judgment. `none()` is the reading a disposition outside a pause carries: the
 /// claim proper was seen, no language was switched, no empty slot was hit.
@@ -208,11 +210,7 @@ impl ReadingNav {
 /// modifies the pair, and NEVER re-decides earn (R3). `None` when nothing moved: a non-moved claim
 /// carries no debt and there is nothing to state.
 pub fn cognitive_debt(c: &crate::state::ClaimView) -> Option<u32> {
-    c.evidence
-        .iter()
-        .filter_map(|e| e.drift)
-        .max()
-        .filter(|&n| n > 0)
+    c.max_drift().filter(|&n| n > 0)
 }
 
 /// One phrasing for the debt fact everywhere it is shown. A count, never a verdict.
@@ -227,7 +225,6 @@ pub fn debt_phrase(n: u32) -> String {
 /// `reading_census` event back.
 pub struct ReadingCensus {
     pub claims: usize,
-    pub present: usize,
     pub empty: usize,
     pub by_slot: Vec<(Depth, Lang, usize)>,
 }
@@ -236,7 +233,6 @@ pub struct ReadingCensus {
 /// with no reading at all counts as four empty slots, which is the fact the census exists to
 /// surface.
 pub fn census_of(claims: &[crate::state::ClaimView]) -> ReadingCensus {
-    let mut present = 0usize;
     let mut empty = 0usize;
     let mut by_slot: Vec<(Depth, Lang, usize)> = ReadingView::STORABLE
         .iter()
@@ -244,9 +240,7 @@ pub fn census_of(claims: &[crate::state::ClaimView]) -> ReadingCensus {
         .collect();
     for c in claims {
         for (i, (d, l)) in ReadingView::STORABLE.iter().enumerate() {
-            if c.reading.get(*d, *l).is_some() {
-                present += 1;
-            } else {
+            if c.reading.get(*d, *l).is_none() {
                 empty += 1;
                 by_slot[i].2 += 1;
             }
@@ -254,13 +248,19 @@ pub fn census_of(claims: &[crate::state::ClaimView]) -> ReadingCensus {
     }
     ReadingCensus {
         claims: claims.len(),
-        present,
         empty,
         by_slot,
     }
 }
 
 impl ReadingCensus {
+    /// Filled storable slots across the censused claims. Derived: every claim contributes
+    /// `STORABLE.len()` slots by construction, so present is the complement of empty. A count,
+    /// never a score.
+    pub fn present(&self) -> usize {
+        self.claims * ReadingView::STORABLE.len() - self.empty
+    }
+
     /// The ledger event body. Facts only — present/empty totals and per-slot empty counts.
     pub fn to_body(&self) -> serde_json::Value {
         let by_slot: serde_json::Map<String, serde_json::Value> = self
@@ -275,7 +275,7 @@ impl ReadingCensus {
             .collect();
         serde_json::json!({
             "claims": self.claims,
-            "present": self.present,
+            "present": self.present(),
             "empty": self.empty,
             "by_slot": by_slot,
         })

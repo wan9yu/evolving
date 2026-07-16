@@ -103,6 +103,13 @@ impl ClaimView {
             .filter_map(|e| e.cell)
             .max_by_key(|cell| cell.severity())
     }
+
+    /// The largest drift among this claim's anchors — the one home for the max-drift
+    /// reduction the cognitive-debt line and the returned-demand line both take. `None`
+    /// when no anchor carries a drift count. A count, never a verdict.
+    pub fn max_drift(&self) -> Option<u32> {
+        self.evidence.iter().filter_map(|e| e.drift).max()
+    }
 }
 
 #[derive(Serialize, Clone, Debug)]

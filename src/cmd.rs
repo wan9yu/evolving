@@ -386,13 +386,7 @@ fn list_reading(ledger: &Ledger, root: &Path, claim_id: &str) -> Result<()> {
     for (depth, lang) in ReadingView::STORABLE {
         match c.reading.get(depth, lang) {
             Some(reference) => {
-                let shown = match crate::reading::resolve_slot(reference, &d.thoughts) {
-                    crate::reading::SlotDisplay::Note(text) => text.to_string(),
-                    crate::reading::SlotDisplay::Link(link) => link,
-                    crate::reading::SlotDisplay::Dangling(p) => {
-                        format!("(pointer resolves to nothing: {p})")
-                    }
-                };
+                let shown = crate::reading::render_slot(reference, &d.thoughts);
                 println!("  {}/{} → {shown}", depth.as_str(), lang.as_str());
             }
             None => println!("  {}/{} → (empty)", depth.as_str(), lang.as_str()),
@@ -1212,7 +1206,7 @@ fn print_reading_census(d: &crate::state::Derived) {
         .collect();
     println!(
         "reading grid ({} open claims): present {} · empty {}",
-        census.claims, census.present, census.empty
+        census.claims, census.present(), census.empty
     );
     println!("  empty by slot: {}", per_slot.join(" · "));
 }

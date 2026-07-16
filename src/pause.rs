@@ -33,7 +33,7 @@ pub fn run_pause(root: &Path, opts: PauseOpts) -> Result<()> {
     if !d.demands_returned.is_empty() {
         writeln!(out, "\n↩ answered demands:")?;
         for c in &d.demands_returned {
-            let drifted = c.evidence.iter().filter_map(|e| e.drift).max().unwrap_or(0);
+            let drifted = c.max_drift().unwrap_or(0);
             if drifted > 0 {
                 writeln!(
                     out,
@@ -242,7 +242,7 @@ fn drill_claim(
     thoughts: &[crate::state::ThoughtView],
     keys: &str,
 ) -> Result<(String, crate::reading::ReadingNav)> {
-    use crate::reading::{Depth, Lang, SlotDisplay};
+    use crate::reading::{Depth, Lang};
     // Cognitive-debt fact (R3 relaxed): READS the drift the pair already computed on this claim's
     // evidence (drift since the last ack, else the filing base) and states it as a count. It never
     // reads `cell`, never modifies the pair, never re-decides earn. A non-moved claim has no debt.
@@ -258,11 +258,7 @@ fn drill_claim(
             Depth::Maintainer => writeln!(out, "    [maintainer] {}", c.label)?,
             _ => match c.reading.get(cur_depth, cur_lang) {
                 Some(reference) => {
-                    let shown = match crate::reading::resolve_slot(reference, thoughts) {
-                        SlotDisplay::Note(t) => t.to_string(),
-                        SlotDisplay::Link(l) => l,
-                        SlotDisplay::Dangling(p) => format!("(pointer resolves to nothing: {p})"),
-                    };
+                    let shown = crate::reading::render_slot(reference, thoughts);
                     writeln!(
                         out,
                         "    [{}/{}] {shown}",
@@ -287,7 +283,7 @@ fn drill_claim(
         match ans.trim() {
             ">" => {
                 cur_depth = cur_depth.deeper().unwrap_or(cur_depth);
-                if cur_depth.ordinal() > deepest.ordinal() {
+                if cur_depth > deepest {
                     deepest = cur_depth;
                 }
             }

@@ -148,3 +148,35 @@ impl ReadingView {
             .count()
     }
 }
+
+/// The resolved face of a pointer, produced only at display time. ev holds the pointer; this is
+/// what it shows when asked. `Dangling` is a fact (the pointer resolves to nothing), never a
+/// verdict on the slot's content.
+pub enum SlotDisplay<'a> {
+    Note(&'a str),
+    Link(String),
+    Dangling(&'a str),
+}
+
+/// Resolve a slot's pointer for display. A `thk_` id resolves through the thoughts the fold
+/// already carries; a `url:`/`artifact:` ref resolves to its link/path; anything else, or a
+/// `thk_` id with no note, is `Dangling`. No model is called and no prose is stored — ev shows
+/// what the pointer names, or states that it names nothing.
+pub fn resolve_slot<'a>(
+    reference: &'a str,
+    thoughts: &'a [crate::state::ThoughtView],
+) -> SlotDisplay<'a> {
+    if reference.starts_with("thk_") {
+        return match thoughts.iter().find(|t| t.id == reference) {
+            Some(t) => SlotDisplay::Note(&t.label),
+            None => SlotDisplay::Dangling(reference),
+        };
+    }
+    match crate::verify::EvRef::parse(reference) {
+        Ok(r) if r.kind == crate::verify::RefKind::Url => SlotDisplay::Link(r.payload),
+        Ok(r) if r.kind == crate::verify::RefKind::Artifact => {
+            SlotDisplay::Link(format!(".evolving/artifacts/{}", r.payload))
+        }
+        _ => SlotDisplay::Dangling(reference),
+    }
+}

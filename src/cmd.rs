@@ -378,7 +378,16 @@ fn list_reading(ledger: &Ledger, claim_id: &str) -> Result<()> {
     println!("  maintainer — (the claim proper)");
     for (depth, lang) in ReadingView::STORABLE {
         match c.reading.get(depth, lang) {
-            Some(reference) => println!("  {}/{} → {reference}", depth.as_str(), lang.as_str()),
+            Some(reference) => {
+                let shown = match crate::reading::resolve_slot(reference, &d.thoughts) {
+                    crate::reading::SlotDisplay::Note(text) => text.to_string(),
+                    crate::reading::SlotDisplay::Link(link) => link,
+                    crate::reading::SlotDisplay::Dangling(p) => {
+                        format!("(pointer resolves to nothing: {p})")
+                    }
+                };
+                println!("  {}/{} → {shown}", depth.as_str(), lang.as_str());
+            }
             None => println!("  {}/{} → (empty)", depth.as_str(), lang.as_str()),
         }
     }

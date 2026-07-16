@@ -256,3 +256,54 @@ fn reading_refuses_a_thk_ref_with_no_matching_note() {
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+#[test]
+fn a_thk_slot_resolves_to_the_note_text_and_a_url_slot_to_its_link() {
+    // R1's two pointer kinds both resolve at display.
+    let dir = fresh();
+    assert!(run(&dir, &["claim", "c", "--by", "agent"]).status.success());
+    let id = claim_id(&dir);
+    assert!(
+        run(&dir, &["think", "the header is parsed before the body"])
+            .status
+            .success()
+    );
+    let thk = ledger_events(&dir)
+        .into_iter()
+        .find(|e| e["type"] == "thought")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    assert!(run(
+        &dir,
+        &["reading", &id, "--depth", "plain", "--lang", "en", &thk]
+    )
+    .status
+    .success());
+    assert!(run(
+        &dir,
+        &[
+            "reading",
+            &id,
+            "--depth",
+            "ground",
+            "--lang",
+            "en",
+            "url:docs/parse.md"
+        ]
+    )
+    .status
+    .success());
+
+    let s = String::from_utf8_lossy(&run(&dir, &["reading", &id]).stdout).to_string();
+    assert!(
+        s.contains("the header is parsed before the body"),
+        "a thk_ slot resolves to the note's text: {s}"
+    );
+    assert!(
+        s.contains("url:docs/parse.md") || s.contains("docs/parse.md"),
+        "a url: slot resolves to its link: {s}"
+    );
+}

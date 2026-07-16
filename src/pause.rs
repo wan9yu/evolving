@@ -93,8 +93,8 @@ pub fn run_pause(root: &Path, opts: PauseOpts) -> Result<()> {
                 )?;
                 "[h]old · [d]emand · enter to skip"
             };
-            let (key, _nav) = drill_claim(&mut out, &mut lines, c, &d.thoughts, keys)?;
-            apply_moved_answer(root, &ledger, &c.id, &key, ackable)?;
+            let (key, nav) = drill_claim(&mut out, &mut lines, c, &d.thoughts, keys)?;
+            apply_moved_answer(root, &ledger, &c.id, &key, ackable, nav)?;
         }
     }
 
@@ -128,8 +128,8 @@ pub fn run_pause(root: &Path, opts: PauseOpts) -> Result<()> {
             None => writeln!(out, "\nbare claim: {}", c.label)?,
         }
         let keys = "demand evidence (d) · attach (a <ref>) · hold (h) · dead (x) · carry (c)";
-        let (key, _nav) = drill_claim(&mut out, &mut lines, c, &d.thoughts, keys)?;
-        apply_bare_answer(&ledger, root, c, &key)?;
+        let (key, nav) = drill_claim(&mut out, &mut lines, c, &d.thoughts, keys)?;
+        apply_bare_answer(&ledger, root, c, &key, nav)?;
     }
 
     // Screen 4 — grey forks (presentation only; carry unless told)
@@ -184,6 +184,7 @@ pub fn apply_bare_answer(
     root: &Path,
     c: &crate::state::ClaimView,
     ans: &str,
+    nav: crate::reading::ReadingNav,
 ) -> Result<()> {
     let a = ans.trim();
     let human = Actor::human();
@@ -196,6 +197,7 @@ pub fn apply_bare_answer(
             human,
             serde_json::json!({}),
             None,
+            nav,
         )?;
     } else if let Some(rest) = a.strip_prefix("a ") {
         crate::verify::verify_and_record(ledger, root, &c.id, rest.trim(), false, human)?;
@@ -208,6 +210,7 @@ pub fn apply_bare_answer(
             human,
             serde_json::json!({ "reason": "held at pause" }),
             None,
+            nav,
         )?;
     } else if a == "x" {
         crate::cmd::dispose(
@@ -218,6 +221,7 @@ pub fn apply_bare_answer(
             human,
             serde_json::json!({ "reason": "declared dead at pause" }),
             None,
+            nav,
         )?;
     }
     // "c" (carry) or anything else: no event written
@@ -318,6 +322,7 @@ fn apply_moved_answer(
     claim_id: &str,
     ans: &str,
     ackable: bool,
+    nav: crate::reading::ReadingNav,
 ) -> Result<()> {
     let human = Actor::human();
     match ans {
@@ -333,7 +338,7 @@ fn apply_moved_answer(
             if let Some(h) = &head {
                 extra["head"] = serde_json::json!(h);
             }
-            crate::cmd::dispose(ledger, root, "ack", claim_id, human, extra, None)?;
+            crate::cmd::dispose(ledger, root, "ack", claim_id, human, extra, None, nav)?;
         }
         "h" => {
             crate::cmd::dispose(
@@ -344,6 +349,7 @@ fn apply_moved_answer(
                 human,
                 serde_json::json!({ "reason": "held at pause after movement" }),
                 None,
+                nav,
             )?;
         }
         "d" => {
@@ -355,6 +361,7 @@ fn apply_moved_answer(
                 human,
                 serde_json::json!({}),
                 None,
+                nav,
             )?;
         }
         _ => {} // enter, or anything else: carry. No event written.

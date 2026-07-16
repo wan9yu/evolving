@@ -307,3 +307,66 @@ fn a_thk_slot_resolves_to_the_note_text_and_a_url_slot_to_its_link() {
         "a url: slot resolves to its link: {s}"
     );
 }
+
+fn run_human(dir: &std::path::Path, args: &[&str]) -> std::process::Output {
+    // dispositions refuse under CLAUDECODE; fresh() already env_remove'd it, kept here for clarity
+    run(dir, args)
+}
+
+#[test]
+fn a_disposition_snapshots_the_reading_grid_at_that_instant() {
+    let dir = fresh();
+    std::fs::write(dir.join("a.txt"), "hello\n").unwrap();
+    Command::new("git")
+        .args(["add", "-A"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    Command::new("git")
+        .args(["-c", "commit.gpgsign=false", "commit", "-m", "one"])
+        .current_dir(&dir)
+        .env("GIT_AUTHOR_NAME", "t")
+        .env("GIT_AUTHOR_EMAIL", "t@t")
+        .env("GIT_COMMITTER_NAME", "t")
+        .env("GIT_COMMITTER_EMAIL", "t@t")
+        .output()
+        .unwrap();
+    assert!(run(&dir, &["claim", "c", "--by", "agent"]).status.success());
+    let id = claim_id(&dir);
+    assert!(run(
+        &dir,
+        &["reading", &id, "--depth", "plain", "--lang", "zh", "url:x"]
+    )
+    .status
+    .success());
+
+    assert!(run_human(
+        &dir,
+        &["hold", &id, "--reason", "thinking", "--i-am-the-human"]
+    )
+    .status
+    .success());
+
+    let ev = ledger_events(&dir)
+        .into_iter()
+        .rfind(|e| e["type"] == "hold")
+        .unwrap();
+    let snap = &ev["body"]["reading_snapshot"];
+    assert!(
+        snap.is_object(),
+        "every disposition records the reading grid at that instant: {ev}"
+    );
+    assert_eq!(snap["grid"]["plain/zh"].as_str().unwrap(), "present");
+    assert_eq!(snap["grid"]["plain/en"].as_str().unwrap(), "empty");
+    assert_eq!(
+        snap["viewed_depth"].as_str().unwrap(),
+        "maintainer",
+        "a CLI hold saw only the claim proper"
+    );
+    assert!(!snap["hit_empty"].as_bool().unwrap());
+    // R3: at_verify still rides the same event, unchanged.
+    assert!(
+        ev["body"]["at_verify"].is_array(),
+        "the pair's snapshot is untouched: {ev}"
+    );
+}

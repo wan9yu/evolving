@@ -592,6 +592,33 @@ fn at_verify_snapshot(
     }
 }
 
+/// The claim's reading grid at the instant of disposal: each storable (depth, lang) present or
+/// empty. A fact — present/absent only, never a grade (R2). Read nowhere; written for D2.
+fn reading_grid_snapshot(d: &crate::state::Derived, claim_id: &str) -> serde_json::Value {
+    use crate::reading::ReadingView;
+    let found = d
+        .claims
+        .iter()
+        .chain(&d.grey)
+        .chain(&d.closed)
+        .find(|c| c.id == claim_id);
+    let mut grid = serde_json::Map::new();
+    if let Some(c) = found {
+        for (depth, lang) in ReadingView::STORABLE {
+            let state = if c.reading.get(depth, lang).is_some() {
+                "present"
+            } else {
+                "empty"
+            };
+            grid.insert(
+                format!("{}/{}", depth.as_str(), lang.as_str()),
+                serde_json::json!(state),
+            );
+        }
+    }
+    serde_json::Value::Object(grid)
+}
+
 /// THE ONE disposition write. `close`, `prune`, `hold`, `demand`, `ack` and every pause
 /// disposition append through here, so the snapshot is a property of DISPOSING of a claim
 /// rather than eleven copies of the same three lines — and a twelfth disposition verb cannot
@@ -606,6 +633,17 @@ fn at_verify_snapshot(
 /// `seen` is a fold the caller ALREADY has. Nothing can mutate the ledger between that fold
 /// and this write — one process, one invocation — so re-scanning to build the same view
 /// again is work with no reader. `None` takes the fold here.
+///
+/// `nav` is what the human's navigation observed on this claim this pause (Task 6) — `none()`
+/// for a CLI disposition, the real `ReadingNav` `drill_claim` returned for the two per-claim
+/// pause screens. It rides alongside `at_verify` as `reading_snapshot`, read from the SAME
+/// fold `at_verify_snapshot` already took — no second scan.
+///
+/// The parameter count is a consequence of being the ONE writer every disposition verb funnels
+/// through (R3's `at_verify`, now Task 6's `reading_snapshot`) rather than eleven call sites each
+/// growing their own shape — the alternative clippy would prefer is the drift this fn exists to
+/// prevent.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn dispose(
     ledger: &Ledger,
     root: &Path,
@@ -614,16 +652,37 @@ pub(crate) fn dispose(
     actor: Actor,
     extra: serde_json::Value,
     seen: Option<&mut crate::state::Derived>,
+    nav: crate::reading::ReadingNav,
 ) -> Result<()> {
-    let snap = match seen {
-        Some(d) => at_verify_snapshot(root, d, claim_id),
+    // `at_verify` is taken exactly as before (R3 — the pair's snapshot is unchanged). The
+    // reading grid is read from the SAME fold, so it costs no second scan.
+    let (snap, grid) = match seen {
+        Some(d) => (
+            at_verify_snapshot(root, d, claim_id),
+            reading_grid_snapshot(d, claim_id),
+        ),
         None => match ledger.scan() {
-            Ok(events) => at_verify_snapshot(root, &mut crate::state::fold(&events), claim_id),
+            Ok(events) => {
+                let mut d = crate::state::fold(&events);
+                (
+                    at_verify_snapshot(root, &mut d, claim_id),
+                    reading_grid_snapshot(&d, claim_id),
+                )
+            }
             // ev could not read the ledger: it records the disposition and asserts no pair.
-            Err(_) => serde_json::json!([]),
+            Err(_) => (serde_json::json!([]), serde_json::json!({})),
         },
     };
-    let mut body = serde_json::json!({ "claim": claim_id, "at_verify": snap });
+    let mut body = serde_json::json!({
+        "claim": claim_id,
+        "at_verify": snap,
+        "reading_snapshot": {
+            "grid": grid,
+            "viewed_depth": nav.viewed_depth.as_str(),
+            "lang": nav.lang.map(|l| l.as_str()),
+            "hit_empty": nav.hit_empty,
+        },
+    });
     if let serde_json::Value::Object(fields) = extra {
         for (k, v) in fields {
             body[k] = v;
@@ -693,6 +752,7 @@ pub fn close(args: CloseArgs) -> Result<()> {
             Actor::human(),
             serde_json::json!({ "reason": reason }),
             Some(&mut d),
+            crate::reading::ReadingNav::none(),
         )?;
         println!("declared dead: {} — {reason}", short(&full));
         return Ok(());
@@ -712,6 +772,7 @@ pub fn close(args: CloseArgs) -> Result<()> {
         Actor::human(),
         serde_json::json!({}),
         Some(&mut d),
+        crate::reading::ReadingNav::none(),
     )?;
     println!("closed {} with evidence.", short(&full));
     Ok(())
@@ -730,6 +791,7 @@ pub fn hold(claim: String, reason: String, i_am_the_human: bool) -> Result<()> {
         Actor::human(),
         serde_json::json!({ "reason": reason }),
         None,
+        crate::reading::ReadingNav::none(),
     )?;
     println!("held (grey): {} — {reason}", short(&full));
     Ok(())
@@ -755,7 +817,16 @@ pub fn ack(claim: String, i_am_the_human: bool) -> Result<()> {
     if let Some(h) = &head {
         extra["head"] = serde_json::json!(h);
     }
-    dispose(&ledger, &root, "ack", &full, Actor::human(), extra, None)?;
+    dispose(
+        &ledger,
+        &root,
+        "ack",
+        &full,
+        Actor::human(),
+        extra,
+        None,
+        crate::reading::ReadingNav::none(),
+    )?;
     match &head {
         Some(h) => println!("{} acknowledged at {}", short(&full), &h[..h.len().min(8)]),
         None => println!(
@@ -779,6 +850,7 @@ pub fn demand(claim: String, i_am_the_human: bool) -> Result<()> {
         Actor::human(),
         serde_json::json!({}),
         None,
+        crate::reading::ReadingNav::none(),
     )?;
     println!(
         "demanded evidence for {}. It leads the next brief.",

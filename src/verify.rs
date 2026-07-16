@@ -574,7 +574,7 @@ pub fn record_checked(
 /// WHERE an anchor lives, relative to the repo root. `None` for a ref that carries no path
 /// at all (`commit:`/`metric:`/`url:`): there is no file under it, so nothing can move.
 /// The `artifact:` join is spelled ONCE, here.
-fn anchor_rel(r: &EvRef) -> Option<String> {
+pub(crate) fn anchor_rel(r: &EvRef) -> Option<String> {
     match r.kind {
         RefKind::Test | RefKind::File => Some(r.payload.clone()),
         RefKind::Artifact => Some(format!(".evolving/artifacts/{}", r.payload)),

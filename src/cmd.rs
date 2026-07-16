@@ -276,9 +276,8 @@ pub fn evidence(claim_id: String, eref: String) -> Result<()> {
 /// (resolved to its full id, the way `resolve_claim_id` resolves a claim) or a `url:`/`artifact:`
 /// ref (returned verbatim). Refuses inline text and every other ref scheme — the refusal teaches
 /// the rule rather than storing what ev cannot mean.
-fn guard_slot_ref(reference: &str, ledger: &Ledger) -> Result<String> {
+fn guard_slot_ref(reference: &str, events: &[Envelope]) -> Result<String> {
     if reference.starts_with("thk_") {
-        let events = ledger.scan()?;
         let matches: Vec<&Envelope> = events
             .iter()
             .filter(|e| e.etype == "thought" && e.id.starts_with(reference))
@@ -314,7 +313,10 @@ pub fn reading(
 ) -> Result<()> {
     let root = find_root();
     let ledger = Ledger::open(&root)?;
-    let full = resolve_claim_id(&ledger, &claim)?;
+    // ONE scan for this command: the claim id and any `thk_` pointer both resolve against it,
+    // so the guard no longer re-forks the scan `resolve_claim_id` already paid for.
+    let events = ledger.scan()?;
+    let full = resolve_claim_id_in(&events, &claim)?;
 
     if concept.is_some() && (depth.is_some() || lang.is_some() || reference.is_some()) {
         return Err(EvError::Refusal(
@@ -325,7 +327,7 @@ pub fn reading(
     }
 
     if let Some(cref) = concept {
-        let canonical = guard_slot_ref(&cref, &ledger)?;
+        let canonical = guard_slot_ref(&cref, &events)?;
         ledger.append_batch(vec![NewEvent {
             etype: "reading".into(),
             actor: evidence_actor(),
@@ -344,7 +346,7 @@ pub fn reading(
                         .into(),
                 ));
             }
-            let canonical = guard_slot_ref(&r, &ledger)?;
+            let canonical = guard_slot_ref(&r, &events)?;
             ledger.append_batch(vec![NewEvent {
                 etype: "reading".into(),
                 actor: evidence_actor(),
@@ -367,17 +369,19 @@ pub fn reading(
 fn list_reading(ledger: &Ledger, root: &Path, claim_id: &str) -> Result<()> {
     use crate::reading::ReadingView;
     let mut d = crate::state::fold(&ledger.scan()?);
-    // Annotate to fill the drift the cognitive-debt line reads — the same read-only annotate
-    // `brief --json` and `doctor` take. It writes no event; this listing consumes only `drift`,
-    // never `cell` (R3).
-    crate::verify::annotate(&mut d, root);
+    // Find the ONE claim, then annotate only it — the exact pattern `at_verify_snapshot` uses, so
+    // this listing stops forking a `git log` per every OTHER claim's reference point. It fills the
+    // drift the cognitive-debt line reads — the same read-only annotate `brief --json` takes over a
+    // smaller set. It writes no event and consumes only `drift`, never `cell` (R3).
     let c = d
         .claims
-        .iter()
-        .chain(&d.grey)
-        .chain(&d.closed)
+        .iter_mut()
+        .chain(&mut d.grey)
+        .chain(&mut d.closed)
         .find(|c| c.id == claim_id)
         .ok_or_else(|| EvError::Refusal(format!("{} is not a known claim", short(claim_id))))?;
+    crate::verify::annotate_claims(std::slice::from_mut(c), root);
+    let c = &*c;
     println!("reading — {}", c.label);
     if let Some(n) = crate::reading::cognitive_debt(c) {
         println!("  ⟲ {}", crate::reading::debt_phrase(n));
@@ -531,7 +535,13 @@ fn resolve_id(ledger: &Ledger, prefix: &str) -> Result<String> {
 /// demands all attach to claims — an id of any other kind is a caller error, and
 /// accepting it writes an event the fold can never reach.
 fn resolve_claim_id(ledger: &Ledger, prefix: &str) -> Result<String> {
-    let events = ledger.scan()?;
+    resolve_claim_id_in(&ledger.scan()?, prefix)
+}
+
+/// `resolve_claim_id` against an ALREADY-SCANNED event list — for the caller (`cmd::reading`)
+/// that resolves a claim id AND a `thk_` pointer in one invocation and must not fork the scan
+/// twice for one command. The rule is identical; only the source of the events differs.
+fn resolve_claim_id_in(events: &[Envelope], prefix: &str) -> Result<String> {
     let matches: Vec<&Envelope> = events.iter().filter(|e| e.id.starts_with(prefix)).collect();
     match matches.len() {
         0 => Err(EvError::Refusal(format!("no event matches id {prefix}"))),

@@ -166,7 +166,9 @@ pub fn resolve_slot<'a>(
     match crate::verify::EvRef::parse(reference) {
         Ok(r) if r.kind == crate::verify::RefKind::Url => SlotDisplay::Link(r.payload),
         Ok(r) if r.kind == crate::verify::RefKind::Artifact => {
-            SlotDisplay::Link(format!(".evolving/artifacts/{}", r.payload))
+            // The `.evolving/artifacts/` join is owned by `verify::anchor_rel` — spelled once
+            // there. Always `Some` for an artifact ref, which is the only arm that reaches here.
+            SlotDisplay::Link(crate::verify::anchor_rel(&r).unwrap_or_default())
         }
         _ => SlotDisplay::Dangling(reference),
     }

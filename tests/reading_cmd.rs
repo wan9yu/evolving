@@ -188,3 +188,71 @@ fn a_second_fill_appends_and_never_rewrites() {
         "the first event's bytes are frozen"
     );
 }
+
+#[test]
+fn reading_refuses_a_concept_combined_with_a_slot_but_concept_alone_still_works() {
+    // A concept pointer and a slot assignment are separate dispatch paths; combining them
+    // must not silently drop the slot half.
+    let dir = fresh();
+    assert!(run(&dir, &["claim", "c", "--by", "agent"]).status.success());
+    let id = claim_id(&dir);
+
+    let combined = run(
+        &dir,
+        &[
+            "reading",
+            &id,
+            "--concept",
+            "url:x",
+            "--depth",
+            "plain",
+            "--lang",
+            "en",
+            "url:y",
+        ],
+    );
+    assert_eq!(
+        combined.status.code(),
+        Some(1),
+        "a concept plus a slot assignment together is refused, not partially applied"
+    );
+
+    let concept_only = run(&dir, &["reading", &id, "--concept", "url:x"]);
+    assert!(
+        concept_only.status.success(),
+        "{}",
+        String::from_utf8_lossy(&concept_only.stderr)
+    );
+}
+
+#[test]
+fn reading_refuses_a_thk_ref_with_no_matching_note() {
+    // guard_slot_ref's thk_ branch: a reference that starts with thk_ but resolves to no
+    // note is refused, naming the fact that no think note matches.
+    let dir = fresh();
+    assert!(run(&dir, &["claim", "c", "--by", "agent"]).status.success());
+    let id = claim_id(&dir);
+
+    let out = run(
+        &dir,
+        &[
+            "reading",
+            &id,
+            "--depth",
+            "plain",
+            "--lang",
+            "zh",
+            "thk_doesnotexist",
+        ],
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "a thk_ ref with no matching note is refused"
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("no think note matches"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}

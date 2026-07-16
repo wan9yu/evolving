@@ -316,6 +316,14 @@ pub fn reading(
     let ledger = Ledger::open(&root)?;
     let full = resolve_claim_id(&ledger, &claim)?;
 
+    if concept.is_some() && (depth.is_some() || lang.is_some() || reference.is_some()) {
+        return Err(EvError::Refusal(
+            "a concept pointer and a slot assignment are separate: pass --concept <ref> alone, \
+             or --depth <d> --lang <l> <ref>, not both."
+                .into(),
+        ));
+    }
+
     if let Some(cref) = concept {
         let canonical = guard_slot_ref(&cref, &ledger)?;
         ledger.append_batch(vec![NewEvent {

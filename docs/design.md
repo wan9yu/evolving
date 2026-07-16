@@ -71,6 +71,9 @@ Git is invoked as a subprocess; there is no git library, no TUI crate, no networ
 `init` · `think` (`--pin`) · `claim` (`--evidence <ref>`, `--by agent|human`, `--source-ref` as the
 idempotency key, `--kind` to declare what kind of claim this is — e.g. defect, priority) ·
 `evidence <claim> <ref>` (the demand-answer verb; agents permitted) ·
+`reading <claim> [--depth <maintainer|plain|ground> --lang <zh|en> <ref>] [--concept <ref>]`
+(fill or list a claim's comprehension grid — authoring; agents permitted; see "The comprehension
+scaffold" below) ·
 `verify [<claim>]` (`--json`; re-check anchors and report drift; each check appends a `verify` event,
 so disagreeing re-checks sit beside their history; self-evident evidence — the `commit:` refs exhaust
 files about itself — is not re-checked by default, since it is content-addressed and fails only if the
@@ -180,6 +183,52 @@ Exit codes: 0 done · 1 honest refusal · 2 error. State-reading output ends wit
   anchors — never the same mark. A pointer's existence is a fact; whether the evidence covers
   the promise is the human's judgment at the pause. Evidence never self-certifies.
 
+## The comprehension scaffold
+
+Run-16 sat a real human at the pause. The claims an agent had filed were written for a
+maintainer — subsystem names, file:line, jargon — and unreadable to a non-author; the
+disposition set collapsed to `ev demand`. 0.2.4 gives an agent a STRUCTURE to fill: a `reading`
+folded onto a claim, a grid of POINTERS over comprehension depth (`maintainer` — the claim body
+itself, filed nowhere else; `plain` — a non-author's read; `ground` — assumes zero background)
+crossed with language (`zh` / `en`), plus `concept` pointers to a more-basic explanation.
+
+- **ev stores POINTERS, never prose (R1).** A slot holds a `thk_` note id or a `url:`/`artifact:`
+  ref; the explanation itself is filed with `ev think` (or lives at the pointer's target) and is
+  only resolved for display, never stored a second time.
+- **An empty slot is a fact, never a verdict, and ev grades nothing (R2).** `ev reading <claim>`
+  lists the grid with every empty (depth, lang) position marked; a filled slot is shown, never
+  scored. No quality or completeness field exists anywhere in the scaffold.
+- **The scaffold does not modify the earn pair (R3, relaxed).** A cognitive-debt fact —
+  "last understood N commits ago — re-read" — READS the pair's already-computed `drift` (counted
+  from the claim's `last_ack`, or its filing `base` if never acked) and states it as a count. It
+  never modifies the pair, never reads `cell` or `neighborhood-moved`, and never re-decides earn.
+  A claim whose anchored path has not moved shows no debt line. The debt fact appears on the
+  pause's per-claim drill and in `ev reading <claim>`.
+- **Attaching or extending a reading is append-only (R4).** Each `ev reading` call appends one
+  event; a later call for the same (depth, lang) supersedes the pointer the fold shows, and never
+  rewrites the prior event.
+
+`ev pause` renders the grid thinly on the two screens where the human sits on one claim (claims
+whose code moved, and bare claims): `>` drills one depth deeper (`maintainer → plain → ground`),
+`~` switches `zh ⇄ en`, and neither key disposes — the first non-navigation key is read as the
+decision. A human who never presses `>` sees the claim body (plus the debt line, if the claim
+moved); ev does not become a reader.
+
+Two instruments are emit-only, for Run-17: every disposition event carries a `reading_snapshot`
+(the grid's present/empty state, the deepest depth viewed this pause, the language last active,
+and whether an empty slot was hit), alongside the `at_verify` snapshot, from the same
+`cmd::dispose` writer. Each boundary pause also records a `reading_census`: the empty-slot
+distribution over open claims. `src/` reads neither back — 0.2.5's axes, the earn question, and
+any completion loop are decided by that data, not by intuition. `ev doctor` prints the same
+census live, as a third never-gating line (see "Doctor" below).
+
+**What the scaffold deliberately does not do:** ev never generates, completes, or grades an
+explanation, and it has no way to tell whether a claim was fixed or an explanation is good — the
+grid shows what an agent wrote and which slots are empty, nothing more. The heavier
+cognitive-debt join — which explanation layer is stale, not just whether the claim moved — needs
+Run-17's movement data and more than `drift`, and is left for a later release; 0.2.4 ships the one
+fact line, and the `reading` structure reserves the seam.
+
 ## Hooks, exhaust, the sweep
 
 - `ev hook install` merges two hooks into the repo's `.claude/settings.json`, idempotently:
@@ -211,6 +260,12 @@ carry (`c`) → **4** the grey list → **5** the receipt: duration and a one-ke
 A `--boundary` pause first writes the counted-set snapshot (the delta since prior snapshots), then
 records the pause itself.
 
+On the two screens where the human sits on one claim (**1.5** and **3**), a cognitive-debt fact —
+"last understood N commits ago — re-read" — leads when the claim's anchored path has moved; a
+non-moved claim shows no debt. Below it, `>` drills the claim's `reading` one depth deeper and `~`
+switches `zh ⇄ en`; an empty slot is stated as a fact ("not filled"), never as a gap the human must
+close. See "The comprehension scaffold" above.
+
 ## The line
 
 `ev line` renders the work indicator: **closed-with-evidence** and **expired-bare**, two raw counts —
@@ -222,7 +277,7 @@ is the live fold. `--json --stable` normalizes volatile fields and is byte-stabl
 `ev doctor` checks the ledger: dangling references (an event pointing at an unknown claim),
 duplicate closes, and per-writer clock drift. Clean exits 0; problems print and exit 2.
 
-It also prints three census lines that never gate and never change the exit code: anchor liveness
+It also prints census lines that never gate and never change the exit code: anchor liveness
 (what it would take for each recorded anchor to go red), ref types in use, and the movement
 census — a count of **every claim that carries evidence**, open, held or closed, by its most severe
 `cell` (`still` / `neighborhood-moved` / `anchor-changed` / `file-gone` / `legacy`), plus
@@ -231,6 +286,10 @@ or git could not count against them). The unmeasured claims stay in the denomina
 a census that dropped them would print a smaller total and call the remainder "claims" — the silent
 undercount doctor exists to expose. Where claims sit on code that moved, doctor says
 **re-read** — never "resolved"; it has no way to know whether the movement was the fix.
+
+0.2.4 adds a third never-gating census: the reading grid's present/empty counts over open claims,
+by (depth, lang) slot — the same `reading_census` a boundary pause records, printed live from the
+same fold. Present/empty is a count, not a completeness score; no such score exists.
 
 ## Design laws
 

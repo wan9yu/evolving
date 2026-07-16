@@ -50,3 +50,22 @@ On machines where the session hooks are wired (`ev hook install`, once per machi
 commits are captured automatically as self-evident claims — so you do not have to file a claim for
 every commit. File one when you want to assert something a bare commit does not say (fixed,
 verified, safe), and back it with a pointer.
+
+## The reading scaffold
+
+A claim may carry a `reading`: a grid of POINTERS over comprehension depth — `maintainer` (the
+claim body itself, not a stored slot), `plain` (a non-author's read), `ground` (assumes zero
+background) — crossed with language (`zh` / `en`), plus `concept` pointers to a more-basic
+explanation. A slot holds a POINTER, never prose: file the explanation with `ev think`, put its
+`thk_` id in the slot, or point at a `url:`/`artifact:` ref. ev never writes, completes, or grades
+an explanation; it stores the pointer, and reports which slots are EMPTY — a fact, never a verdict
+on a filled one.
+
+- **Fill a slot:** `ev reading <claim> --depth <plain|ground> --lang <zh|en> <ref>`.
+  `--depth maintainer` is refused — the claim body already serves that slot.
+- **Add a concept pointer:** `ev reading <claim> --concept <ref>` (not combined with a slot
+  assignment in the same call).
+- **List the grid:** `ev reading <claim>` — every empty slot is stated, plus a cognitive-debt
+  line when the claim's anchored path has moved since the last look.
+
+Filing a reading is authoring, like `ev evidence` — an agent may call it.

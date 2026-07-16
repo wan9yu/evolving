@@ -47,6 +47,7 @@ ev hook install                           # wire the session hooks: auto-capture
 ev claim "fixed the parser" \             # an agent files a claim with a pointer
     --by agent --evidence commit:<sha>
 ev claim "the boundary is safe"           # a bare claim — no pointer yet
+ev reading <claim> --depth plain --lang en <ref>   # an agent points a non-author's read at it
 ev verify                                 # re-check anchors; report status joined with drift
 ev pause                                  # the human's daily ritual: demand, attach, hold, ack, let go
 ev ack <claim> --i-am-the-human           # the human looked; the claim still stands
@@ -93,6 +94,14 @@ the anchor's blind spot made visible: most caller-visible defects are fixed by a
 the cited line, which leaves a content anchor green. `ev` cannot tell anyone a claim was fixed —
 only that the ground under it moved, which is a prompt to re-read, never a verdict.
 
+A claim may also carry a **reading**: pointers an agent fills over comprehension depth
+(`maintainer` — the claim itself; `plain` — a non-author's read; `ground` — assumes zero
+background) and language (`zh`/`en`), so a claim written for a maintainer is not the only way in.
+ev stores the pointer, never the explanation, and states which slots are empty — a fact, never a
+grade. At the pause, `>` drills one depth deeper and `~` switches language; a cognitive-debt
+line — "last understood N commits ago — re-read" — appears only on a claim whose anchored code has
+moved since the human's last look.
+
 That judgment happens at the pause: demand evidence, attach it, hold in grey, ack that it still
 stands, or let a claim die. Closing is its own deliberate act — `ev close <id>`, on a claim that has
 earned it. What accumulates is the line — two raw counts, never a score.
@@ -104,6 +113,8 @@ earned it. What accumulates is the line — two raw counts, never a score.
   the network. Whether the evidence covers the promise is the human's call at the pause.
 - **Nothing gates.** Session hooks always succeed; the only refusals are on your own verbs — a claim
   closed without evidence is refused, because *closed-anyway* should not exist.
+- **No comprehension score.** ev never generates, completes, or grades an explanation. A `reading`
+  stores only pointers; ev reports which slots are empty, never how good a filled one is.
 - **Only the human closes.** Agents may file claims and attach evidence. Closing is yours.
 - **No daemon.** State refreshes when you invoke `ev`, never in the background.
 

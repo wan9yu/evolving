@@ -192,12 +192,14 @@ pub fn apply_bare_answer(
         crate::cmd::dispose(
             ledger,
             root,
-            "demand",
-            &c.id,
-            human,
-            serde_json::json!({}),
             None,
-            nav,
+            crate::cmd::Disposition {
+                etype: "demand",
+                claim_id: &c.id,
+                actor: human,
+                extra: serde_json::json!({}),
+                nav,
+            },
         )?;
     } else if let Some(rest) = a.strip_prefix("a ") {
         crate::verify::verify_and_record(ledger, root, &c.id, rest.trim(), false, human)?;
@@ -205,23 +207,27 @@ pub fn apply_bare_answer(
         crate::cmd::dispose(
             ledger,
             root,
-            "hold",
-            &c.id,
-            human,
-            serde_json::json!({ "reason": "held at pause" }),
             None,
-            nav,
+            crate::cmd::Disposition {
+                etype: "hold",
+                claim_id: &c.id,
+                actor: human,
+                extra: serde_json::json!({ "reason": "held at pause" }),
+                nav,
+            },
         )?;
     } else if a == "x" {
         crate::cmd::dispose(
             ledger,
             root,
-            "prune",
-            &c.id,
-            human,
-            serde_json::json!({ "reason": "declared dead at pause" }),
             None,
-            nav,
+            crate::cmd::Disposition {
+                etype: "prune",
+                claim_id: &c.id,
+                actor: human,
+                extra: serde_json::json!({ "reason": "declared dead at pause" }),
+                nav,
+            },
         )?;
     }
     // "c" (carry) or anything else: no event written
@@ -334,30 +340,45 @@ fn apply_moved_answer(
             if let Some(h) = &head {
                 extra["head"] = serde_json::json!(h);
             }
-            crate::cmd::dispose(ledger, root, "ack", claim_id, human, extra, None, nav)?;
+            crate::cmd::dispose(
+                ledger,
+                root,
+                None,
+                crate::cmd::Disposition {
+                    etype: "ack",
+                    claim_id,
+                    actor: human,
+                    extra,
+                    nav,
+                },
+            )?;
         }
         "h" => {
             crate::cmd::dispose(
                 ledger,
                 root,
-                "hold",
-                claim_id,
-                human,
-                serde_json::json!({ "reason": "held at pause after movement" }),
                 None,
-                nav,
+                crate::cmd::Disposition {
+                    etype: "hold",
+                    claim_id,
+                    actor: human,
+                    extra: serde_json::json!({ "reason": "held at pause after movement" }),
+                    nav,
+                },
             )?;
         }
         "d" => {
             crate::cmd::dispose(
                 ledger,
                 root,
-                "demand",
-                claim_id,
-                human,
-                serde_json::json!({}),
                 None,
-                nav,
+                crate::cmd::Disposition {
+                    etype: "demand",
+                    claim_id,
+                    actor: human,
+                    extra: serde_json::json!({}),
+                    nav,
+                },
             )?;
         }
         _ => {} // enter, or anything else: carry. No event written.

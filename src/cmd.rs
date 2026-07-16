@@ -623,55 +623,70 @@ fn reading_grid_snapshot(d: &crate::state::Derived, claim_id: &str) -> serde_jso
     serde_json::Value::Object(grid)
 }
 
+/// The `(at_verify, reading_grid)` pair over one claim, read from ONE fold. `at_verify` is taken
+/// exactly as R3 requires (the pair's snapshot is unchanged); the reading grid is read from the
+/// SAME fold, so it costs no second scan. Both of `dispose`'s snapshot sources build this same
+/// pair — the caller's fold and the one `dispose` takes when it has none — so it is spelled once.
+fn snapshot_pair(
+    root: &Path,
+    d: &mut crate::state::Derived,
+    claim_id: &str,
+) -> (serde_json::Value, serde_json::Value) {
+    (
+        at_verify_snapshot(root, d, claim_id),
+        reading_grid_snapshot(d, claim_id),
+    )
+}
+
+/// What a disposition adds beyond the claim it acts on — bundled so `dispose` stays the ONE
+/// writer without an eight-argument signature. `etype` is the event type (`close`/`prune`/
+/// `hold`/`demand`/`ack`); `extra` is whatever the verb adds (`reason`, `head`); `nav` is what
+/// the human's navigation observed this pause (`none()` for a CLI disposition).
+pub(crate) struct Disposition<'a> {
+    pub etype: &'a str,
+    pub claim_id: &'a str,
+    pub actor: Actor,
+    pub extra: serde_json::Value,
+    pub nav: crate::reading::ReadingNav,
+}
+
 /// THE ONE disposition write. `close`, `prune`, `hold`, `demand`, `ack` and every pause
 /// disposition append through here, so the snapshot is a property of DISPOSING of a claim
 /// rather than eleven copies of the same three lines — and a twelfth disposition verb cannot
 /// forget it.
 ///
-/// `extra` carries whatever the verb adds beyond the claim (`reason`, `head`); the claim and
-/// the snapshot are the shape every disposition shares. The snapshot is taken BEFORE the
-/// event is appended: `at_verify` is the pair as it stood when the human decided, and an
-/// event appended first would move nothing but would make that a claim about a ledger the
-/// human never saw.
+/// The `Disposition` carries whatever the verb adds beyond the claim; the claim and the snapshot
+/// are the shape every disposition shares. The snapshot is taken BEFORE the event is appended:
+/// `at_verify` is the pair as it stood when the human decided, and an event appended first would
+/// move nothing but would make that a claim about a ledger the human never saw.
 ///
 /// `seen` is a fold the caller ALREADY has. Nothing can mutate the ledger between that fold
 /// and this write — one process, one invocation — so re-scanning to build the same view
 /// again is work with no reader. `None` takes the fold here.
 ///
-/// `nav` is what the human's navigation observed on this claim this pause (Task 6) — `none()`
-/// for a CLI disposition, the real `ReadingNav` `drill_claim` returned for the two per-claim
-/// pause screens. It rides alongside `at_verify` as `reading_snapshot`, read from the SAME
-/// fold `at_verify_snapshot` already took — no second scan.
-///
-/// The parameter count is a consequence of being the ONE writer every disposition verb funnels
-/// through (R3's `at_verify`, now Task 6's `reading_snapshot`) rather than eleven call sites each
-/// growing their own shape — the alternative clippy would prefer is the drift this fn exists to
-/// prevent.
-#[allow(clippy::too_many_arguments)]
+/// `nav` (on the `Disposition`) is what the human's navigation observed on this claim this pause
+/// (Task 6) — `none()` for a CLI disposition, the real `ReadingNav` `drill_claim` returned for the
+/// two per-claim pause screens. It rides alongside `at_verify` as `reading_snapshot`, read from
+/// the SAME fold `at_verify_snapshot` already took — no second scan.
 pub(crate) fn dispose(
     ledger: &Ledger,
     root: &Path,
-    etype: &str,
-    claim_id: &str,
-    actor: Actor,
-    extra: serde_json::Value,
     seen: Option<&mut crate::state::Derived>,
-    nav: crate::reading::ReadingNav,
+    disposition: Disposition,
 ) -> Result<()> {
-    // `at_verify` is taken exactly as before (R3 — the pair's snapshot is unchanged). The
-    // reading grid is read from the SAME fold, so it costs no second scan.
+    let Disposition {
+        etype,
+        claim_id,
+        actor,
+        extra,
+        nav,
+    } = disposition;
     let (snap, grid) = match seen {
-        Some(d) => (
-            at_verify_snapshot(root, d, claim_id),
-            reading_grid_snapshot(d, claim_id),
-        ),
+        Some(d) => snapshot_pair(root, d, claim_id),
         None => match ledger.scan() {
             Ok(events) => {
                 let mut d = crate::state::fold(&events);
-                (
-                    at_verify_snapshot(root, &mut d, claim_id),
-                    reading_grid_snapshot(&d, claim_id),
-                )
+                snapshot_pair(root, &mut d, claim_id)
             }
             // ev could not read the ledger: it records the disposition and asserts no pair.
             Err(_) => (serde_json::json!([]), serde_json::json!({})),
@@ -751,12 +766,14 @@ pub fn close(args: CloseArgs) -> Result<()> {
         dispose(
             &ledger,
             &root,
-            "prune",
-            &full,
-            Actor::human(),
-            serde_json::json!({ "reason": reason }),
             Some(&mut d),
-            crate::reading::ReadingNav::none(),
+            Disposition {
+                etype: "prune",
+                claim_id: &full,
+                actor: Actor::human(),
+                extra: serde_json::json!({ "reason": reason }),
+                nav: crate::reading::ReadingNav::none(),
+            },
         )?;
         println!("declared dead: {} — {reason}", short(&full));
         return Ok(());
@@ -771,12 +788,14 @@ pub fn close(args: CloseArgs) -> Result<()> {
     dispose(
         &ledger,
         &root,
-        "close",
-        &full,
-        Actor::human(),
-        serde_json::json!({}),
         Some(&mut d),
-        crate::reading::ReadingNav::none(),
+        Disposition {
+            etype: "close",
+            claim_id: &full,
+            actor: Actor::human(),
+            extra: serde_json::json!({}),
+            nav: crate::reading::ReadingNav::none(),
+        },
     )?;
     println!("closed {} with evidence.", short(&full));
     Ok(())
@@ -790,12 +809,14 @@ pub fn hold(claim: String, reason: String, i_am_the_human: bool) -> Result<()> {
     dispose(
         &ledger,
         &root,
-        "hold",
-        &full,
-        Actor::human(),
-        serde_json::json!({ "reason": reason }),
         None,
-        crate::reading::ReadingNav::none(),
+        Disposition {
+            etype: "hold",
+            claim_id: &full,
+            actor: Actor::human(),
+            extra: serde_json::json!({ "reason": reason }),
+            nav: crate::reading::ReadingNav::none(),
+        },
     )?;
     println!("held (grey): {} — {reason}", short(&full));
     Ok(())
@@ -824,12 +845,14 @@ pub fn ack(claim: String, i_am_the_human: bool) -> Result<()> {
     dispose(
         &ledger,
         &root,
-        "ack",
-        &full,
-        Actor::human(),
-        extra,
         None,
-        crate::reading::ReadingNav::none(),
+        Disposition {
+            etype: "ack",
+            claim_id: &full,
+            actor: Actor::human(),
+            extra,
+            nav: crate::reading::ReadingNav::none(),
+        },
     )?;
     match &head {
         Some(h) => println!("{} acknowledged at {}", short(&full), &h[..h.len().min(8)]),
@@ -849,12 +872,14 @@ pub fn demand(claim: String, i_am_the_human: bool) -> Result<()> {
     dispose(
         &ledger,
         &root,
-        "demand",
-        &full,
-        Actor::human(),
-        serde_json::json!({}),
         None,
-        crate::reading::ReadingNav::none(),
+        Disposition {
+            etype: "demand",
+            claim_id: &full,
+            actor: Actor::human(),
+            extra: serde_json::json!({}),
+            nav: crate::reading::ReadingNav::none(),
+        },
     )?;
     println!(
         "demanded evidence for {}. It leads the next brief.",
@@ -1216,7 +1241,9 @@ fn print_reading_census(d: &crate::state::Derived) {
         .collect();
     println!(
         "reading grid ({} open claims): present {} · empty {}",
-        census.claims, census.present(), census.empty
+        census.claims,
+        census.present(),
+        census.empty
     );
     println!("  empty by slot: {}", per_slot.join(" · "));
 }

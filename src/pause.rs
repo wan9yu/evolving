@@ -386,5 +386,14 @@ pub fn write_boundary(ledger: &Ledger, d: &Derived) -> Result<()> {
             "expired_bare": delta_expired,
         }),
     }])?;
+    // The D4 instrument: the empty-slot reading census over the OPEN claims (the ones an agent
+    // could still fill), recorded once per round. Emit-only — nothing in this crate reads a
+    // `reading_census` event back; the fold has no arm for it.
+    let census = crate::reading::census_of(&d.claims);
+    ledger.append_batch(vec![NewEvent {
+        etype: "reading_census".into(),
+        actor: Actor::engine(),
+        body: census.to_body(),
+    }])?;
     Ok(())
 }

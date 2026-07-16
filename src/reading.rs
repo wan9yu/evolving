@@ -219,3 +219,65 @@ pub fn cognitive_debt(c: &crate::state::ClaimView) -> Option<u32> {
 pub fn debt_phrase(n: u32) -> String {
     format!("last understood {n} commit(s) ago — re-read")
 }
+
+/// The empty-slot census over a set of claims: counts, never a grade (R2). `present`/`empty`
+/// are totals of filled/unfilled storable slots; `by_slot` is the EMPTY count at each storable
+/// position. The D4 instrument — recorded per round (at each boundary pause) and printed by
+/// `ev doctor`. Emit-only where it is recorded on the ledger: nothing in this crate reads a
+/// `reading_census` event back.
+pub struct ReadingCensus {
+    pub claims: usize,
+    pub present: usize,
+    pub empty: usize,
+    pub by_slot: Vec<(Depth, Lang, usize)>,
+}
+
+/// Count the reading grid over these claims. No claim is dropped from the denominator: a claim
+/// with no reading at all counts as four empty slots, which is the fact the census exists to
+/// surface.
+pub fn census_of(claims: &[crate::state::ClaimView]) -> ReadingCensus {
+    let mut present = 0usize;
+    let mut empty = 0usize;
+    let mut by_slot: Vec<(Depth, Lang, usize)> = ReadingView::STORABLE
+        .iter()
+        .map(|(d, l)| (*d, *l, 0usize))
+        .collect();
+    for c in claims {
+        for (i, (d, l)) in ReadingView::STORABLE.iter().enumerate() {
+            if c.reading.get(*d, *l).is_some() {
+                present += 1;
+            } else {
+                empty += 1;
+                by_slot[i].2 += 1;
+            }
+        }
+    }
+    ReadingCensus {
+        claims: claims.len(),
+        present,
+        empty,
+        by_slot,
+    }
+}
+
+impl ReadingCensus {
+    /// The ledger event body. Facts only — present/empty totals and per-slot empty counts.
+    pub fn to_body(&self) -> serde_json::Value {
+        let by_slot: serde_json::Map<String, serde_json::Value> = self
+            .by_slot
+            .iter()
+            .map(|(d, l, n)| {
+                (
+                    format!("{}/{}", d.as_str(), l.as_str()),
+                    serde_json::json!(n),
+                )
+            })
+            .collect();
+        serde_json::json!({
+            "claims": self.claims,
+            "present": self.present,
+            "empty": self.empty,
+            "by_slot": by_slot,
+        })
+    }
+}

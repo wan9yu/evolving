@@ -949,6 +949,7 @@ pub fn doctor() -> Result<()> {
     crate::verify::annotate(&mut d, &root);
     print_liveness_census(&d);
     print_movement_census(&d);
+    print_reading_census(&d);
     if !crate::state::has_baseline(&events) {
         // The two paths that need the baseline are the session-end sweep and
         // `ev exhaust --since ROOT`; `ev exhaust --since <sha>` carries its own
@@ -1121,6 +1122,27 @@ fn print_movement_census(d: &crate::state::Derived) {
             changed + gone
         );
     }
+}
+
+/// The reading census: how full the comprehension grid is across open claims. Facts only —
+/// present/empty counts and per-slot empties. Never a score, never a gate. It is the D4 signal
+/// recorded per round (Task 5's `write_boundary`); here it is printed live from the same fold,
+/// and this crate reads neither the printed nor the recorded form back.
+fn print_reading_census(d: &crate::state::Derived) {
+    let census = crate::reading::census_of(&d.claims);
+    if census.claims == 0 {
+        return;
+    }
+    let per_slot: Vec<String> = census
+        .by_slot
+        .iter()
+        .map(|(depth, lang, n)| format!("{}/{} {n}", depth.as_str(), lang.as_str()))
+        .collect();
+    println!(
+        "reading grid ({} open claims): present {} · empty {}",
+        census.claims, census.present, census.empty
+    );
+    println!("  empty by slot: {}", per_slot.join(" · "));
 }
 
 pub fn hook(action: String) -> Result<()> {

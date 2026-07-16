@@ -237,6 +237,28 @@ fn pause_should_surface_moved_claims_and_let_the_human_ack_them() {
 }
 
 #[test]
+fn a_boundary_pause_records_a_reading_census_event() {
+    let dir = fresh_git_pause();
+    assert!(run(&dir, &["init"]).status.success());
+    assert!(run(&dir, &["claim", "c", "--by", "agent"]).status.success());
+    let mut child = Command::new(env!("CARGO_BIN_EXE_ev"))
+        .args(["pause", "--boundary", "--script"])
+        .current_dir(&dir)
+        .env_remove("CLAUDECODE")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(b"n\n").unwrap();
+    assert!(child.wait_with_output().unwrap().status.success());
+
+    let has = ledger_events_pause(&dir)
+        .into_iter()
+        .any(|e| e["type"] == "reading_census");
+    assert!(has, "a boundary pause appends a reading_census event");
+}
+
+#[test]
 fn pause_dead_on_a_bare_claim_removes_it_from_open() {
     let dir = fresh();
     assert!(run(&dir, &["claim", "going nowhere"]).status.success());

@@ -393,6 +393,82 @@ fn doctor_should_report_how_far_the_world_moved() {
 /// `{"claim": "<id>"}` shape as evidence/close/hold/demand/verify/prune, and the
 /// same dangling-reference risk the check exists to catch.
 #[test]
+fn doctor_reports_the_reading_census_as_counts_only() {
+    let dir = fresh_git_doctor();
+    std::fs::write(dir.join("a.txt"), "hello\n").unwrap();
+    git_commit_doctor(&dir, "one");
+    assert!(run(&dir, &["init"]).status.success());
+    assert!(run(&dir, &["claim", "c", "--by", "agent"]).status.success());
+    let id = claim_id_doctor(&dir, "c");
+    assert!(run(&dir, &["evidence", &id, "file:a.txt::hello"])
+        .status
+        .success());
+    assert!(run(
+        &dir,
+        &["reading", &id, "--depth", "plain", "--lang", "zh", "url:x"]
+    )
+    .status
+    .success());
+
+    let out = run(&dir, &["doctor"]);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "the census never changes the exit code"
+    );
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        s.contains("reading") && s.contains("present 1") && s.contains("empty 3"),
+        "the reading census reports present/empty counts: {s}"
+    );
+    assert!(
+        !s.to_lowercase().contains("quality") && !s.to_lowercase().contains("score"),
+        "the census grades nothing: {s}"
+    );
+}
+
+/// Spec §8 / R3: any path that attaches, extends or shows a reading leaves doctor's two
+/// existing censuses byte-for-byte unchanged — the scaffold does not touch the pair.
+#[test]
+fn attaching_a_reading_does_not_move_the_liveness_or_movement_census() {
+    let dir = fresh_git_doctor();
+    std::fs::write(dir.join("a.txt"), "hello\n").unwrap();
+    git_commit_doctor(&dir, "one");
+    assert!(run(&dir, &["init"]).status.success());
+    assert!(run(&dir, &["claim", "c", "--by", "agent"]).status.success());
+    let id = claim_id_doctor(&dir, "c");
+    assert!(run(&dir, &["evidence", &id, "file:a.txt::hello"])
+        .status
+        .success());
+
+    let census_lines = |out: &std::process::Output| -> Vec<String> {
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter(|l| {
+                l.contains("anchor liveness")
+                    || l.contains("ref types in use")
+                    || l.contains("neighborhood-moved")
+            })
+            .map(|l| l.to_string())
+            .collect()
+    };
+    let before = census_lines(&run(&dir, &["doctor"]));
+
+    assert!(run(
+        &dir,
+        &["reading", &id, "--depth", "plain", "--lang", "zh", "url:x"]
+    )
+    .status
+    .success());
+    let after = census_lines(&run(&dir, &["doctor"]));
+
+    assert_eq!(
+        before, after,
+        "the liveness and movement census lines must be unchanged by a reading"
+    );
+}
+
+#[test]
 fn doctor_flags_a_dangling_ack_ref() {
     let dir = fresh();
     let wid = std::fs::read_to_string(dir.join(".evolving/local/writer.toml")).unwrap();

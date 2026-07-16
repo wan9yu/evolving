@@ -104,10 +104,36 @@ Recorded so this file cannot itself false-green:
   pre-committed prerequisite already drifted silently (the flood fix). Naming an adjudication
   mechanism is an open owner decision.
 
-## The endpoint (pending owner ratification)
+## The endpoint (RATIFIED by the owner, 2026-07-16; ledger: `clm_01KXPJZ187XR2XV8JBTMH68KPS`)
 
-Proposed, not yet ratified: the Gateway earn adjudication (the first run with movement
-opportunities >= 10 on an organically moving repository) is the LAST narrowing. If earn = 0
-there under the curtain protocol, Outcome 2 executes, the product frame retires, the negative
-publishes, and what remains is the verification methodology and the instrument. No further
-smaller hypothesis is re-registered after that point.
+The Gateway earn adjudication (the first run with movement opportunities >= 10 on an
+organically moving repository, under the curtain protocol) is the LAST narrowing. If earn = 0
+there, Outcome 2 executes, the product frame retires, the negative publishes, and what remains
+is the verification methodology and the instrument. No further smaller hypothesis is
+re-registered after that point. The adjudication moment itself stays a human act.
+
+## Owner adjudications of 2026-07-16 (recorded before any Run-17 data)
+
+1. **Probe-4 counterexamples: fix-and-openly-re-register** (ledger:
+   `clm_01KXPJZ13Z4N20JEVCWHC2PTV0`). The fixes: a git-visibility check in `guard_attach`; a
+   line-anchored passline match; doctor counts skipped ledger lines as problems. After the
+   fixes, probe 4 is re-registered openly, and the record states **the gate fired** — never
+   "the gate passed".
+2. **Run-17 reshaped: stability probes + comprehension measurement only** (ledger:
+   `clm_01KXPJZ15R92DE7MDQ0QSWHNEM`). The four probes and D1–D4 need no movement. The earn
+   adjudication formally moves to the first organically moving repository that can accrue
+   >= 10 opportunities — Gateway. No more queueing earn on a static dogfood target.
+3. **Gateway payment metric** (ledger: `clm_01KXPJZ175AMW14A2Z41T4A92P`): the primary metric
+   is **dispositions changed per operator-minute at the pause** — mechanically computable from
+   the ledger. An earn = 0 result must be disambiguated from channel physics (Gateway's own
+   measured law: ungated text advisories get skipped) via the demand-response rate.
+
+## Base-rate fact (computed 2026-07-16, from Run-16's actual anchor set × argus-redact's real history)
+
+82 unique anchored paths; per-week distinct-paths-touched over the last 8 weeks:
+min 2 / median 28.5 / max 46 (two-week windows: min 20). **Movement opportunities >= 10 are
+easily reachable on the pi target — with a window of one week or longer.** Run-16 read zero
+because its ledger spans ~22.5 hours, not because anchors sat in dead water (only 2/82 paths
+untouched in 60 days). Caveat: the target repo is 99.3% single-author, so the pause-sitter and
+the tree-mover are the same person there — a blindness confound that Gateway does not have.
+Consequence for any future pi-side movement observation: the run window must be >= 1 week.

@@ -70,6 +70,15 @@ fn claim_json(c: &ClaimView) -> serde_json::Value {
     if let Some(kind) = &c.kind {
         v["kind"] = serde_json::json!(kind);
     }
+    if !c.reading.slots.is_empty() || !c.reading.concepts.is_empty() {
+        v["reading"] = serde_json::json!({
+            "slots": c.reading.slots,
+            "concepts": c.reading.concepts,
+            "empty": c.reading.empties().iter()
+                .map(|(d, l)| format!("{}/{}", d.as_str(), l.as_str()))
+                .collect::<Vec<_>>(),
+        });
+    }
     v
 }
 

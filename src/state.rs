@@ -86,6 +86,8 @@ pub struct ClaimView {
     /// which never moves: this is the human-relative reference point Task 5 reads
     /// to report drift since the last look, not just drift since filing.
     pub last_ack: Option<String>,
+    /// The depth-by-language pointer grid for this claim, folded from `reading` events.
+    pub reading: crate::reading::ReadingView,
 }
 
 impl ClaimView {
@@ -152,6 +154,7 @@ struct ClaimAcc {
     last_activity_seq: u64,
     opened_at_boundary: u32,
     last_ack: Option<String>,
+    reading: crate::reading::ReadingView,
 }
 
 fn s(v: &serde_json::Value, k: &str) -> Option<String> {
@@ -187,6 +190,7 @@ pub fn fold(events: &[Envelope]) -> Derived {
                     last_activity_seq: e.seq,
                     opened_at_boundary: boundary_count,
                     last_ack: None,
+                    reading: crate::reading::ReadingView::default(),
                 });
             }
             "evidence" => {
@@ -276,6 +280,28 @@ pub fn fold(events: &[Envelope]) -> Derived {
                     }
                 }
             }
+            "reading" => {
+                if let Some(cid) = s(&e.body, "claim") {
+                    if let Some(acc) = claims.get_mut(&cid) {
+                        if let Some(concept) = s(&e.body, "concept") {
+                            // dedupe: a repeated concept pointer is one pointer, not a grade
+                            if !acc.reading.concepts.contains(&concept) {
+                                acc.reading.concepts.push(concept);
+                            }
+                        } else if let (Some(depth), Some(lang), Some(r)) =
+                            (s(&e.body, "depth"), s(&e.body, "lang"), s(&e.body, "ref"))
+                        {
+                            if let (Some(d), Some(l)) = (
+                                crate::reading::Depth::parse(&depth),
+                                crate::reading::Lang::parse(&lang),
+                            ) {
+                                acc.reading.set(d, l, r);
+                            }
+                        }
+                        acc.last_activity_seq = e.seq;
+                    }
+                }
+            }
             "thought" => {
                 thoughts.push(ThoughtView {
                     id: e.id.clone(),
@@ -352,6 +378,7 @@ pub fn fold(events: &[Envelope]) -> Derived {
             kind: a.kind.clone(),
             reason: a.held.clone(),
             last_ack: a.last_ack.clone(),
+            reading: a.reading.clone(),
         };
         match state {
             ClaimState::Closed | ClaimState::Dead => out.closed.push(view.clone()),

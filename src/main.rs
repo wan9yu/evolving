@@ -36,6 +36,20 @@ enum Command {
     },
     /// Attach evidence to a claim (typed ref). Agents may do this.
     Evidence { claim: String, evidence_ref: String },
+    /// Attach or list a claim's reading: pointers over depth × language. Authoring; agents may.
+    Reading {
+        claim: String,
+        /// The comprehension depth of the slot (maintainer is the claim body — not a slot).
+        #[arg(long, value_parser = ["maintainer", "plain", "ground"])]
+        depth: Option<String>,
+        #[arg(long, value_parser = ["zh", "en"])]
+        lang: Option<String>,
+        /// Add a pointer to a more-basic-concept explanation instead of filling a grid slot.
+        #[arg(long)]
+        concept: Option<String>,
+        /// The pointer to file: a `thk_` note id, or a `url:`/`artifact:` ref.
+        reference: Option<String>,
+    },
     /// Re-verify a claim's evidence (or all open claims).
     Verify {
         claim: Option<String>,
@@ -162,6 +176,13 @@ fn main() {
             claim,
             evidence_ref,
         }) => evolving::cmd::evidence(claim, evidence_ref),
+        Some(Command::Reading {
+            claim,
+            depth,
+            lang,
+            concept,
+            reference,
+        }) => evolving::cmd::reading(claim, depth, lang, concept, reference),
         Some(Command::Verify { claim, json, full }) => evolving::cmd::verify_cmd(claim, json, full),
         Some(Command::Brief { json }) => evolving::cmd::brief(json),
         Some(Command::Close {

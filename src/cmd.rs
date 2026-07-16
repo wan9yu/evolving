@@ -272,6 +272,116 @@ pub fn evidence(claim_id: String, eref: String) -> Result<()> {
     Ok(())
 }
 
+/// R1's attach guard: a reading slot holds a POINTER, never prose. Accepts a `thk_` note id
+/// (resolved to its full id, the way `resolve_claim_id` resolves a claim) or a `url:`/`artifact:`
+/// ref (returned verbatim). Refuses inline text and every other ref scheme — the refusal teaches
+/// the rule rather than storing what ev cannot mean.
+fn guard_slot_ref(reference: &str, ledger: &Ledger) -> Result<String> {
+    if reference.starts_with("thk_") {
+        let events = ledger.scan()?;
+        let matches: Vec<&Envelope> = events
+            .iter()
+            .filter(|e| e.etype == "thought" && e.id.starts_with(reference))
+            .collect();
+        return match matches.len() {
+            1 => Ok(matches[0].id.clone()),
+            0 => Err(EvError::Refusal(format!(
+                "no think note matches {reference}. File the prose with `ev think`, then put its thk_ id here."
+            ))),
+            n => Err(EvError::Refusal(format!("ambiguous note id {reference} — {n} matches"))),
+        };
+    }
+    match crate::verify::EvRef::parse(reference) {
+        Ok(r) if matches!(r.kind, crate::verify::RefKind::Url | crate::verify::RefKind::Artifact) => {
+            Ok(reference.to_string())
+        }
+        _ => Err(EvError::Refusal(format!(
+            "{reference} — a reading slot holds a pointer, never prose: a thk_ note id, or a url:/artifact: ref.\n    \
+             File the explanation with `ev think` and put its thk_ id here."
+        ))),
+    }
+}
+
+/// Attach a slot, add a concept pointer, or list the grid. Authoring — agents are permitted, as
+/// with `ev evidence`. The scaffold stores POINTERS (R1); an EMPTY slot is a fact, never a grade
+/// (R2); each call APPENDS a new event, never rewriting a prior one (R4).
+pub fn reading(
+    claim: String,
+    depth: Option<String>,
+    lang: Option<String>,
+    concept: Option<String>,
+    reference: Option<String>,
+) -> Result<()> {
+    let root = find_root();
+    let ledger = Ledger::open(&root)?;
+    let full = resolve_claim_id(&ledger, &claim)?;
+
+    if let Some(cref) = concept {
+        let canonical = guard_slot_ref(&cref, &ledger)?;
+        ledger.append_batch(vec![NewEvent {
+            etype: "reading".into(),
+            actor: evidence_actor(),
+            body: serde_json::json!({ "claim": full, "concept": canonical }),
+        }])?;
+        println!("concept pointer added to {}.", short(&full));
+        return Ok(());
+    }
+
+    match (depth, lang, reference) {
+        (Some(d), Some(l), Some(r)) => {
+            if d == "maintainer" {
+                return Err(EvError::Refusal(
+                    "maintainer is the claim body itself; ev stores no separate ref for it. \
+                     Use --depth plain or --depth ground."
+                        .into(),
+                ));
+            }
+            let canonical = guard_slot_ref(&r, &ledger)?;
+            ledger.append_batch(vec![NewEvent {
+                etype: "reading".into(),
+                actor: evidence_actor(),
+                body: serde_json::json!({ "claim": full, "depth": d, "lang": l, "ref": canonical }),
+            }])?;
+            println!("{d}/{l} slot filled on {}.", short(&full));
+            Ok(())
+        }
+        (None, None, None) => list_reading(&ledger, &full),
+        _ => Err(EvError::Refusal(
+            "a slot assignment needs --depth, --lang and a ref together; \
+             or --concept <ref>; or no arguments to list the grid."
+                .into(),
+        )),
+    }
+}
+
+/// List a claim's grid: every storable (depth, lang), with each filled slot's POINTER and every
+/// empty one stated "(empty)". Present/absent only — ev never grades a filled slot (R2).
+fn list_reading(ledger: &Ledger, claim_id: &str) -> Result<()> {
+    use crate::reading::ReadingView;
+    let d = crate::state::fold(&ledger.scan()?);
+    let c = d
+        .claims
+        .iter()
+        .chain(&d.grey)
+        .chain(&d.closed)
+        .find(|c| c.id == claim_id)
+        .ok_or_else(|| EvError::Refusal(format!("{} is not a known claim", short(claim_id))))?;
+    println!("reading — {}", c.label);
+    println!("  maintainer — (the claim proper)");
+    for (depth, lang) in ReadingView::STORABLE {
+        match c.reading.get(depth, lang) {
+            Some(reference) => println!("  {}/{} → {reference}", depth.as_str(), lang.as_str()),
+            None => println!("  {}/{} → (empty)", depth.as_str(), lang.as_str()),
+        }
+    }
+    if c.reading.concepts.is_empty() {
+        println!("  concepts — (none)");
+    } else {
+        println!("  concepts — {}", c.reading.concepts.join(" · "));
+    }
+    Ok(())
+}
+
 /// Re-check anchors for one claim (or all open claims): resolution + drift.
 pub fn verify_cmd(claim_id: Option<String>, json: bool, full: bool) -> Result<()> {
     let root = find_root();
